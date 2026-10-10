@@ -4,30 +4,22 @@ import asyncio
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
 from app.execution.executor import ExecutionRequest, execute_task
 from app.llm.mock import MockProvider
 from app.persistence.engine import session_factory
-from tests.conftest import OPERATOR_TOKEN, auth_headers
+from tests.conftest import login_as, seed_operator
 from tests.factories import BIZ, make_task, make_world, spend_of_project
 from tests.factories import tasks as tasks_repo
 
 
-def _settings(**over) -> Settings:
-    data: dict = {
-        "environment": "test",
-        "operator_token": OPERATOR_TOKEN,
-        "database_url": "unused://test-wired-below",
-    }
-    data.update(over)
-    return Settings(**data)
-
-
-def _auth() -> dict:
-    return auth_headers()
+async def _authed(session: AsyncSession, api_client: httpx.AsyncClient) -> dict:
+    """Seed world + owner operator, log in, return CSRF headers (cookie in jar)."""
+    await _seed(session)
+    await seed_operator(session)
+    csrf = await login_as(api_client)
+    return {"X-CSRF-Token": csrf}
 
 
 async def _seed(session: AsyncSession, task_status: str = "not_started") -> None:
@@ -47,11 +39,11 @@ def _req(task_id: str = "t_1") -> ExecutionRequest:
 async def test_execute_success(
     session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch
 ) -> None:
-    await _seed(session)
     provider = MockProvider(texts=['{"summary": "done", "findings": ["a", "b"]}'])
     monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
 
-    res = await api_client.post(_url(), json={}, headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_url(), json={}, headers=headers)
 
     assert res.status_code == 200, res.text
     body = res.json()
@@ -66,11 +58,11 @@ async def test_execute_success(
 async def test_execute_clamps_timeout(
     session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch
 ) -> None:
-    await _seed(session)
     provider = MockProvider(texts=['{"summary": "done"}'])
     monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
 
-    res = await api_client.post(_url(), json={"timeout_s": 99999}, headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_url(), json={"timeout_s": 99999}, headers=headers)
 
     assert res.status_code == 200, res.text
     assert provider.calls[0].timeout_s == 300.0  # server max wins
@@ -81,11 +73,11 @@ async def test_execute_failed_outcome_is_200_with_code(
 ) -> None:
     from app.llm.types import ProviderError
 
-    await _seed(session)
     provider = MockProvider(errors=[ProviderError("boom")])
     monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
 
-    res = await api_client.post(_url(), json={}, headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_url(), json={}, headers=headers)
 
     assert res.status_code == 200, res.text
     body = res.json()
@@ -95,12 +87,12 @@ async def test_execute_failed_outcome_is_200_with_code(
 async def test_execute_idempotent_repeat(
     session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch
 ) -> None:
-    await _seed(session)
     provider = MockProvider(texts=['{"summary": "done"}'])
     monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
 
-    first = await api_client.post(_url(), json={}, headers=_auth())
-    second = await api_client.post(_url(), json={}, headers=_auth())
+    headers = await _authed(session, api_client)
+    first = await api_client.post(_url(), json={}, headers=headers)
+    second = await api_client.post(_url(), json={}, headers=headers)
 
     assert first.status_code == 200 and second.status_code == 200
     assert second.json()["outcome"] == "already_completed"
@@ -110,14 +102,15 @@ async def test_execute_idempotent_repeat(
 async def test_execute_concurrent_double_post(
     session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch
 ) -> None:
-    await _seed(session)
     provider = MockProvider(texts=['{"summary": "a"}', '{"summary": "b"}'], latency_s=0.5)
     monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
 
     import asyncio
 
+    headers = await _authed(session, api_client)
+
     async def post():
-        return await api_client.post(_url(), json={}, headers=_auth())
+        return await api_client.post(_url(), json={}, headers=headers)
 
     results = list(await asyncio.gather(post(), post()))
     codes = sorted(r.status_code for r in results)
@@ -130,16 +123,16 @@ async def test_execute_concurrent_double_post(
 async def test_execute_unknown_task_404(
     session: AsyncSession, api_client: httpx.AsyncClient
 ) -> None:
-    await _seed(session)
-    res = await api_client.post(_url("nope"), json={}, headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_url("nope"), json={}, headers=headers)
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "not_found"
 
 
 async def test_read_task(session: AsyncSession, api_client: httpx.AsyncClient) -> None:
-    await _seed(session)
+    headers = await _authed(session, api_client)
     res = await api_client.get(
-        f"/api/v1/businesses/{BIZ}/projects/proj_1/tasks/t_1", headers=_auth()
+        f"/api/v1/businesses/{BIZ}/projects/proj_1/tasks/t_1", headers=headers
     )
     assert res.status_code == 200, res.text
     body = res.json()
@@ -151,40 +144,67 @@ async def test_read_task(session: AsyncSession, api_client: httpx.AsyncClient) -
 async def test_read_task_wrong_scope_404(
     session: AsyncSession, api_client: httpx.AsyncClient
 ) -> None:
-    await _seed(session)
+    headers = await _authed(session, api_client)
     res = await api_client.get(
-        "/api/v1/businesses/other-biz/projects/proj_1/tasks/t_1", headers=_auth()
+        "/api/v1/businesses/other-biz/projects/proj_1/tasks/t_1", headers=headers
     )
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "not_found"
 
 
-async def test_no_token_configured_closes_endpoints(session: AsyncSession, test_engine) -> None:
-    from app.main import create_app as _create
-
-    app = _create(_settings(operator_token=None))
-    app.state.session_factory = session_factory(test_engine)
-    closed = TestClient(app, raise_server_exceptions=False)
-    assert closed.post(_url(), json={}, headers=_auth()).status_code == 401
-    assert (
-        closed.get(
-            f"/api/v1/businesses/{BIZ}/projects/proj_1/tasks/t_1", headers=_auth()
-        ).status_code
-        == 401
-    )
-    # Health stays open by design.
-    assert closed.get("/api/v1/health").status_code == 200
-
-
-async def test_wrong_token_401(session: AsyncSession, api_client: httpx.AsyncClient) -> None:
-    res = await api_client.post(_url(), json={}, headers={"Authorization": "Bearer wrong"})
-    assert res.status_code == 401
-    assert res.json()["error"]["code"] == "unauthorized"
-
-
-async def test_missing_token_401(session: AsyncSession, api_client: httpx.AsyncClient) -> None:
+async def test_unauthenticated_execution_401(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    await _seed(session)
     res = await api_client.post(_url(), json={})
     assert res.status_code == 401
+    assert res.json()["error"]["code"] == "unauthorized"
+    # Health stays open by design.
+    assert (await api_client.get("/api/v1/health")).status_code == 200
+
+
+async def test_forged_cookie_401(session: AsyncSession, api_client: httpx.AsyncClient) -> None:
+    await _seed(session)
+    api_client.cookies.set("bos_session", "forged-session-id")
+    res = await api_client.post(_url(), json={})
+    assert res.status_code == 401
+
+
+async def test_cross_user_cookie_cannot_reach_foreign_business(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    """User B authenticated, business of user A: uniform 404, no leakage."""
+    from app.core.passwords import hash_password
+    from app.persistence.models.user import User
+    from app.persistence.repositories.concrete import MembershipRepository
+
+    await make_world(session, biz_id="biz_b")
+    await session.commit()
+    session.add(
+        User(
+            id="u_b",
+            email="b@example.com",
+            password_hash=hash_password("pw-b-pw-b"),
+            display_name="B",
+        )
+    )
+    await session.flush()
+    await MembershipRepository().grant(session, "u_b", "biz_b", "owner")
+    await session.commit()
+
+    res = await api_client.post(
+        "/api/v1/auth/login", json={"email": "b@example.com", "password": "pw-b-pw-b"}
+    )
+    assert res.status_code == 200, res.text
+    csrf = res.json()["csrf_token"]
+    # B's session asking for A's business → 404, indistinguishable from missing.
+    res = await api_client.post(
+        f"/api/v1/businesses/{BIZ}/projects/proj_1/tasks/t_1/executions",
+        json={},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
 
 
 async def test_cancel_in_commit_window_never_half_writes(
@@ -218,8 +238,6 @@ async def test_cancel_in_commit_window_never_half_writes(
     monkeypatch.setattr(SessionTransaction, "commit", cancel_on_second_commit)
     with pytest.raises(asyncio.CancelledError):
         await execute_task(session, provider, _req())
-
-    from app.persistence.engine import session_factory
 
     async with session_factory(test_engine)() as fresh:
         task = await tasks_repo.get(fresh, BIZ, "t_1")

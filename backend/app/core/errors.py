@@ -27,7 +27,7 @@ def _trace_id(request: Request) -> str:
     return getattr(request.state, "trace_id", None) or uuid.uuid4().hex[:12]
 
 
-_STATUS_CODES = {404: "not_found", 401: "unauthorized"}
+_STATUS_CODES = {404: "not_found", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:

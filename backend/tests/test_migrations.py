@@ -60,12 +60,59 @@ async def test_upgrade_downgrade_cycle(mig_db_url: str) -> None:
         "brain_entries",
         "marketplace_listings",
         "activity_events",
+        "users",
+        "memberships",
+        "auth_sessions",
     ):
         assert expected in names, f"missing table after upgrade: {expected}"
 
     command.downgrade(cfg, "-1")
     names_after = await _table_names(mig_db_url)
-    assert "businesses" not in names_after
+    assert "businesses" in names_after  # only 0002 reverted
+    assert "users" not in names_after
+    assert "memberships" not in names_after
+    assert "auth_sessions" not in names_after
+
+    command.downgrade(cfg, "base")
+    assert "businesses" not in await _table_names(mig_db_url)
 
     command.upgrade(cfg, "head")
     assert "businesses" in await _table_names(mig_db_url)
+
+
+@pytest.mark.asyncio()
+async def test_stage5_data_survives_0002_upgrade(mig_db_url: str) -> None:
+    """Pre-existing business data must be untouched by the auth migration."""
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+    os.environ["APP_DATABASE_URL"] = mig_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    cfg = _alembic_config(mig_db_url)
+
+    command.upgrade(cfg, "54c46892a254")
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO businesses (id, name, tagline, industry, location,"
+                " owner_name, health_score, health_breakdown, metrics,"
+                " revenue_series, notes)"
+                " VALUES ('biz_old', 'Old Biz', '', '', '', '', 0,"
+                " '[]', '{}', '[]', '')"
+            )
+        )
+    await engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT name FROM businesses WHERE id = 'biz_old'"))
+        ).scalar_one()
+    await engine.dispose()
+    assert row == "Old Biz"

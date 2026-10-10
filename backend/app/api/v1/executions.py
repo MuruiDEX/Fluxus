@@ -4,14 +4,15 @@ POST .../executions runs ONE task synchronously through `execute_task` and
 returns its outcome. No background jobs, no queues: the HTTP request lives
 exactly as long as the bounded execution. A client disconnect cancels the
 request; the executor's own CancelledError path then applies (compensate or
-propagate — never silent).
+propagate вЂ” never silent).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api.v1.schemas import ExecutionCreate, ExecutionResponse, TaskResponse
-from app.core.auth import check_client_contract, require_operator
+from app.core.auth import check_client_contract
+from app.core.identity import require_business
 from app.execution.executor import ExecutionRequest, execute_task
 from app.llm.base import create_provider
 from app.persistence.repositories.concrete import TaskRepository
@@ -19,7 +20,7 @@ from app.persistence.repositories.concrete import TaskRepository
 router = APIRouter()
 _tasks = TaskRepository()
 
-_GUARD = [Depends(check_client_contract), Depends(require_operator)]
+_GUARD = [Depends(check_client_contract), Depends(require_business)]
 
 _OUTCOME_HTTP = {
     "completed": 200,

@@ -132,11 +132,38 @@ Recorded as amendment v1.2 below.
    the backend port MUST reproduce them tick-for-tick (verified by porting
    the Vitest scenarios to pytest at Stage 4).
 
-## 8. Auth (Stage 6 preview — reserved, not implemented)
+## 8. Auth (Stage 6 — implemented)
 
-Local single-user desktop phase: loopback-bound API, single local operator,
-no login screen. Schema reserves `users` + `role` (`owner`) so multi-user
-SaaS later does not require reshaping `businessId` scoping.
+Single-user desktop phase with a server-side session, ready for multi-user
+SaaS without reshaping `businessId` scoping:
+
+- `POST /api/v1/auth/login {email, password}` → `200 {user, csrf_token,
+  businesses}` + HttpOnly session cookie. Unknown email and wrong password
+  are indistinguishable: uniform `401 code: "unauthorized"`,
+  `message: "Invalid email or password."`. Brute force is throttled per
+  identifier (sliding window) → `429 code: "rate_limited"`.
+- Session: opaque random id in the cookie (`bos_session`, `HttpOnly`,
+  `SameSite=Lax`); only its SHA-256 hash is stored server-side
+  (`auth_sessions` row with `expires_at` + `revoked_at`). No JWT, no
+  client-side state to forge. Fresh id on every login (no fixation).
+- `GET /api/v1/auth/me` → current user + business list, or `401`.
+  `POST /api/v1/auth/logout` → revokes server-side, clears the cookie;
+  like every state-changing request it requires the session-bound
+  `X-CSRF-Token` header (constant-time compare), else `403`.
+- Passwords: Argon2id only (`argon2-cffi` defaults), transparent rehash on
+  login when parameters evolve. Verification failures never distinguish
+  "unknown user" from "wrong password" and never leak hashes.
+- Membership: `memberships (user_id, business_id, role owner|member)`.
+  Every protected domain request checks the live membership set; the
+  `business_id` comes ONLY from the URL path. Foreign or unknown business →
+  uniform `404 code: "not_found"` (`"Business not found in scope."`) —
+  tenant existence is never confirmed. Unauthenticated → `401`.
+- No public registration: the first owner is created via server-side CLI
+  (`backend/scripts/bootstrap_owner.py`); pre-existing businesses are NEVER
+  auto-attached to a new user.
+- CORS: tight origin allowlist (local Next dev + Tauri schemes, no `*`
+  with credentials); `X-CSRF-Token` is an allowed header because mutations
+  send it with `credentials: include`.
 
 ## 9. Amendments
 
@@ -145,3 +172,4 @@ SaaS later does not require reshaping `businessId` scoping.
 | 2026-10-09 | v1 | Initial freeze from `frontend/lib/domain/types.ts` |
 | 2026-10-09 | v1.1 | §5.1: frozen spend semantics (derived aiSpent, recompute rule, rounding, currency) — clarification only, no rule changes |
 | 2026-10-09 | v1.2 | §6: additive `provider_auth_error` code (provider credential failure, distinct from user `unauthorized`) — allowed additive addition, no existing rule changed |
+| 2026-10-10 | v1.3 | §8: Stage 6 auth implemented (session cookie, CSRF, membership scoping, uniform 401/404, login throttle) — new `POST /auth/*` + `GET /auth/me` endpoints only; no renames, removals, or new required fields on existing shapes (additive, wire stays `v1`) |

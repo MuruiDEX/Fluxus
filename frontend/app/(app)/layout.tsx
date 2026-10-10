@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { AuthGate } from "@/components/system/AuthGate";
 import { CommandBar } from "@/components/system/CommandBar";
 import { DevEngineHook } from "@/components/system/DevEngineHook";
 import { Sidebar } from "@/components/system/Sidebar";
@@ -9,9 +11,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6">
-          <div className="mx-auto flex max-w-[1440px] flex-col gap-4">{children}</div>
-        </main>
+        <Suspense>
+          <AuthGate>
+            <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6">
+              <div className="mx-auto flex max-w-[1440px] flex-col gap-4">{children}</div>
+            </main>
+          </AuthGate>
+        </Suspense>
       </div>
       <CommandBar />
       <DevEngineHook />

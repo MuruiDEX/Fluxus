@@ -29,6 +29,9 @@ TABLES = (
     "projects",
     "agents",
     "businesses",
+    "auth_sessions",
+    "memberships",
+    "users",
 )
 
 
@@ -75,11 +78,38 @@ def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-OPERATOR_TOKEN = "test-operator-token"
+OPERATOR_EMAIL = "op@example.com"
+OPERATOR_PASSWORD = "correct-horse-1"
 
 
-def auth_headers(token: str = OPERATOR_TOKEN) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+async def login_as(client, email: str = OPERATOR_EMAIL, password: str = OPERATOR_PASSWORD) -> str:
+    """Log in through the real endpoint; returns the CSRF token.
+
+    The session cookie stays in the client's jar. Raises on failure —
+    a broken login must fail the test loudly, not silently unauthenticated.
+    """
+    res = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert res.status_code == 200, res.text
+    return res.json()["csrf_token"]
+
+
+async def seed_operator(session, biz_id: str = "biz_test") -> None:
+    """Create the standard test operator + owner membership (committed)."""
+    from app.core.passwords import hash_password
+    from app.persistence.models.user import User
+    from app.persistence.repositories.concrete import MembershipRepository
+
+    session.add(
+        User(
+            id="u_operator",
+            email=OPERATOR_EMAIL,
+            password_hash=hash_password(OPERATOR_PASSWORD),
+            display_name="Op",
+        )
+    )
+    await session.flush()
+    await MembershipRepository().grant(session, "u_operator", biz_id, "owner")
+    await session.commit()
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -94,7 +124,7 @@ async def api_client(test_engine: AsyncEngine):
 
     from app.persistence.engine import session_factory
 
-    settings = Settings(environment="test", operator_token=OPERATOR_TOKEN)
+    settings = Settings(environment="test")
     app = create_app(settings)
     app.state.session_factory = session_factory(test_engine)
     transport = httpx.ASGITransport(app=app)

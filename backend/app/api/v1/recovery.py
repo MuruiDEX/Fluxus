@@ -14,14 +14,15 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.executions import _factory, _settings
 from app.api.v1.schemas import RecoveryResponse
-from app.core.auth import check_client_contract, require_operator
+from app.core.auth import check_client_contract
+from app.core.identity import require_business
 from app.persistence.repositories.concrete import ActivityRepository, TaskRepository
 
 router = APIRouter()
 _tasks = TaskRepository()
 _activity = ActivityRepository()
 
-_GUARD = [Depends(check_client_contract), Depends(require_operator)]
+_GUARD = [Depends(check_client_contract), Depends(require_business)]
 
 
 @router.post(
@@ -57,7 +58,7 @@ async def recover_task(business_id: str, project_id: str, task_id: str, request:
                     contract=settings.contract_version,
                 ).model_dump(by_alias=True)
                 # 409: the row exists but does not qualify (live/fresh run or
-                # already finished) — nothing was written.
+                # already finished) вЂ” nothing was written.
                 return JSONResponse(status_code=409, content=payload)
             task = await _tasks.get(session, business_id, task_id)
             if task is None or task.project_id != project_id:

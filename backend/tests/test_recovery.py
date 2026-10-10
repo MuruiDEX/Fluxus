@@ -4,13 +4,16 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.conftest import auth_headers
+from tests.conftest import login_as, seed_operator
 from tests.factories import BIZ, make_task, make_world
 from tests.factories import tasks as tasks_repo
 
 
-def _auth() -> dict:
-    return auth_headers()
+async def _authed(session: AsyncSession, api_client: httpx.AsyncClient) -> dict:
+    """Owner login for the seeded world; CSRF headers (cookie in jar)."""
+    await seed_operator(session)
+    csrf = await login_as(api_client)
+    return {"X-CSRF-Token": csrf}
 
 
 def _recover_url(task_id: str = "t_1") -> str:
@@ -41,7 +44,8 @@ async def test_recover_stale_working_never_failed(
     await session.commit()
     await _age_task(session, "t_1", "7200")
 
-    res = await api_client.post(_recover_url(), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
 
     assert res.status_code == 200, res.text
     body = res.json()
@@ -64,7 +68,8 @@ async def test_recover_stale_working_keeps_failed_history(
     await _set_status(session, "t_1", "working", attempts=2)
     await _age_task(session, "t_1", "7200")
 
-    res = await api_client.post(_recover_url(), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
 
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "failed"
@@ -82,7 +87,8 @@ async def test_recover_fresh_working_refused_without_writes(
     from app.persistence.repositories.concrete import ActivityRepository
 
     before = len(await ActivityRepository().list(session, BIZ))
-    res = await api_client.post(_recover_url(), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
 
     assert res.status_code == 409, res.text
     assert res.json()["outcome"] == "not_stale"
@@ -99,7 +105,8 @@ async def test_recover_non_working_reports_state(
     await make_task(session, status="completed", progress=100)
     await session.commit()
 
-    res = await api_client.post(_recover_url(), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
 
     assert res.status_code == 409, res.text
     body = res.json()
@@ -111,7 +118,8 @@ async def test_recover_missing_task_404(
 ) -> None:
     await make_world(session)
     await session.commit()
-    res = await api_client.post(_recover_url("nope"), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url("nope"), headers=headers)
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "not_found"
 
@@ -124,7 +132,7 @@ async def test_recover_requires_auth(session: AsyncSession, api_client: httpx.As
 async def test_claim_advances_updated_at(session: AsyncSession) -> None:
     """Gate test for the recovery clock: claim MUST move updated_at.
 
-    Bulk UPDATEs do not fire column onupdate вЂ” claim_task sets it explicitly.
+    Bulk UPDATEs do not fire column onupdate РІР‚вЂќ claim_task sets it explicitly.
     If this fails, recovery staleness is unsound and recovery must not ship.
     """
     from app.persistence.repositories.concrete import TaskRepository
@@ -166,7 +174,8 @@ async def test_spend_invariant_after_recovery(
     await recalculate_project_spend(session, BIZ, "proj_1")
     await session.commit()
 
-    res = await api_client.post(_recover_url(), headers=_auth())
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
     assert res.status_code == 200, res.text
     assert res.json()["outcome"] == "recovered"
 

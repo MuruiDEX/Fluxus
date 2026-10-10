@@ -1,4 +1,4 @@
-"""Task read endpoint (Stage 5) — the single justified read exception.
+"""Task read endpoint (Stage 5) вЂ” the single justified read exception.
 
 Returns the status and result (summary) of one task, strictly within the
 path scope. No writes, no side effects. Protected like everything else:
@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.v1.executions import _factory, _settings
 from app.api.v1.schemas import TaskResponse
-from app.core.auth import check_client_contract, require_operator
+from app.core.auth import check_client_contract
+from app.core.identity import require_business
 from app.persistence.repositories.concrete import TaskRepository
 
 router = APIRouter()
 _tasks = TaskRepository()
 
-_GUARD = [Depends(check_client_contract), Depends(require_operator)]
+_GUARD = [Depends(check_client_contract), Depends(require_business)]
 
 
 @router.get(

@@ -20,11 +20,14 @@ from app.persistence.models import (  # noqa: F401
     activity_event,
     agent,
     approval,
+    auth_session,
     brain_entry,
     business,
     marketplace_listing,
+    membership,
     project,
     task,
+    user,
 )
 
 config = context.config

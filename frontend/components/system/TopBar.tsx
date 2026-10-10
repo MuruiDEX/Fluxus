@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
+import { Bell, LogIn, LogOut, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useApprovals, useUI } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
 import { SidebarLinks } from "./Sidebar";
 import { Avatar } from "./badges";
 
@@ -14,6 +16,8 @@ export function TopBar() {
   const pending = useApprovals((s) => s.approvals.filter((a) => a.status === "pending").length);
   const { theme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { status, user, logout } = useSession();
+  const router = useRouter();
 
   return (
     <>
@@ -63,6 +67,29 @@ export function TopBar() {
             <Plus className="h-4 w-4" /> New Project
           </Link>
           <Avatar name="Alex Morgan" hue={217} />
+          {status === "authenticated" && user ? (
+            <button
+              onClick={async () => {
+                await logout();
+                router.push("/login");
+              }}
+              title={`Log out ${user.email}`}
+              aria-label="Log out"
+              className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          ) : (
+            status !== "unknown" && (
+              <Link
+                href="/login"
+                aria-label="Log in"
+                className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+              >
+                <LogIn className="h-4 w-4" />
+              </Link>
+            )
+          )}
         </div>
       </header>
 

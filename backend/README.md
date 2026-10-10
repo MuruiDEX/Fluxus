@@ -1,8 +1,10 @@
-# Backend — FastAPI foundation (Stage 1) + persistence (Stage 2) + LLM layer (Stage 3)
+# Backend — FastAPI + persistence + LLM layer + execution API + auth (Stages 1–6)
 
-> Stage 2 implemented: async SQLAlchemy 2.0 persistence on PostgreSQL.
-> Still absent (Stages 3+): LLM layer, orchestration port, CRUD endpoints,
-> auth, frontend integration.
+> Stage 6 implemented: cookie-session authentication with per-business
+> membership isolation. The Stage 5 operator bearer (`APP_OPERATOR_TOKEN`)
+> is fully removed — no fallback auth path exists.
+> Still absent (Stage 7+): CRUD endpoints, frontend API integration behind
+> feature flag, Tauri packaging.
 
 ## What exists now
 
@@ -65,17 +67,28 @@ docker compose up -d postgres-test
   for it (row-locks, concurrency, migrations are PG-only tests).
 - Dev seed: `scripts/seed_demo.py` (idempotent, Northstar subset, demo only).
 
-## Security model (local single-user phase)
+## Security model (Stage 6: session auth + membership isolation)
 
 - Binds `127.0.0.1` by default; never `0.0.0.0` unless explicitly configured.
-- CORS: exact-origin allowlist only (`localhost:3000`, Tauri schemes).
-  No wildcard, no credentials+wildcard combination.
+- CORS: exact-origin allowlist only (local Next dev `localhost:3000` +
+  `127.0.0.1:3000`, Tauri schemes; the `:3210` Playwright port is
+  deliberately excluded — e2e runs backend-less in demo mode).
+  No wildcard, no credentials+wildcard combination. `X-CSRF-Token` is an
+  allowed header because browser mutations send it with
+  `credentials: include`.
+- Auth: `POST /api/v1/auth/login` (uniform 401 for unknown email / wrong
+  password, 429 when throttled), HttpOnly `SameSite=Lax` session cookie,
+  server-side session rows (SHA-256 id hash, expiry, revocation),
+  `X-CSRF-Token` required on all state-changing requests (403 otherwise).
+  Every domain request checks live membership against the `business_id`
+  from the URL path only — foreign/unknown business is a uniform 404.
+- Passwords: Argon2id via `argon2-cffi` defaults, rehashed transparently
+  on login. No public registration endpoint by design.
 - Every response carries `X-Trace-Id`; every error follows the contract
-  envelope with no internals (no tracebacks/SQL/paths in `message`).
+  envelope with no internals (no tracebacks/SQL/paths/secrets in `message`).
 - Secrets arrive via environment (`APP_*`) — none are defaulted, logged,
-  or exposed to the frontend/desktop renderer. Frontend keeps zero secrets.
-- Input validation is Pydantic-first; unknown enum literals and dangling
-  cross-entity references are rejected per the contract (Stages 2+).
+  or exposed to the frontend/desktop renderer. Frontend keeps zero secrets
+  (session id in HttpOnly cookie, CSRF token in memory only).
 
 ## Persistence decision (SQLite vs PostgreSQL)
 
@@ -87,6 +100,38 @@ open distribution question for Stage 2/7 — candidates: embedded Postgres
 sidecar vs. file-backed engine behind the SAME repository interfaces.
 The repository layer MUST abstract the engine so neither the API nor the
 frontend can tell which one is underneath. No decision by code yet.
+
+## Authentication & user isolation (Stage 6)
+
+- `app/core/`: `passwords.py` (Argon2id hash/verify/rehash),
+  `rate_limit.py` (in-memory login throttle — single-process desktop only,
+  counters reset on restart; move to a shared store for SaaS),
+  `identity.py` (`require_business` / `require_session` / `require_user` —
+  the single trust boundary for domain operations).
+- `app/api/v1/auth.py`: login / logout / me (see contract §8). Session
+  cookie never has `Secure` on local HTTP — it is an explicit opt-in
+  (`APP_SESSION_COOKIE_SECURE=true`) for real HTTPS deployments only;
+  enabling it silently would break local Tauri/dev with no diagnostic.
+- Owner bootstrap + recovery CLI (local operator only, never over HTTP):
+  `python scripts/bootstrap_owner.py create-owner --email …`
+  (`--password` omitted → secure `getpass` prompt), `reset-password`,
+  `list-users`, `grant --email … --business … --role owner|member`.
+  Requires a migrated DB (`alembic upgrade head` first). Existing
+  businesses are never auto-attached — orphan data stays invisible until
+  an explicit `grant`.
+- Migrations: `alembic/versions/7f3a9c1e4b52_0002_authentication.py`
+  (additive: `users`, `memberships`, `auth_sessions`; existing tables and
+  rows untouched). **Backup before upgrading a database with real data:**
+  `pg_dump "$APP_DATABASE_URL" -Fc -f backup-pre-stage6.dump`, then
+  `alembic upgrade head`, and verify with
+  `alembic current` + `SELECT count(*) FROM businesses`. Downgrade drops
+  only the three auth tables (access links go with them — users lose
+  access until re-granted); it is covered by the migration test on an
+  isolated schema, not by a production rollback run — for production,
+  restore from the `pg_dump` backup instead of downgrading in place.
+- Tests: `tests/test_auth*.py` (endpoints, models, repos), `test_cors.py`
+  (preflight config), `test_isolation.py` (cross-tenant matrix),
+  `test_migrations.py` (upgrade/downgrade cycle + Stage 5 data survives).
 
 ## Deferred models (deliberately absent in Stage 2)
 
@@ -140,6 +185,12 @@ frontend can tell which one is underneath. No decision by code yet.
 - Stage 3: DONE — provider-agnostic LLM layer (OpenAI-compat adapter + mock; zero real calls in tests).
 - Stage 4: DONE — single-task execution engine (claim → LLM → validate → persist; PG-tested).
 - Stage 5: DONE — execution API (run task, read task, recover stale working) with
-  local operator bearer auth (fail-closed), contract-header gating, recovery
-  staleness bound validated at startup. No queues/SSE/frontend integration.
-- Stage 6+: multi-user auth; CRUD API; frontend API client behind feature flag; Tauri packaging.
+  contract-header gating, recovery staleness bound validated at startup.
+  The Stage 5 local operator bearer was fully removed in Stage 6 —
+  session + membership auth replaced it, no fallback remains.
+  No queues/SSE/full frontend integration.
+- Stage 6: DONE — cookie-session auth (Argon2id, HttpOnly cookie, CSRF),
+  per-business membership isolation on every domain endpoint, owner
+  bootstrap CLI, additive migration preserving Stage 5 data, minimal
+  frontend slice (login/logout/me, route guard, 401 handling, DEMO banner).
+- Stage 7+: CRUD API; full frontend API integration; Tauri packaging.

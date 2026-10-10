@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     llm_max_tokens: int | None = None
 
     # --- Execution API (Stage 5). ---
-    # Local operator bearer secret. Absent = fail-closed: every endpoint
-    # except /health answers 401. Never logged, never returned.
-    operator_token: str | None = None
     # Hard ceiling for a single LLM call inside one execution.
     execution_max_timeout_s: float = 300.0
     # Recovery staleness threshold. Startup validation (below) guarantees it
@@ -48,6 +45,15 @@ class Settings(BaseSettings):
     # Optional persistence wiring for the API process. Absent = execution
     # endpoints answer 500 (health stays dependency-free by design).
     database_url: str | None = None
+
+    # --- Authentication (Stage 6). ---
+    # Session lifetime and login throttle. Cookie `Secure` flag follows
+    # deployment scheme (see api/v1/auth.py — never enabled silently).
+    session_ttl_seconds: int = 12 * 3600
+    session_cookie_name: str = "bos_session"
+    session_cookie_secure: bool = False
+    login_max_attempts: int = 5
+    login_window_seconds: int = 300
 
 
 def _worst_case_live_run_seconds(

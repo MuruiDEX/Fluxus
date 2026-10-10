@@ -5,6 +5,7 @@ write; violations raise DanglingReferenceError (в†’ 422 dangling_reference 
 the API boundary). No business logic beyond integrity lives here.
 """
 
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import case, func, update
@@ -19,11 +20,14 @@ from app.persistence.exceptions import (
 from app.persistence.models.activity_event import ActivityEvent
 from app.persistence.models.agent import Agent
 from app.persistence.models.approval import Approval
+from app.persistence.models.auth_session import AuthSession
 from app.persistence.models.brain_entry import BrainEntry
 from app.persistence.models.business import Business
 from app.persistence.models.marketplace_listing import MarketplaceListing
+from app.persistence.models.membership import Membership
 from app.persistence.models.project import Project
 from app.persistence.models.task import Task, TaskDependency
+from app.persistence.models.user import User
 from app.persistence.repositories.base import BaseRepository, clamp_progress, quantize_money
 
 
@@ -244,6 +248,137 @@ class ApprovalRepository(BaseRepository[Approval]):
 
 class BrainRepository(BaseRepository[BrainEntry]):
     model = BrainEntry
+
+
+class UserRepository:
+    """Identity root — deliberately NOT business-scoped (users exist first)."""
+
+    async def get(self, session: AsyncSession, user_id: str) -> User | None:
+        return await session.get(User, user_id)
+
+    async def get_by_email(self, session: AsyncSession, email: str) -> User | None:
+        from sqlalchemy import select
+
+        stmt = select(User).where(User.email == email)
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def create(
+        self,
+        session: AsyncSession,
+        *,
+        id: str,
+        email: str,
+        password_hash: str,
+        display_name: str = "",
+    ) -> User:
+        validate_id(id)
+        obj = User(id=id, email=email, password_hash=password_hash, display_name=display_name)
+        session.add(obj)
+        await session.flush()
+        return obj
+
+    async def set_password_hash(
+        self, session: AsyncSession, user_id: str, password_hash: str
+    ) -> bool:
+        obj = await self.get(session, user_id)
+        if obj is None:
+            return False
+        obj.password_hash = password_hash
+        await session.flush()
+        return True
+
+
+class MembershipRepository:
+    """Access links user ↔ business. All reads filter by caller side."""
+
+    async def businesses_of(self, session: AsyncSession, user_id: str) -> list[Membership]:
+        from sqlalchemy import select
+
+        res = await session.execute(select(Membership).where(Membership.user_id == user_id))
+        return list(res.scalars().all())
+
+    async def has_access(self, session: AsyncSession, user_id: str, business_id: str) -> bool:
+        from sqlalchemy import select
+
+        res = await session.execute(
+            select(Membership.role).where(
+                Membership.user_id == user_id, Membership.business_id == business_id
+            )
+        )
+        return res.scalar_one_or_none() is not None
+
+    async def grant(
+        self, session: AsyncSession, user_id: str, business_id: str, role: str = "member"
+    ) -> Membership:
+        if role not in ("owner", "member"):
+            raise ValueError(f"invalid role: {role!r}")
+        obj = Membership(user_id=user_id, business_id=business_id, role=role)
+        session.add(obj)
+        await session.flush()
+        return obj
+
+    async def revoke(self, session: AsyncSession, user_id: str, business_id: str) -> bool:
+        from sqlalchemy import delete
+
+        res = await session.execute(
+            delete(Membership).where(
+                Membership.user_id == user_id, Membership.business_id == business_id
+            )
+        )
+        await session.flush()
+        return (res.rowcount or 0) > 0
+
+
+class AuthSessionRepository:
+    """Server-side sessions. Lookup is ALWAYS by hash, never by raw id."""
+
+    async def create(
+        self,
+        session: AsyncSession,
+        *,
+        id_hash: str,
+        user_id: str,
+        csrf_token: str,
+        created_at,
+        expires_at,
+    ) -> AuthSession:
+        obj = AuthSession(
+            id=id_hash,
+            user_id=user_id,
+            csrf_token=csrf_token,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+        session.add(obj)
+        await session.flush()
+        return obj
+
+    async def get_valid(self, session: AsyncSession, id_hash: str, now):
+        """Row iff usable: exists, not revoked, not expired. Otherwise None."""
+        from sqlalchemy import select
+
+        res = await session.execute(select(AuthSession).where(AuthSession.id == id_hash))
+        obj = res.scalar_one_or_none()
+        if obj is None or obj.revoked_at is not None or obj.expires_at <= now:
+            return None
+        return obj
+
+    async def revoke(self, session: AsyncSession, id_hash: str) -> bool:
+        from datetime import datetime
+
+        from sqlalchemy import update
+
+        res = await session.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.id == id_hash,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+        await session.flush()
+        return (res.rowcount or 0) > 0
 
 
 class MarketplaceRepository(BaseRepository[MarketplaceListing]):

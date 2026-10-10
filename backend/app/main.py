@@ -62,12 +62,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Local-first CORS: the Tauri shell and local Next dev server.
     # Tighten origins per deployment; never use ["*"] with credentials.
+    # `next dev` listens on localhost:3000 and answers on 127.0.0.1:3000 too —
+    # browsers treat them as distinct origins, so both are listed explicitly.
+    # Playwright's :3210 port is e2e-only (demo mode, no backend) and stays out.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "tauri://localhost", "http://tauri.localhost"],
+        allow_origins=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "tauri://localhost",
+            "http://tauri.localhost",
+        ],
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Content-Type", "X-Client-Contract", "X-Trace-Id"],
+        allow_headers=["Content-Type", "X-Client-Contract", "X-CSRF-Token", "X-Trace-Id"],
     )
     app.middleware("http")(trace_id_middleware)
     app.include_router(v1_router)
