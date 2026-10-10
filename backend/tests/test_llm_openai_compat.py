@@ -1,0 +1,380 @@
+"""OpenAI-compat adapter: fully offline via httpx MockTransport.
+
+Covers: success + usage, json_schema request shape + validation, fallback,
+status classification (401/429/400/500), bounded retries with attempts count,
+timeouts, malformed bodies, SSE fragmentation/multi-event/[DONE]/disconnect,
+and cancellation mid-flight. No real network, no keys.
+"""
+
+import asyncio
+import json
+
+import httpx
+import pytest
+
+from app.llm.adapters.openai_compat import OpenAICompatProvider, SseParser
+from app.llm.types import (
+    BadResponseError,
+    LlmMessage,
+    LlmRequest,
+    LlmResponse,
+    ProviderAuthError,
+    ProviderError,
+    ProviderTimeoutError,
+    StructuredOutput,
+)
+
+SECRET = "sk-TEST-KEY-NEVER-REAL"  # also asserted absent everywhere (see test_llm_secrets)
+
+
+def _req(**over) -> LlmRequest:
+    base: dict = {"messages": [LlmMessage(role="user", content="hi")], "model": "m"}
+    base.update(over)
+    return LlmRequest(**base)
+
+
+def _ok_payload(text: str = "hello", **over) -> dict:
+    body: dict = {
+        "id": "chatcmpl-1",
+        "model": "m",
+        "choices": [{"message": {"role": "assistant", "content": text}}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+    }
+    body.update(over)
+    return body
+
+
+def _provider(handler, **over) -> OpenAICompatProvider:
+    return OpenAICompatProvider(api_key=SECRET, transport=httpx.MockTransport(handler), **over)
+
+
+# ---------------------------------------------------------------- success ---
+
+
+async def test_complete_success_and_usage() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        assert request.headers["authorization"] == f"Bearer {SECRET}"
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler)
+    res: LlmResponse = await provider.complete(_req())
+    assert res.text == "hello"
+    assert (res.usage.prompt_tokens, res.usage.total_tokens) == (3, 5)
+    assert res.attempts == 1 and res.data is None
+    assert seen[0]["stream"] is False
+
+
+async def test_json_schema_mode_and_validation() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload('{"name": "a", "age": 3}'))
+
+    schema = {
+        "type": "object",
+        "required": ["name", "age"],
+        "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+    }
+    provider = _provider(handler)
+    res = await provider.complete(
+        _req(structured=StructuredOutput(mode="json_schema", schema=schema, strict=True))
+    )
+    assert seen[0]["response_format"]["type"] == "json_schema"
+    assert seen[0]["response_format"]["json_schema"]["schema"] == schema
+    assert res.data == {"name": "a", "age": 3}
+
+
+async def test_schema_violation_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok_payload('{"name": "a"}'))
+
+    schema = {"type": "object", "required": ["name", "age"]}
+    provider = _provider(handler)
+    with pytest.raises(BadResponseError, match="violates schema"):
+        await provider.complete(
+            _req(structured=StructuredOutput(mode="json_schema", schema=schema))
+        )
+
+
+async def test_json_object_fallback_when_no_schema() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload('{"k": 1}'))
+
+    provider = _provider(handler)
+    res = await provider.complete(_req(structured=StructuredOutput(mode="json_object")))
+    assert seen[0]["response_format"] == {"type": "json_object"}
+    assert res.data == {"k": 1}
+
+
+async def test_invalid_json_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok_payload("not-json{{"))
+
+    provider = _provider(handler)
+    with pytest.raises(BadResponseError, match="not valid JSON"):
+        await provider.complete(_req(structured=StructuredOutput(mode="json_object")))
+
+
+async def test_missing_choices_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"model": "m"})
+
+    provider = _provider(handler)
+    with pytest.raises(BadResponseError, match="choices"):
+        await provider.complete(_req())
+
+
+async def test_non_json_body_rejected() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>nope</html>")
+
+    provider = _provider(handler)
+    with pytest.raises(BadResponseError, match="non-JSON"):
+        await provider.complete(_req())
+
+
+# ---------------------------------------------------------------- statuses ---
+
+
+async def test_auth_error_not_retried_and_distinct_code() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401, json={"error": {"message": "bad key"}})
+
+    provider = _provider(handler)
+    with pytest.raises(ProviderAuthError) as exc_info:
+        await provider.complete(_req())
+    assert calls == 1  # never retried
+    assert exc_info.value.code == "provider_auth_error"
+    assert exc_info.value.code != "unauthorized"
+
+
+async def test_plain_4xx_not_retried() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    provider = _provider(handler)
+    with pytest.raises(ProviderError):
+        await provider.complete(_req())
+    assert calls == 1
+
+
+async def test_429_retries_then_succeeds() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, json={"error": {"message": "slow down"}})
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler, max_retries=2)
+    res = await provider.complete(_req())
+    assert res.text == "hello" and res.attempts == 2 and calls == 2
+
+
+async def test_500_exhausts_bounded_retries() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500, json={"error": {"message": "boom"}})
+
+    provider = _provider(handler, max_retries=2)
+    with pytest.raises(ProviderError):
+        await provider.complete(_req())
+    assert calls == 3  # 1 initial + 2 retries, never more
+
+
+async def test_timeout_classified() -> None:
+    # MockTransport performs no real I/O, so client timeouts never fire
+    # there. What is ours to verify: a transport-level timeout maps to
+    # ProviderTimeoutError (the timer itself belongs to httpx).
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("simulated stall")
+
+    provider = _provider(handler)
+    with pytest.raises(ProviderTimeoutError):
+        await provider.complete(_req(timeout_s=30))
+
+    provider2 = _provider(handler, max_retries=1)
+    with pytest.raises(ProviderTimeoutError):
+        await provider2.complete(_req())
+    # Transport mapping unit checks (all timeout flavors, no network).
+    assert isinstance(
+        provider2._classify_transport_error(httpx.ConnectTimeout("x")), ProviderTimeoutError
+    )
+
+
+async def test_backoff_is_bounded_and_jittered() -> None:
+    d0 = OpenAICompatProvider._backoff_delay(0)
+    d5 = OpenAICompatProvider._backoff_delay(5)
+    assert 0.5 <= d0 <= 0.75
+    assert d5 <= 8.25
+    assert len({OpenAICompatProvider._backoff_delay(0) for _ in range(20)}) > 1
+
+
+# --------------------------------------------------------------------- SSE ---
+
+
+class ScriptStream(httpx.AsyncByteStream):
+    """Yield scripted raw byte chunks to split SSE lines across packets."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _sse_response(chunks: list[bytes], status: int = 200) -> httpx.Response:
+    return httpx.Response(
+        status, headers={"content-type": "text/event-stream"}, stream=ScriptStream(chunks)
+    )
+
+
+def _event(text: str | None) -> bytes:
+    if text is None:
+        return b"data: [DONE]\n\n"
+    payload = json.dumps({"choices": [{"delta": {"content": text}}]})
+    return f"data: {payload}\n\n".encode()
+
+
+async def _collect(provider: OpenAICompatProvider, request: LlmRequest) -> tuple[str, bool]:
+    text = ""
+    done = False
+    async for chunk in provider.stream(request):
+        text += chunk.delta
+        done = done or chunk.done
+    return text, done
+
+
+async def test_sse_split_lines_and_multi_event_chunks() -> None:
+    raw = _event("Hel") + _event("lo")
+    # Split mid-line and pack two events in one packet.
+    chunks = [raw[:17], raw[17:40], raw[40:], b": keep-alive\n\n", _event(None)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response(chunks)
+
+    text, done = await _collect(_provider(handler), _req())
+    assert text == "Hello" and done is True
+
+
+async def test_sse_done_terminates() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response([_event("a"), _event(None), _event("b")])
+
+    text, done = await _collect(_provider(handler), _req())
+    assert text == "a" and done is True
+
+
+async def test_sse_truncated_stream_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response([b'data: {"choices": [{"delta": {"cont'])
+
+    with pytest.raises(ProviderError, match="incomplete SSE"):
+        await _collect(_provider(handler), _req())
+
+
+async def test_sse_malformed_payload_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse_response([b"data: {oops\n\n"])
+
+    with pytest.raises(BadResponseError, match="Malformed SSE"):
+        await _collect(_provider(handler), _req())
+
+
+async def test_sse_parser_unit() -> None:
+
+    parser = SseParser()
+    assert parser.feed(b'data: {"a":') == []
+    assert parser.feed(b"1}\n\ndata: [DO") == ['{"a":1}']
+    assert parser.feed(b"NE]\n\n") == []
+    assert parser.finished is True
+    parser.finish()  # no raise on clean end
+
+    broken = SseParser()
+    broken.feed(b"data: partial")
+    with pytest.raises(ProviderError, match="incomplete SSE"):
+        broken.finish()
+
+
+# ------------------------------------------------------------ cancellation ---
+
+
+async def test_complete_cancellation_propagates_unwrapped() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler)
+    task = asyncio.create_task(provider.complete(_req(timeout_s=30)))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_stream_cancellation_closes_and_propagates() -> None:
+    served_chunks = 0
+
+    async def gen():
+        nonlocal served_chunks
+        served_chunks += 1
+        yield _event("a")
+        await asyncio.sleep(5)
+        served_chunks += 1
+        yield _event("b")  # never reached
+
+    class SlowStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            async for part in gen():
+                yield part
+
+        async def aclose(self) -> None:
+            return None
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, stream=SlowStream()
+        )
+
+    provider = _provider(handler)
+
+    async def consume() -> list:
+        return [chunk async for chunk in provider.stream(_req())]
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.1)  # let the first chunk arrive, then cancel mid-stream
+    task.cancel()
+    # CancelledError derives from BaseException (not Exception/LlmError):
+    # matching it here already proves it was never wrapped as a provider error.
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert calls == 1  # cancelled streams are never retried
+    assert served_chunks == 1

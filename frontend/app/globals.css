@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* MUSE SPARK — reference-extracted tokens */
+  --color-ink-950: #0f1e3d;
+  --color-ink-700: #33415e;
+  --color-ink-500: #5b6b8c;
+  --color-ink-400: #8291ad;
+
+  --color-mist-50: #f4f7fe;
+  --color-mist-100: #eaf0fb;
+  --color-mist-200: #e3eaf6;
+  --color-mist-300: #cdd9ee;
+
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #e0ecff;
+  --color-brand-200: #c3d9ff;
+  --color-brand-500: #2563eb;
+  --color-brand-600: #1d4ed8;
+  --color-sky-400: #38bdf8;
+  --color-cyan-500: #06b6d4;
+  --color-violet-500: #8b5cf6;
+
+  --color-night-950: #070d24;
+  --color-night-900: #0d1730;
+  --color-night-800: #14224a;
+
+  --radius-card: 1rem;
+  --radius-panel: 0.875rem;
+  --radius-control: 0.625rem;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 64, 0.06), 0 8px 24px -12px rgba(37, 99, 235, 0.18);
+  --shadow-pop: 0 12px 40px -12px rgba(15, 30, 61, 0.28);
+}
+
+:root {
+  --background: var(--color-mist-50);
+  --foreground: var(--color-ink-950);
+}
+
+.dark {
+  --background: var(--color-night-950);
+  --foreground: #e8eefc;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin scrollbars for dense OS panels */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(130, 145, 173, 0.45) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(130, 145, 173, 0.35);
+  border-radius: 8px;
+}
+
+/* command-bar / office glow backdrop */
+.bg-command-glow {
+  background:
+    radial-gradient(600px 220px at 50% -60px, rgba(56, 189, 248, 0.35), transparent 70%),
+    radial-gradient(500px 300px at 85% 110%, rgba(139, 92, 246, 0.22), transparent 70%),
+    linear-gradient(180deg, #0a1330 0%, #070d24 100%);
+}
+
+.bg-office-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}

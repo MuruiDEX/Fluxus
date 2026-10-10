@@ -1,0 +1,84 @@
+"use client";
+
+import { useMemo } from "react";
+import { useParams } from "next/navigation";
+import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
+import { Card, GhostButton, PageHeader } from "@/components/system/ui";
+import { useAgents, useProjects } from "@/lib/store/app";
+
+export function AgentDetail() {
+  const params = useParams<{ id: string }>();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const agents = useAgents((s) => s.agents);
+  const { tasks } = useProjects();
+  const agent = useMemo(() => agents.find((a) => a.id === id) ?? agents[0], [agents, id]);
+  const mine = useMemo(() => tasks.filter((t) => t.ownerAgentId === agent.id), [tasks, agent.id]);
+
+  return (
+    <>
+      <p className="text-[12px] text-ink-400">Agents › {agent.role}</p>
+      <PageHeader
+        title={agent.role}
+        sub={agent.responsibilities.join(" · ")}
+        actions={<AgentStatusBadge status={agent.status} live />}
+      />
+      <div className="grid gap-3 xl:grid-cols-[300px_1fr]">
+        <Card className="h-fit p-4">
+          <div className="flex items-center gap-3">
+            <Avatar name={agent.name} hue={agent.avatarHue} size={52} />
+            <div>
+              <p className="text-[16px] font-bold">{agent.name}</p>
+              <p className="text-[12.5px] text-ink-500">${agent.costPerMonth}/mo · ★{agent.performance.rating.toFixed(1)}</p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+            {[
+              { v: `${agent.performance.completionRate}%`, l: "Completion" },
+              { v: `~${agent.performance.avgMinutes}m`, l: "Avg time" },
+              { v: `${agent.performance.approvalRate}%`, l: "Approval" },
+            ].map((s) => (
+              <div key={s.l} className="rounded-xl bg-mist-50 p-2 dark:bg-white/5">
+                <p className="text-[14px] font-bold tabular-nums">{s.v}</p>
+                <p className="text-[11px] text-ink-400">{s.l}</p>
+              </div>
+            ))}
+          </div>
+          <h3 className="mb-1.5 mt-4 text-[13px] font-bold">Permissions</h3>
+          <div className="flex flex-col gap-1.5 text-[12px]">
+            <p className="rounded-lg bg-emerald-50 p-2 dark:bg-emerald-500/10"><span className="font-bold">READ:</span> {agent.permissions.read.join(", ")}</p>
+            <p className="rounded-lg bg-blue-50 p-2 dark:bg-blue-500/10"><span className="font-bold">WRITE:</span> {agent.permissions.write.join(", ") || "—"}</p>
+            <p className="rounded-lg bg-red-50 p-2 dark:bg-red-500/10"><span className="font-bold">NO:</span> {agent.permissions.denied.join(", ")}</p>
+          </div>
+          <h3 className="mb-1.5 mt-4 text-[13px] font-bold">Tools</h3>
+          <div className="flex flex-wrap gap-1.5">
+            {agent.tools.map((t) => (
+              <span key={t} className="rounded-full border border-mist-200 px-2 py-0.5 text-[12px] dark:border-white/10">{t}</span>
+            ))}
+          </div>
+        </Card>
+        <div className="flex flex-col gap-3">
+          <Card className="p-4">
+            <h3 className="mb-2 text-[13px] font-bold">Current & completed work</h3>
+            {mine.length === 0 && <p className="text-[13px] text-ink-400">No tasks assigned yet.</p>}
+            {mine.map((t) => (
+              <div key={t.id} className="mb-2 rounded-xl border border-mist-200 p-3 last:mb-0 dark:border-white/10">
+                <div className="flex items-center justify-between text-[13px]">
+                  <span className="font-semibold">{t.title}</span>
+                  <span className="tabular-nums text-ink-500">{t.progress}%</span>
+                </div>
+                <ProgressBar value={t.progress} className="mt-1.5" />
+              </div>
+            ))}
+          </Card>
+          <Card className="flex items-center gap-3 p-4">
+            <div className="flex-1">
+              <p className="text-[13px] font-bold">Operational note</p>
+              <p className="text-[12.5px] text-ink-500">Used competitor pricing data and current product margins to calculate the recommendation.</p>
+            </div>
+            <GhostButton>Take over</GhostButton>
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}
