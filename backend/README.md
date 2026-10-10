@@ -75,7 +75,10 @@ docker compose up -d postgres-test
   deliberately excluded — e2e runs backend-less in demo mode).
   No wildcard, no credentials+wildcard combination. `X-CSRF-Token` is an
   allowed header because browser mutations send it with
-  `credentials: include`.
+  `credentials: include`. Open the dev frontend via `http://127.0.0.1:3000`
+  (same-site with a `127.0.0.1` backend): `SameSite=Lax` session cookies do
+  not flow on cross-site `localhost` ↔ `127.0.0.1` fetches, by browser
+  design — verified live in Stage 6.1, no flag disables this.
 - Auth: `POST /api/v1/auth/login` (uniform 401 for unknown email / wrong
   password, 429 when throttled), HttpOnly `SameSite=Lax` session cookie,
   server-side session rows (SHA-256 id hash, expiry, revocation),

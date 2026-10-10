@@ -112,10 +112,26 @@ async def require_business(request: Request) -> Identity:
     The business_id comes ONLY from the URL path and is checked against the
     caller's live membership set on every request. Unknown business and
     foreign business are indistinguishable (uniform 404) — existence of
-    other tenants is never confirmed.
+    other tenants is never confirmed. State-changing methods additionally
+    require the session-bound `X-CSRF-Token` header (403 otherwise): the
+    cookie alone never authorizes a mutation.
     """
-    identity = await resolve_identity(request)
+    row = await _valid_session_row(request)
+    if row is None:
+        raise _unauthorized()
+    if request.method in _UNSAFE_METHODS:
+        presented = request.headers.get("x-csrf-token", "")
+        if not presented or not hmac.compare_digest(presented, row.csrf_token):
+            raise _forbidden_csrf()
+    from app.persistence.repositories.concrete import MembershipRepository
+
+    factory = getattr(request.app.state, "session_factory", None)
+    assert factory is not None  # checked inside _valid_session_row
+    async with factory() as session:
+        members = MembershipRepository()
+        links = await members.businesses_of(session, row.user_id)
+    business_ids = frozenset(m.business_id for m in links)
     business_id = str(request.path_params.get("business_id", ""))
-    if not business_id or business_id not in identity.business_ids:
+    if not business_id or business_id not in business_ids:
         raise HTTPException(status_code=404, detail="Business not found in scope.")
-    return identity
+    return Identity(user_id=row.user_id, business_ids=business_ids)

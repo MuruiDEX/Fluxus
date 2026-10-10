@@ -129,6 +129,22 @@ async def test_recover_requires_auth(session: AsyncSession, api_client: httpx.As
     assert res.status_code == 401
 
 
+async def test_recover_requires_csrf_on_top_of_session(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    """Recovery is a mutation: cookie without CSRF token is 403 (Stage 6.1)."""
+    await make_world(session)
+    await make_task(session, status="not_started")
+    await session.commit()
+    await _authed(session, api_client)
+
+    missing = await api_client.post(_recover_url())
+    assert missing.status_code == 403
+    assert missing.json()["error"]["code"] == "forbidden"
+    wrong = await api_client.post(_recover_url(), headers={"X-CSRF-Token": "wrong"})
+    assert wrong.status_code == 403
+
+
 async def test_claim_advances_updated_at(session: AsyncSession) -> None:
     """Gate test for the recovery clock: claim MUST move updated_at.
 

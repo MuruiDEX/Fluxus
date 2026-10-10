@@ -170,6 +170,41 @@ async def test_forged_cookie_401(session: AsyncSession, api_client: httpx.AsyncC
     assert res.status_code == 401
 
 
+async def test_execute_requires_csrf_on_top_of_session(
+    session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch
+) -> None:
+    """The session cookie alone never authorizes a mutation (Stage 6.1).
+
+    Regression: require_business used to skip the CSRF check, so any
+    authenticated cookie without a token could drive executions.
+    """
+    from app.llm.mock import MockProvider
+
+    headers = await _authed(session, api_client)
+    provider = MockProvider(texts=['{"summary": "done"}'])
+    monkeypatch.setattr("app.api.v1.executions.create_provider", lambda settings: provider)
+
+    missing = await api_client.post(_url(), json={})
+    assert missing.status_code == 403
+    assert missing.json()["error"]["code"] == "forbidden"
+    wrong = await api_client.post(_url(), json={}, headers={"X-CSRF-Token": "wrong"})
+    assert wrong.status_code == 403
+    assert wrong.json()["error"]["code"] == "forbidden"
+    assert provider.calls == []  # rejected before any claim or LLM call
+
+    ok = await api_client.post(_url(), json={}, headers=headers)
+    assert ok.status_code == 200, ok.text
+
+
+async def test_read_task_needs_no_csrf(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    """Safe methods stay CSRF-free: the check gates mutations only."""
+    await _authed(session, api_client)
+    res = await api_client.get(f"/api/v1/businesses/{BIZ}/projects/proj_1/tasks/t_1")
+    assert res.status_code == 200, res.text
+
+
 async def test_cross_user_cookie_cannot_reach_foreign_business(
     session: AsyncSession, api_client: httpx.AsyncClient
 ) -> None:

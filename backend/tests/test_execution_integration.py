@@ -113,17 +113,15 @@ async def test_provider_error_and_timeout(session: AsyncSession) -> None:
     assert (await tasks_repo.get(session, BIZ, "t_t")).attempts == 1
 
 
-async def test_cancellation_reverts_claim_and_propagates(session: AsyncSession) -> None:
+async def test_cancellation_reverts_claim_and_propagates(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     await make_world(session)
     await make_task(session, status="not_started")
     provider = MockProvider(latency_s=30.0)
 
     await session.commit()
-    task = asyncio.ensure_future(execute_task(session, provider, _req()))
-    await asyncio.sleep(0.1)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await _cancel_mid_llm_flight(session, provider, _req(), monkeypatch)
 
     current = await tasks_repo.get(session, BIZ, "t_1")
     assert current is not None and current.status == "not_started"
@@ -312,19 +310,46 @@ async def test_unknown_persists_row_unchanged(
         assert await spend_of_project(fresh, BIZ, "proj_1") == Decimal("0")
 
 
+async def _cancel_mid_llm_flight(
+    session: AsyncSession,
+    provider: MockProvider,
+    req: ExecutionRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run execute_task and cancel provably inside the LLM call.
+
+    Synchronization is event-driven (provider entry), never a fixed sleep:
+    a fixed delay has no causal link to the claim having committed, so under
+    load the cancel could land inside the claim commit — a legal but
+    different end state (claim intact and retryable, covered by
+    test_cancel_in_commit_window_never_half_writes) that mid-flight
+    assertions must not race with. A bounded wait fails loudly if the claim
+    path itself regresses instead of hanging on the 30 s provider latency.
+    """
+    entered = asyncio.Event()
+    real_complete = provider.complete
+
+    async def gated(request):  # type: ignore[no-untyped-def]
+        entered.set()
+        return await real_complete(request)
+
+    monkeypatch.setattr(provider, "complete", gated)
+    task = asyncio.ensure_future(execute_task(session, provider, req))
+    await asyncio.wait_for(entered.wait(), 5.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 async def test_spend_invariant_after_cancel(
-    session: AsyncSession, test_engine: AsyncEngine
+    session: AsyncSession, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await make_world(session)
     await make_task(session, status="not_started")
     await session.commit()
     provider = MockProvider(latency_s=30.0)
 
-    task = asyncio.ensure_future(execute_task(session, provider, _req()))
-    await asyncio.sleep(0.1)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    await _cancel_mid_llm_flight(session, provider, _req(), monkeypatch)
 
     async with session_factory(test_engine)() as fresh:
         current = await tasks_repo.get(fresh, BIZ, "t_1")
