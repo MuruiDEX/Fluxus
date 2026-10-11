@@ -47,8 +47,15 @@ class BaseRepository[M]:
         res = await session.execute(self._scope(stmt, business_id))
         return res.scalar_one_or_none()
 
-    async def list(self, session: AsyncSession, business_id: str, *, limit: int = 200) -> list[M]:
-        stmt = select(self.model).limit(limit)  # type: ignore[attr-defined]
+    async def list(
+        self, session: AsyncSession, business_id: str, *, limit: int = 200, offset: int = 0
+    ) -> list[M]:
+        stmt = (
+            select(self.model)
+            .order_by(self.model.id)  # type: ignore[attr-defined]
+            .limit(limit)
+            .offset(offset)
+        )
         res = await session.execute(self._scope(stmt, business_id))
         return list(res.scalars().all())
 

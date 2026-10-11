@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useApprovals, useUI } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
+import { BusinessSwitcher } from "./BusinessSwitcher";
 import { SidebarLinks } from "./Sidebar";
 import { Avatar } from "./badges";
 
@@ -67,6 +68,7 @@ export function TopBar() {
             <Plus className="h-4 w-4" /> New Project
           </Link>
           <Avatar name="Alex Morgan" hue={217} />
+          <BusinessSwitcher />
           {status === "authenticated" && user ? (
             <button
               onClick={async () => {

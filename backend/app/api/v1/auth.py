@@ -5,7 +5,9 @@
   indistinguishable (uniform 401); brute force throttled (429).
 - POST /auth/logout → requires valid session + CSRF (it mutates server
   state); revokes server-side, clears cookie, always 200 on success.
-- GET /auth/me → 200 current user or 401.
+- GET /auth/me → 200 {user, csrf_token, businesses} or 401. The token is
+  re-issued (same value) so a full page load — which wipes the browser's
+  in-memory copy — recovers mutation ability without re-login.
 - Fresh session id on every login (no fixation); password rehash when params
   evolve. Nothing secret is logged or returned — ever.
 """
@@ -183,8 +185,17 @@ async def me(request: Request):
         if user is None:  # user row vanished mid-session → treat as logged out
             raise HTTPException(status_code=401, detail="Authentication required.")
         links = await _members.businesses_of(session, user.id)
+        # Re-issue the session-bound CSRF token: the browser keeps it in
+        # memory only, so a full page load would otherwise leave an
+        # authenticated session with no usable token (every later mutation
+        # 403s until re-login). Same value, same session — never rotated here.
+        raw_id = request.cookies.get(settings.session_cookie_name, "")
+        row = await _sessions.get_valid(session, hash_session_id(raw_id), datetime.now(UTC))
+        if row is None:  # pragma: no cover - require_user just validated it
+            raise HTTPException(status_code=401, detail="Authentication required.")
     return {
         "user": {"id": user.id, "email": user.email, "displayName": user.display_name},
+        "csrf_token": row.csrf_token,
         "businesses": sorted(m.business_id for m in links),
         "contract": settings.contract_version,
     }

@@ -146,7 +146,10 @@ SaaS without reshaping `businessId` scoping:
   `SameSite=Lax`); only its SHA-256 hash is stored server-side
   (`auth_sessions` row with `expires_at` + `revoked_at`). No JWT, no
   client-side state to forge. Fresh id on every login (no fixation).
-- `GET /api/v1/auth/me` → current user + business list, or `401`.
+- `GET /api/v1/auth/me` → `{user, csrf_token, businesses}` or `401`. The token
+  is re-issued (same session-bound value, never rotated here) so a full page
+  load — which wipes the browser's in-memory copy while the HttpOnly cookie
+  survives — recovers mutation ability without re-login.
   `POST /api/v1/auth/logout` → revokes server-side, clears the cookie;
   like every state-changing request it requires the session-bound
   `X-CSRF-Token` header (constant-time compare), else `403`.
@@ -173,3 +176,6 @@ SaaS without reshaping `businessId` scoping:
 | 2026-10-09 | v1.1 | §5.1: frozen spend semantics (derived aiSpent, recompute rule, rounding, currency) — clarification only, no rule changes |
 | 2026-10-09 | v1.2 | §6: additive `provider_auth_error` code (provider credential failure, distinct from user `unauthorized`) — allowed additive addition, no existing rule changed |
 | 2026-10-10 | v1.3 | §8: Stage 6 auth implemented (session cookie, CSRF, membership scoping, uniform 401/404, login throttle) — new `POST /auth/*` + `GET /auth/me` endpoints only; no renames, removals, or new required fields on existing shapes (additive, wire stays `v1`) |
+| 2026-10-11 | v1.4 | Stage 7.0 read API: additive `GET` lists + single gets for business/projects/tasks/agents/approvals/activity/brain (`limit/offset` paging, `total`, stable `id` order, `?project_id` / `?category` filters) — new endpoints only; existing shapes, codes and wire `v1` unchanged |
+| 2026-10-11 | v1.5 | Stage 7.6 approval decisions: additive `POST .../approvals/{id}/approve|reject` (pending → approved|rejected via one conditional UPDATE + audit event in one txn; repeat = 200 `already_*`, opposite-after-terminal = 409 `conflict`, uniform 404 for foreign/missing; linked task untouched — executor re-reads the gate live) — new endpoints + `DecisionResponse` only; existing shapes, codes and wire `v1` unchanged |
+| 2026-10-11 | v1.6 | `GET /auth/me` re-issues the session `csrf_token` (same value, additive optional field): full page loads recover mutation ability without re-login — existing shapes, codes and wire `v1` unchanged |

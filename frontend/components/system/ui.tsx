@@ -38,6 +38,17 @@ export function DemoBadge() {
   );
 }
 
+export function LiveBadge() {
+  return (
+    <span
+      title="Live business: data comes from the connected backend for your selected business."
+      className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
+    >
+      Live · server
+    </span>
+  );
+}
+
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <div

@@ -1,0 +1,190 @@
+
+Running 5 tests using 1 worker
+
+[WebServer] Error: Route "/": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/projects/new": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/projects/new/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+  ok 1 [chromium] › e2e\journey.spec.ts:65:5 › goal в†’ contextual questions в†’ brief в†’ launch (10.2s)
+[WebServer] Error: Route "/projects/[id]": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/projects/[id]/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/projects/[id]": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/projects/[id]/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/approvals": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/approvals/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+  x  2 [chromium] › e2e\journey.spec.ts:77:5 › parallel execution в†’ approval gates в†’ completion в†’ brain report (3.0s)
+[WebServer] Error: Route "/marketplace/[slug]": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/marketplace/[slug]/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/agents": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/agents/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+  ok 3 [chromium] › e2e\journey.spec.ts:112:5 › marketplace hire lands on the team (2.7s)
+[WebServer] Error: Route "/tasks": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/tasks/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+  ok 4 [chromium] › e2e\journey.spec.ts:124:5 › task failure and retry operate on shared engine state (1.0s)
+[WebServer] Error: Route "/office": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/office/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/projects/new": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/projects/new/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+[WebServer] Error: Route "/": Could not validate that a segment in your UI has instant navigation.
+[WebServer] 
+[WebServer] This segment was dropped from rendering. Issues that would prevent instant navigation will go undetected.
+[WebServer] 
+[WebServer] Dropped segment:
+[WebServer]   app/(app)/page.tsx
+[WebServer] 
+[WebServer] Ways to fix this:
+[WebServer]   - [render] Render the dropped segment
+[WebServer]   - [ignore] Set `export const instant = false` to opt the dropped segment out of instant-navigation validation
+[WebServer] 
+[WebServer] Learn more: https://nextjs.org/docs/messages/instant-unrendered-segment
+[WebServer]     at ignore-listed frames
+  ok 5 [chromium] › e2e\journey.spec.ts:132:5 › office views, command bar, dark mode and mobile nav (3.9s)
+
+
+  1) [chromium] › e2e\journey.spec.ts:77:5 › parallel execution в†’ approval gates в†’ completion в†’ brain report 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByText('Nothing here')
+    Expected: visible
+    Error: strict mode violation: getByText('Nothing here') resolved to 2 elements:
+        1) <span class="text-[12px] text-ink-500 dark:text-slate-300">Demo mode — simulated Northstar data, no backend …</span> aka getByText('Demo mode — simulated')
+        2) <div class="rounded-2xl border border-mist-200 bg-white shadow-card dark:border-white/10 dark:bg-night-900 p-8 text-center text-[13px] text-ink-400 xl:col-span-2">Nothing here. Approvals appear when an AI employe…</div> aka getByText('Nothing here. Approvals')
+
+    Call log:
+      - Expect "toBeVisible" getByText('Nothing here') with timeout 15000ms
+      - waiting for getByText('Nothing here')
+
+
+      94 |   }
+      95 |   // Resolved cards leave the Pending tab — the inbox is empty.
+    > 96 |   await expect(page.getByText("Nothing here")).toBeVisible();
+         |                                                ^
+      97 |
+      98 |   // Back to the project through the UI; finish remaining work.
+      99 |   await page.getByRole("link", { name: "Projects" }).click();
+        at C:\Users\Ayan\Desktop\Fluxus\frontend\e2e\journey.spec.ts:96:48
+
+    Error Context: test-results\journey-parallel-execution-749bb-completion-в†’-brain-report-chromium\error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results\journey-parallel-execution-749bb-completion-в†’-brain-report-chromium\trace.zip
+    Usage:
+
+        npx playwright show-trace test-results\journey-parallel-execution-749bb-completion-в†’-brain-report-chromium\trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e\journey.spec.ts:77:5 › parallel execution в†’ approval gates в†’ completion в†’ brain report 
+  4 passed (57.7s)

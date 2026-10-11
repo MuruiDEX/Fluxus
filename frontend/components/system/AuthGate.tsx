@@ -15,7 +15,7 @@ import { DemoBadge } from "@/components/system/ui";
  *   the simulation keeps working untouched and unmixed).
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { status, refresh } = useSession();
+  const { status, refresh, refreshing, sessionError } = useSession();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -49,7 +49,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <DemoBadge />
           <span className="text-[12px] text-ink-500 dark:text-slate-300">
             Demo mode — simulated Northstar data, no backend connected. All figures are fictional.
+            {sessionError ? ` (${sessionError})` : ""}
           </span>
+          <button
+            type="button"
+            aria-label="Retry connection"
+            disabled={refreshing}
+            onClick={() => void refresh()}
+            className="shrink-0 rounded-[8px] border border-brand-200 bg-white px-2 py-0.5 text-[12px] font-medium text-ink-600 hover:bg-brand-50 disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200"
+          >
+            {refreshing ? "Retrying…" : "Retry"}
+          </button>
         </div>
       )}
       {children}

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api, onUnauthorized, setCsrfToken } from "@/lib/api";
+import { ApiError, api, apiMe, onUnauthorized, setCsrfToken } from "@/lib/api";
 
 function mockFetchOnce(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -72,5 +72,30 @@ describe("api client", () => {
     const err = await api("/x").catch((e) => e);
     expect((err as ApiError).code).toBe("network_unreachable");
     expect((err as ApiError).status).toBe(0);
+  });
+
+  it("apiMe restores the session CSRF token (full-page-load recovery)", async () => {
+    const calls = mockFetchOnce(() =>
+      jsonResponse(200, {
+        user: { id: "u", email: "op@example.com", displayName: "Op" },
+        csrf_token: "csrf-recovered",
+        businesses: ["biz_northstar"],
+      }),
+    );
+    const me = await apiMe();
+    expect(me.user.email).toBe("op@example.com");
+    // The recovered token authenticates the next mutation.
+    await api("/api/v1/auth/logout", { method: "POST" });
+    expect((calls[1].init?.headers as Record<string, string>)["X-CSRF-Token"]).toBe(
+      "csrf-recovered",
+    );
+  });
+
+  it("apiMe tolerates backends that do not return a token", async () => {
+    mockFetchOnce(() =>
+      jsonResponse(200, { user: { id: "u", email: "e", displayName: "d" }, businesses: [] }),
+    );
+    const me = await apiMe();
+    expect(me.businesses).toEqual([]);
   });
 });

@@ -52,7 +52,10 @@ async def validation_exception_handler(
             "validation_error",
             "Request failed validation.",
             _trace_id(request),
-            details=exc.errors(include_url=False),
+            # Installed pydantic has no `include_url` kwarg; plain errors()
+            # carries no URLs there. Stage 7.0 query validation exercises
+            # this path for the first time (pinned by test_reads.py).
+            details=exc.errors(),
         ),
     )
 

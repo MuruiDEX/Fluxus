@@ -1,0 +1,756 @@
+{
+  "contract": "v1",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "response": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "response": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "response": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}",
+      "response": "BusinessResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/activity",
+      "response": "ActivityListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/agents",
+      "response": "AgentListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/agents/{agent_id}",
+      "response": "AgentResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/approvals",
+      "response": "ApprovalListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/approvals/{approval_id}",
+      "response": "ApprovalResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/approvals/{approval_id}/approve",
+      "response": "DecisionResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/approvals/{approval_id}/reject",
+      "response": "DecisionResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/brain",
+      "response": "BrainListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects",
+      "response": "ProjectListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}",
+      "response": "ProjectResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks",
+      "response": "TaskListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks/{task_id}",
+      "response": "TaskResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks/{task_id}/executions",
+      "response": "ExecutionResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks/{task_id}/recover",
+      "response": "RecoveryResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/health",
+      "response": "HealthResponse"
+    }
+  ],
+  "generated_by": "backend/scripts/gen_wire_manifest.py (do not hand-edit)",
+  "schemas": {
+    "ActivityListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "ActivityResponse": {
+      "properties": {
+        "agentName": {
+          "default": "",
+          "type": "string"
+        },
+        "at": {
+          "default": "",
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "cost": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ]
+    },
+    "AgentListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "AgentResponse": {
+      "properties": {
+        "avatarHue": {
+          "default": 200,
+          "type": "integer"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "costPerMonth": {
+          "default": 0.0,
+          "type": "number"
+        },
+        "currentTask": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "hired": {
+          "default": true,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "performance": {
+          "default": {},
+          "type": "object"
+        },
+        "permissions": {
+          "default": {},
+          "type": "object"
+        },
+        "responsibilities": {
+          "default": [],
+          "type": "array"
+        },
+        "role": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tools": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "businessId",
+        "id",
+        "name",
+        "role",
+        "status"
+      ]
+    },
+    "ApprovalListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "ApprovalResponse": {
+      "properties": {
+        "affects": {
+          "default": "",
+          "type": "string"
+        },
+        "ageLabel": {
+          "default": "",
+          "type": "string"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "cost": {
+          "default": "",
+          "type": "string"
+        },
+        "expectedResult": {
+          "default": "",
+          "type": "string"
+        },
+        "gatesTaskId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "rationale": {
+          "default": "",
+          "type": "string"
+        },
+        "requestedBy": {
+          "default": "",
+          "type": "string"
+        },
+        "requestedByAgentId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "what": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "businessId",
+        "id",
+        "projectId",
+        "requestedByAgentId",
+        "status",
+        "title"
+      ]
+    },
+    "BrainListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "BrainResponse": {
+      "properties": {
+        "body": {
+          "default": "",
+          "type": "string"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedLabel": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "businessId",
+        "category",
+        "id",
+        "title"
+      ]
+    },
+    "BusinessListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "BusinessResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "healthBreakdown": {
+          "default": [],
+          "type": "array"
+        },
+        "healthScore": {
+          "default": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "industry": {
+          "default": "",
+          "type": "string"
+        },
+        "location": {
+          "default": "",
+          "type": "string"
+        },
+        "metrics": {
+          "default": {},
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "ownerName": {
+          "default": "",
+          "type": "string"
+        },
+        "revenueSeries": {
+          "default": [],
+          "type": "array"
+        },
+        "tagline": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ]
+    },
+    "DecisionResponse": {
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "status": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "approvalId",
+        "outcome"
+      ]
+    },
+    "ExecutionError": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ExecutionResponse": {
+      "properties": {
+        "attempts": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "error": {
+          "default": null,
+          "nullable": true,
+          "type": "ExecutionError"
+        },
+        "llmAttempts": {
+          "default": 0,
+          "type": "integer"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "status": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "usage": {
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "outcome",
+        "taskId"
+      ]
+    },
+    "ProjectListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "ProjectResponse": {
+      "properties": {
+        "aiBudget": {
+          "type": "decimal-as-string"
+        },
+        "aiSpent": {
+          "type": "decimal-as-string"
+        },
+        "budget": {
+          "type": "decimal-as-string"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "deadline": {
+          "default": "",
+          "type": "string"
+        },
+        "goal": {
+          "default": "",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "milestones": {
+          "default": [],
+          "type": "array"
+        },
+        "progress": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "teamIds": {
+          "default": [],
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "aiBudget",
+        "aiSpent",
+        "budget",
+        "businessId",
+        "id",
+        "progress",
+        "status",
+        "title"
+      ]
+    },
+    "RecoveryResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "status": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "taskId"
+      ]
+    },
+    "TaskListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "TaskResponse": {
+      "properties": {
+        "approvalGateId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "attempts": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "costAccrued": {
+          "type": "decimal-as-string"
+        },
+        "costRate": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "etaMinutes": {
+          "type": "integer"
+        },
+        "gateAt": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ownerAgentId": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "integer"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "businessId",
+        "costAccrued",
+        "etaMinutes",
+        "id",
+        "ownerAgentId",
+        "progress",
+        "projectId",
+        "status",
+        "summary",
+        "title"
+      ]
+    }
+  }
+}

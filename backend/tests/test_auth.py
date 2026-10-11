@@ -118,6 +118,30 @@ async def test_logout_revokes_and_me_forgets(session: AsyncSession, test_engine)
         assert me2.status_code == 401
 
 
+async def test_me_reissues_csrf_token_after_client_memory_loss(
+    session: AsyncSession, test_engine
+) -> None:
+    """Full page load wipes the browser's in-memory token while the HttpOnly
+    cookie survives: /auth/me must hand the same token back so later
+    mutations (e.g. logout) keep working without re-login."""
+    await _user(session)
+    async with await _client_for(test_engine) as client:
+        res = await _login(client)
+        assert res.status_code == 200, res.text
+        csrf = res.json()["csrf_token"]
+        raw_cookie = client.cookies.get("bos_session")
+        assert raw_cookie
+
+    # Fresh client = fresh JS context: cookie only, no memory of the token.
+    async with await _client_for(test_engine) as reloaded:
+        reloaded.cookies.set("bos_session", raw_cookie)
+        me = await reloaded.get("/api/v1/auth/me")
+        assert me.status_code == 200, me.text
+        assert me.json()["csrf_token"] == csrf
+        out = await reloaded.post("/api/v1/auth/logout", headers={"X-CSRF-Token": csrf})
+        assert out.status_code == 200, out.text
+
+
 async def test_expired_session_rejected(session: AsyncSession, test_engine) -> None:
     await _user(session)
     from app.persistence.repositories.concrete import AuthSessionRepository

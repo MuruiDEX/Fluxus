@@ -1,19 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, GhostButton, PageHeader } from "@/components/system/ui";
+import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext, useLiveAgent, useLiveProjects, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useProjects } from "@/lib/store/app";
+import type { Agent, Task } from "@/lib/domain/types";
 
-export function AgentDetail() {
-  const params = useParams<{ id: string }>();
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const agents = useAgents((s) => s.agents);
-  const { tasks } = useProjects();
-  const agent = useMemo(() => agents.find((a) => a.id === id) ?? agents[0], [agents, id]);
-  const mine = useMemo(() => tasks.filter((t) => t.ownerAgentId === agent.id), [tasks, agent.id]);
-
+function AgentProfile({ agent, mine }: { agent: Agent; mine: Task[] }) {
   return (
     <>
       <p className="text-[12px] text-ink-400">Agents › {agent.role}</p>
@@ -70,15 +66,101 @@ export function AgentDetail() {
               </div>
             ))}
           </Card>
-          <Card className="flex items-center gap-3 p-4">
-            <div className="flex-1">
-              <p className="text-[13px] font-bold">Operational note</p>
-              <p className="text-[12.5px] text-ink-500">Used competitor pricing data and current product margins to calculate the recommendation.</p>
-            </div>
-            <GhostButton>Take over</GhostButton>
-          </Card>
         </div>
       </div>
     </>
   );
+}
+
+function DemoAgentDetail({ id }: { id: string }) {
+  const agents = useAgents((s) => s.agents);
+  const { tasks } = useProjects();
+  const agent = useMemo(() => agents.find((a) => a.id === id) ?? agents[0], [agents, id]);
+  const mine = useMemo(() => tasks.filter((t) => t.ownerAgentId === agent.id), [tasks, agent.id]);
+
+  return (
+    <>
+      <AgentProfile agent={agent} mine={mine} />
+      <Card className="mt-3 flex items-center gap-3 p-4">
+        <div className="flex-1">
+          <p className="text-[13px] font-bold">Operational note</p>
+          <p className="text-[12.5px] text-ink-500">Used competitor pricing data and current product margins to calculate the recommendation.</p>
+        </div>
+        <GhostButton>Take over</GhostButton>
+      </Card>
+    </>
+  );
+}
+
+function LiveAgentDetail({ businessId, agentId }: { businessId: string; agentId: string }) {
+  const { status, agent, notFound, error, load, reset } = useLiveAgent();
+  const projectsSlice = useLiveProjects();
+  const tasksSlice = useLiveTasks();
+
+  useEffect(() => {
+    void load(businessId, agentId);
+    void (async () => {
+      await projectsSlice.load(businessId);
+      const ids = useLiveProjects.getState().projects.map((p) => p.id);
+      await tasksSlice.loadAll(businessId, ids);
+    })();
+    return () => {
+      reset();
+      projectsSlice.reset();
+      tasksSlice.reset();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessId, agentId]);
+
+  if (status === "loading" || status === "idle") {
+    return (
+      <>
+        <PageHeader title="Agent" sub="Loading from server…" badge={<LiveBadge />} />
+        <Card className="p-8 text-center text-[13px] text-ink-400">Loading agent…</Card>
+      </>
+    );
+  }
+
+  if (status === "error" || !agent) {
+    return (
+      <>
+        <PageHeader title="Agent" sub="Server data for your business." badge={<LiveBadge />} />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">
+            {notFound ? "Agent not found" : "Couldn't load agent"}
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+            {notFound
+              ? "This agent doesn't exist in your business or isn't available to you."
+              : error}
+          </p>
+          {!notFound && (
+            <div className="mt-3 flex justify-center">
+              <PrimaryButton
+                className="justify-center"
+                onClick={() => {
+                  void load(businessId, agentId);
+                }}
+              >
+                Retry
+              </PrimaryButton>
+            </div>
+          )}
+        </Card>
+      </>
+    );
+  }
+
+  const mine = tasksSlice.tasks.filter((t) => t.ownerAgentId === agent.id);
+  return <AgentProfile agent={agent} mine={mine} />;
+}
+
+export function AgentDetail() {
+  const params = useParams<{ id: string }>();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveAgentDetail businessId={currentBusinessId} agentId={id} />;
+  }
+  return <DemoAgentDetail id={id} />;
 }

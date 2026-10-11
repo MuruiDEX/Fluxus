@@ -223,6 +223,41 @@ class TaskRepository(BaseRepository[Task]):
         row = result.first()
         return str(row[0]) if row else None
 
+    async def list_for_project(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        project_id: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[Task]:
+        """Tasks of one project, stable id order (read API paging)."""
+        from sqlalchemy import select
+
+        stmt = (
+            select(Task)
+            .where(Task.business_id == business_id, Task.project_id == project_id)
+            .order_by(Task.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def count_for_project(
+        self, session: AsyncSession, business_id: str, project_id: str
+    ) -> int:
+        from sqlalchemy import select
+
+        stmt = (
+            select(func.count())
+            .select_from(Task)
+            .where(Task.business_id == business_id, Task.project_id == project_id)
+        )
+        res = await session.execute(stmt)
+        return int(res.scalar_one())
+
 
 class ApprovalRepository(BaseRepository[Approval]):
     model = Approval
@@ -245,9 +280,78 @@ class ApprovalRepository(BaseRepository[Approval]):
             raise DanglingReferenceError(f"approval references missing gated task: {gated}")
         return await super().create(session, business_id, payload)
 
+    async def decide(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        approval_id: str,
+        *,
+        to_status: str,
+    ) -> bool:
+        """Atomic decision: single conditional UPDATE from pending only.
+
+        Returns True iff this caller transitioned the row (rowcount==1).
+        Concurrent deciders serialize on the row: exactly one wins, the rest
+        see rowcount 0 and must re-read instead of assuming ownership — the
+        same pattern as TaskRepository.claim_task. The caller MUST write the
+        audit event in the SAME transaction and commit promptly.
+        """
+        from app.persistence.enums import ApprovalStatus
+
+        allowed = (ApprovalStatus.APPROVED.value, ApprovalStatus.REJECTED.value)
+        if to_status not in allowed:
+            raise ValueError(f"invalid decision: {to_status!r}")
+        stmt = (
+            update(Approval)
+            .where(
+                Approval.business_id == business_id,
+                Approval.id == approval_id,
+                Approval.status == ApprovalStatus.PENDING.value,
+            )
+            # Explicit updated_at: bulk UPDATE does not fire column onupdate.
+            .values(status=to_status, updated_at=func.now())
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
+
 
 class BrainRepository(BaseRepository[BrainEntry]):
     model = BrainEntry
+
+    async def list(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        category: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[BrainEntry]:
+        """Entries of one business, stable id order; optional category filter."""
+        from sqlalchemy import select
+
+        stmt = select(BrainEntry).where(BrainEntry.business_id == business_id)
+        if category is not None:
+            stmt = stmt.where(BrainEntry.category == category)
+        stmt = stmt.order_by(BrainEntry.id).limit(limit).offset(offset)
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def count(
+        self, session: AsyncSession, business_id: str, *, category: str | None = None
+    ) -> int:
+        from sqlalchemy import select
+
+        stmt = (
+            select(func.count())
+            .select_from(BrainEntry)
+            .where(BrainEntry.business_id == business_id)
+        )
+        if category is not None:
+            stmt = stmt.where(BrainEntry.category == category)
+        res = await session.execute(stmt)
+        return int(res.scalar_one())
 
 
 class UserRepository:
@@ -424,16 +528,33 @@ class ActivityRepository:
         *,
         project_id: str | None = None,
         limit: int = 200,
+        offset: int = 0,
     ) -> list[ActivityEvent]:
         from sqlalchemy import select
 
         stmt = (
             select(ActivityEvent)
             .where(ActivityEvent.business_id == business_id)
-            .order_by(ActivityEvent.created_at.desc())
+            .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id)
             .limit(limit)
+            .offset(offset)
         )
         if project_id is not None:
             stmt = stmt.where(ActivityEvent.project_id == project_id)
         res = await session.execute(stmt)
         return list(res.scalars().all())
+
+    async def count(
+        self, session: AsyncSession, business_id: str, *, project_id: str | None = None
+    ) -> int:
+        from sqlalchemy import select
+
+        stmt = (
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(ActivityEvent.business_id == business_id)
+        )
+        if project_id is not None:
+            stmt = stmt.where(ActivityEvent.project_id == project_id)
+        res = await session.execute(stmt)
+        return int(res.scalar_one())

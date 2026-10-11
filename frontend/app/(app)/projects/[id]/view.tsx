@@ -1,26 +1,38 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
-import { Card, PageHeader } from "@/components/system/ui";
+import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
+import { TaskRunButton } from "@/components/system/TaskRun";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext, useLiveAgents, useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useApprovals, useProjects } from "@/lib/store/app";
 import { cn } from "@/lib/cn";
+import type { Agent, Approval, Project, Task } from "@/lib/domain/types";
 
 const tabs = ["Overview", "Tasks", "Team", "Research", "Finance", "Brand", "Website", "Marketing", "CRM", "Docs"] as const;
 
-export function ProjectDetail() {
-  const params = useParams<{ id: string }>();
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const { projects, tasks } = useProjects();
-  const agents = useAgents((s) => s.agents);
+function ProjectLayout({
+  project,
+  projectTasks,
+  agents,
+  approvals,
+  badge,
+  engineSlot,
+  renderTaskAction,
+}: {
+  project: Project;
+  projectTasks: Task[];
+  agents: Agent[];
+  approvals: Approval[];
+  badge?: ReactNode;
+  engineSlot: ReactNode;
+  renderTaskAction?: (task: Task) => ReactNode;
+}) {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
-
-  const project = useMemo(() => projects.find((p) => p.id === id) ?? projects[0], [projects, id]);
-  const projectTasks = useMemo(() => tasks.filter((t) => t.projectId === project.id), [tasks, project.id]);
-  const approvals = useApprovals((s) => s.approvals);
   const agentOf = (agentId: string) => agents.find((a) => a.id === agentId);
   const taskTitle = (taskId: string) => projectTasks.find((t) => t.id === taskId)?.title ?? taskId;
   const statusPill =
@@ -37,9 +49,10 @@ export function ProjectDetail() {
       <PageHeader
         title={project.title}
         sub={`Due ${project.deadline} · AI $${project.aiSpent.toFixed(1)} / $${project.aiBudget}`}
+        badge={badge}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <EngineControls scope={{ businessId: project.businessId, projectId: project.id }} compact />
+            {engineSlot}
             <span data-testid="project-status" className={cn("rounded-full px-2.5 py-1 text-[12px] font-semibold", statusPill)}>
               {statusLabel}
             </span>
@@ -128,9 +141,10 @@ export function ProjectDetail() {
                     )}
                     <div className="mt-2 flex items-center gap-1.5 text-[11.5px] text-ink-400">
                       {a && <Avatar name={a.name} hue={a.avatarHue} size={18} />}
-                      <span>{a?.role}</span>
+                      <span>{a?.role ?? t.ownerAgentId}</span>
                       <span className="ml-auto tabular-nums">${t.costAccrued.toFixed(2)}</span>
                     </div>
+                    {renderTaskAction?.(t)}
                   </div>
                 );
               })}
@@ -169,4 +183,113 @@ export function ProjectDetail() {
       )}
     </>
   );
+}
+
+function DemoProjectDetail({ id }: { id: string }) {
+  const { projects, tasks } = useProjects();
+  const agents = useAgents((s) => s.agents);
+  const project = useMemo(() => projects.find((p) => p.id === id) ?? projects[0], [projects, id]);
+  const projectTasks = useMemo(() => tasks.filter((t) => t.projectId === project.id), [tasks, project.id]);
+  const approvals = useApprovals((s) => s.approvals);
+
+  return (
+    <ProjectLayout
+      project={project}
+      projectTasks={projectTasks}
+      agents={agents}
+      approvals={approvals}
+      engineSlot={<EngineControls scope={{ businessId: project.businessId, projectId: project.id }} compact />}
+    />
+  );
+}
+
+function LiveProjectDetail({ businessId, projectId }: { businessId: string; projectId: string }) {
+  const { status, project, notFound, error, load, reset } = useLiveProject();
+  const tasksSlice = useLiveTasks();
+  const agents = useLiveAgents((s) => s.agents);
+  const ensureAgents = useLiveAgents((s) => s.ensure);
+  const resetAgents = useLiveAgents((s) => s.reset);
+
+  useEffect(() => {
+    void load(businessId, projectId);
+    void tasksSlice.load(businessId, projectId);
+    void ensureAgents(businessId);
+    return () => {
+      reset();
+      tasksSlice.reset();
+      resetAgents();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessId, projectId]);
+
+  if (status === "loading" || status === "idle") {
+    return (
+      <>
+        <PageHeader title="Project" sub="Loading from server…" badge={<LiveBadge />} />
+        <Card className="p-8 text-center text-[13px] text-ink-400">Loading project…</Card>
+      </>
+    );
+  }
+
+  if (status === "error" || !project) {
+    return (
+      <>
+        <PageHeader title="Project" sub="Live server data" badge={<LiveBadge />} />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">
+            {notFound ? "Project not found" : "Couldn't load project"}
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+            {notFound
+              ? "This project doesn't exist in your business or isn't available to you."
+              : error}
+          </p>
+          {!notFound && (
+            <div className="mt-3 flex justify-center">
+              <PrimaryButton
+                className="justify-center"
+                onClick={() => {
+                  void load(businessId, projectId);
+                  void tasksSlice.load(businessId, projectId);
+                }}
+              >
+                Retry
+              </PrimaryButton>
+            </div>
+          )}
+        </Card>
+      </>
+    );
+  }
+
+  return (
+    <ProjectLayout
+      project={project}
+      projectTasks={tasksSlice.tasks}
+      agents={agents}
+      approvals={[]}
+      badge={<LiveBadge />}
+      engineSlot={
+        <span
+          title="Each task runs on the server when you press its Run button."
+          className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
+        >
+          Server-side runs
+        </span>
+      }
+      renderTaskAction={(t) => (
+        <TaskRunButton businessId={businessId} projectId={project.id} taskId={t.id} />
+      )}
+    />
+  );
+}
+
+export function ProjectDetail() {
+  const params = useParams<{ id: string }>();
+  const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveProjectDetail businessId={currentBusinessId} projectId={rawId} />;
+  }
+  return <DemoProjectDetail id={rawId} />;
 }

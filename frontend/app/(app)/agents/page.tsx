@@ -1,18 +1,23 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { AgentStatusBadge, Avatar } from "@/components/system/badges";
-import { Card, PageHeader } from "@/components/system/ui";
+import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext, useLiveAgentsList } from "@/lib/store/live";
 import { useAgents } from "@/lib/store/app";
+import type { Agent } from "@/lib/domain/types";
 
-export default function AgentsPage() {
-  const agents = useAgents((s) => s.agents);
+function AgentGrid({ agents }: { agents: Agent[] }) {
   const hired = agents.filter((a) => a.hired);
-
   return (
     <>
-      <PageHeader title="Agents" sub={`${hired.length} AI employees on your team. Each has permissions, tools and a performance record.`} />
+      <PageHeader
+        title="Agents"
+        sub={`${hired.length} AI employees on your team. Each has permissions, tools and a performance record.`}
+      />
       <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
         {agents.map((a) => (
           <Link key={a.id} href={`/agents/${a.id}`}>
@@ -39,4 +44,74 @@ export default function AgentsPage() {
       </div>
     </>
   );
+}
+
+function DemoAgentsView() {
+  const agents = useAgents((s) => s.agents);
+  return <AgentGrid agents={agents} />;
+}
+
+function LiveAgentsView({ businessId }: { businessId: string }) {
+  const { status, agents, total, error, load, reset } = useLiveAgentsList();
+
+  useEffect(() => {
+    void load(businessId);
+    return () => reset();
+  }, [businessId, load, reset]);
+
+  if (status === "loading" || status === "idle") {
+    return (
+      <>
+        <PageHeader title="Agents" sub="Loading team from server…" badge={<LiveBadge />} />
+        <Card className="p-8 text-center text-[13px] text-ink-400">Loading agents…</Card>
+      </>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <>
+        <PageHeader title="Agents" sub="Server team for your business." badge={<LiveBadge />} />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">Couldn&apos;t load agents</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{error}</p>
+          <div className="mt-3 flex justify-center">
+            <PrimaryButton className="justify-center" onClick={() => void load(businessId)}>
+              Retry
+            </PrimaryButton>
+          </div>
+        </Card>
+      </>
+    );
+  }
+
+  if (agents.length === 0) {
+    return (
+      <>
+        <PageHeader title="Agents" sub="Server team for your business." badge={<LiveBadge />} />
+        <Card className="p-8 text-center text-[13px] text-ink-400">
+          No agents in this business yet.
+        </Card>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Agents"
+        sub={`${total} AI employees on your team. Each has permissions, tools and a performance record.`}
+        badge={<LiveBadge />}
+      />
+      <AgentGrid agents={agents} />
+    </>
+  );
+}
+
+export default function AgentsPage() {
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveAgentsView businessId={currentBusinessId} />;
+  }
+  return <DemoAgentsView />;
 }
