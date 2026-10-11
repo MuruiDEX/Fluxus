@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from app.api.v1.executions import _factory, _settings, _task_response
+from app.api.v1.executions import _factory, _settings, _task_responses
 from app.api.v1.schemas import (
     ActivityListResponse,
     ActivityResponse,
@@ -242,7 +242,7 @@ async def list_tasks(
         )
         total = await _tasks.count_for_project(session, business_id, project_id)
         return TaskListResponse(
-            items=[_task_response(t, settings.contract_version) for t in rows],
+            items=await _task_responses(session, business_id, rows, settings.contract_version),
             total=total,
             limit=limit,
             offset=offset,

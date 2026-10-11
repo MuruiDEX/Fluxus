@@ -2,11 +2,9 @@
  * Wire → domain mapping for LIVE reads (Stage 7.3).
  *
  * Backend shapes (contract §1) map onto the existing domain models so LIVE
- * screens reuse the same components as DEMO. Two honest gaps, both by design:
- * - `dependsOn`: the backend stores dependencies but exposes no endpoint yet,
- *   so LIVE tasks carry an empty list (never invented edges).
- * - Money arrives as JSON strings ("0.00"); parsed to numbers here so
- *   `.toFixed()`/formatting never breaks.
+ * screens reuse the same components as DEMO. Money arrives as JSON strings
+ * ("0.00"); parsed to numbers here so `.toFixed()`/formatting never breaks.
+ * `dependsOn` rides the wire since contract amendment v1.10 (Stage 8.4).
  */
 
 import { parseMoney, type ApiActivityEvent, type ApiAgent, type ApiApproval, type ApiBrainEntry, type ApiProject, type ApiTask } from "@/lib/api";
@@ -38,7 +36,7 @@ export function toDomainTask(t: ApiTask): Task {
     ownerAgentId: t.ownerAgentId,
     status: t.status,
     progress: t.progress,
-    dependsOn: [],
+    dependsOn: [...(t.dependsOn ?? [])],
     costAccrued: parseMoney(t.costAccrued),
     etaMinutes: t.etaMinutes,
     summary: t.summary,

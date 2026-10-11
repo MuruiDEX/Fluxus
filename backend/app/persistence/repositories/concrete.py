@@ -259,6 +259,31 @@ class TaskRepository(BaseRepository[Task]):
         res = await session.execute(stmt)
         return int(res.scalar_one())
 
+    async def dependency_map(
+        self, session: AsyncSession, task_ids: list[str]
+    ) -> dict[str, list[str]]:
+        """Outgoing edges for the given tasks, in stable order.
+
+        One query for the whole set (list endpoints must not fan out per
+        row). Callers pass ids of already scope-checked tasks, so no
+        business filter is applied here — edges only ever reference tasks
+        created in the same project scope.
+        """
+        from sqlalchemy import select
+
+        if not task_ids:
+            return {}
+        stmt = (
+            select(TaskDependency.task_id, TaskDependency.depends_on_id)
+            .where(TaskDependency.task_id.in_(task_ids))
+            .order_by(TaskDependency.task_id, TaskDependency.depends_on_id)
+        )
+        res = await session.execute(stmt)
+        edges: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
+        for task_id, depends_on_id in res.all():
+            edges.setdefault(task_id, []).append(depends_on_id)
+        return edges
+
 
 class ApprovalRepository(BaseRepository[Approval]):
     model = Approval

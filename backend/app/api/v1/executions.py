@@ -39,7 +39,7 @@ _REFUSED_HTTP = {
 }
 
 
-def _task_response(task, contract: str) -> TaskResponse:
+def _task_response(task, contract: str, depends_on: list[str] | None = None) -> TaskResponse:
     return TaskResponse(
         id=task.id,
         businessId=task.business_id,
@@ -48,6 +48,7 @@ def _task_response(task, contract: str) -> TaskResponse:
         ownerAgentId=task.owner_agent_id,
         status=task.status,
         progress=task.progress,
+        dependsOn=depends_on if depends_on is not None else [],
         costAccrued=task.cost_accrued,
         etaMinutes=task.eta_minutes,
         summary=task.summary,
@@ -57,6 +58,12 @@ def _task_response(task, contract: str) -> TaskResponse:
         costRate=task.cost_rate,
         contract=contract,
     )
+
+
+async def _task_responses(session, business_id: str, tasks, contract: str) -> list[TaskResponse]:
+    """TaskResponse list with dependency edges (one edge query for the set)."""
+    edges = await _tasks.dependency_map(session, [t.id for t in tasks])
+    return [_task_response(t, contract, edges.get(t.id, [])) for t in tasks]
 
 
 def _factory(request: Request):

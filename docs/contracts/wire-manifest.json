@@ -818,6 +818,10 @@
           "nullable": true,
           "type": "decimal-as-string"
         },
+        "dependsOn": {
+          "default": [],
+          "type": "array"
+        },
         "etaMinutes": {
           "type": "integer"
         },

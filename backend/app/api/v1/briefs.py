@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from app.api.v1.executions import _factory, _settings, _task_response
+from app.api.v1.executions import _factory, _settings, _task_responses
 from app.api.v1.reads import _approval_response, _project_response
 from app.api.v1.schemas import BriefResponse, PlanResponse
 from app.core.auth import check_client_contract
@@ -263,11 +263,13 @@ async def submit_answers(business_id: str, brief_id: str, body: BriefAnswers, re
         )
 
 
-def _plan_response(brief_id: str, project, tasks, approvals, contract: str) -> PlanResponse:
+async def _plan_response(
+    session, business_id: str, brief_id: str, project, tasks, approvals, contract: str
+) -> PlanResponse:
     return PlanResponse(
         briefId=brief_id,
         project=_project_response(project, contract),
-        tasks=[_task_response(t, contract) for t in tasks],
+        tasks=await _task_responses(session, business_id, tasks, contract),
         approvals=[_approval_response(a, contract) for a in approvals],
         contract=contract,
     )
@@ -280,7 +282,7 @@ async def _saved_plan(session, business_id: str, brief, contract: str) -> PlanRe
         raise HTTPException(status_code=500, detail="Brief state unclear.")
     tasks = await _tasks.list_for_project(session, business_id, project.id)
     approvals = await _approvals.list_for_project(session, business_id, project.id)
-    return _plan_response(brief.id, project, tasks, approvals, contract)
+    return await _plan_response(session, business_id, brief.id, project, tasks, approvals, contract)
 
 
 class _PlanRaceLost(Exception):
@@ -349,8 +351,14 @@ async def create_plan(business_id: str, brief_id: str, request: Request):
                 if not won:
                     # Lost the race: roll everything back, re-read below.
                     raise _PlanRaceLost()
-                response = _plan_response(
-                    brief_id, project, made_tasks, made_approvals, settings.contract_version
+                response = await _plan_response(
+                    session,
+                    business_id,
+                    brief_id,
+                    project,
+                    made_tasks,
+                    made_approvals,
+                    settings.contract_version,
                 )
     except DanglingReferenceError as exc:
         raise HTTPException(

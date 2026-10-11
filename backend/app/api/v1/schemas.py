@@ -25,6 +25,9 @@ class TaskResponse(Contracted):
     owner_agent_id: str = Field(alias="ownerAgentId")
     status: str
     progress: int
+    # Contract §1 always required dependsOn; the read API omitted it until
+    # amendment v1.10. Additive optional field — wire stays v1.
+    depends_on: list[str] = Field(default_factory=list, alias="dependsOn")
     cost_accrued: Decimal = Field(alias="costAccrued")
     eta_minutes: int = Field(alias="etaMinutes")
     summary: str

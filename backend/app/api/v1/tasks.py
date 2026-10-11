@@ -7,7 +7,7 @@ operator auth + contract header apply.
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.v1.executions import _factory, _settings
+from app.api.v1.executions import _factory, _settings, _task_responses
 from app.api.v1.schemas import TaskResponse
 from app.core.auth import check_client_contract
 from app.core.identity import require_business
@@ -32,20 +32,5 @@ async def read_task(business_id: str, project_id: str, task_id: str, request: Re
         if task is None or task.project_id != project_id:
             # Uniform 404: never distinguish "missing" from "foreign scope".
             raise HTTPException(status_code=404, detail="Task not found in scope.")
-        return TaskResponse(
-            id=task.id,
-            businessId=task.business_id,
-            projectId=task.project_id,
-            title=task.title,
-            ownerAgentId=task.owner_agent_id,
-            status=task.status,
-            progress=task.progress,
-            costAccrued=task.cost_accrued,
-            etaMinutes=task.eta_minutes,
-            summary=task.summary,
-            attempts=task.attempts,
-            approvalGateId=task.approval_gate_id,
-            gateAt=task.gate_at,
-            costRate=task.cost_rate,
-            contract=settings.contract_version,
-        )
+        (response,) = await _task_responses(session, business_id, [task], settings.contract_version)
+        return response

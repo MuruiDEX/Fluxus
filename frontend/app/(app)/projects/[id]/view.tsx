@@ -6,6 +6,7 @@ import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
+import { PlanDriverPanel } from "@/components/system/PlanDriver";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveProject, useLiveTasks } from "@/lib/store/live";
@@ -270,12 +271,15 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
       approvals={[]}
       badge={<LiveBadge />}
       engineSlot={
-        <span
-          title="Each task runs on the server when you press its Run button."
-          className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
-        >
-          Server-side runs
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <PlanDriverPanel businessId={businessId} projectId={project.id} />
+          <span
+            title="Each task runs on the server when you press its Run button."
+            className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
+          >
+            Server-side runs
+          </span>
+        </div>
       }
       renderTaskAction={(t) => (
         <TaskRunButton businessId={businessId} projectId={project.id} taskId={t.id} />

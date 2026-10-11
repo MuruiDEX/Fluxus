@@ -229,6 +229,8 @@ export interface ApiTask {
   ownerAgentId: string;
   status: TaskStatus;
   progress: number;
+  /** Stored dependency edges (contract §1; v1.10 — older servers omit it). */
+  dependsOn?: string[];
   costAccrued: Money;
   etaMinutes: number;
   summary: string;
@@ -560,5 +562,72 @@ export async function apiRunExecution(
   return api<ApiExecution>(
     `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/tasks/${id(taskId)}/executions`,
     { method: "POST", body, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 8.4 plan driver — brief resume, dependency edges, stale-run recovery.
+// ---------------------------------------------------------------------------
+
+export type BriefStatus =
+  | "draft"
+  | "questions_ready"
+  | "brief_ready"
+  | "planned"
+  | "running"
+  | "completed"
+  | "failed";
+
+export interface ApiBrief {
+  id: string;
+  businessId: string;
+  goal: string;
+  status: BriefStatus;
+  questions: { id: string; text: string; options?: string[] }[];
+  answers: unknown[];
+  summary: Record<string, unknown> | null;
+  projectId: string | null;
+  contract: string;
+}
+
+export async function apiGetBrief(businessId: string, briefId: string, opts?: RequestOpts) {
+  return api<ApiBrief>(`/api/v1/businesses/${id(businessId)}/briefs/${id(briefId)}`, {
+    signal: opts?.signal,
+  });
+}
+
+export type RecoveryOutcome = "recovered" | "not_stale" | "not_found";
+
+export interface ApiRecovery {
+  outcome: RecoveryOutcome;
+  taskId: string;
+  status: string | null;
+  contract: string;
+}
+
+export function isRecoveryOutcome(value: unknown): value is RecoveryOutcome {
+  return value === "recovered" || value === "not_stale" || value === "not_found";
+}
+
+/**
+ * Outcome carried inside the 409 answer (recovered from ApiError.payload).
+ * The recovery endpoint answers 409 with a RecoveryResponse body — NOT the
+ * error envelope — when the row exists but does not qualify.
+ */
+export function recoveryOutcomeOf(payload: unknown): RecoveryOutcome | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const outcome = (payload as { outcome?: unknown }).outcome;
+  return isRecoveryOutcome(outcome) ? outcome : null;
+}
+
+export async function apiRecoverTask(
+  businessId: string,
+  projectId: string,
+  taskId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiRecovery>(
+    `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/tasks/${id(taskId)}/recover`,
+    { method: "POST", body: {}, signal: opts?.signal },
   );
 }
