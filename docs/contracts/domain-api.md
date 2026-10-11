@@ -17,6 +17,7 @@ Any deviation requires a contract amendment (new section below + minor version b
 | BrainEntry | `BrainEntry` | `id, businessId, category: BrainCategory, title, body, updatedLabel` |
 | MarketplaceAgent | `MarketplaceAgent` | `slug, name, role, blurb, price, priceNote, rating, installs, badge?, capabilities[], permissions, category` |
 | ActivityEvent | `ActivityEvent` | `id, at, agentName, text, kind: ActivityKind, cost?` |
+| Brief | `Brief` | `id, businessId, goal, status: BriefStatus, questions[{id, text, options?}], answers?, summary?, projectId?` |
 
 ## 2. Enumerations (exact wire literals — case-sensitive)
 
@@ -27,6 +28,8 @@ TaskStatus   = not_started | working | waiting_dependency | waiting_assets
              | waiting_approval | completed | failed
 ProjectStatus = planning | in_progress | review | completed
 ApprovalStatus = pending | approved | rejected
+BriefStatus = draft | questions_ready | brief_ready | planned | running
+            | completed | failed
 BrainCategory  = company | audience | model | brand | goals
                | decisions | knowledge | results
 MarketplaceCategory = employee | pack | automation | template | integration
@@ -179,3 +182,6 @@ SaaS without reshaping `businessId` scoping:
 | 2026-10-11 | v1.4 | Stage 7.0 read API: additive `GET` lists + single gets for business/projects/tasks/agents/approvals/activity/brain (`limit/offset` paging, `total`, stable `id` order, `?project_id` / `?category` filters) — new endpoints only; existing shapes, codes and wire `v1` unchanged |
 | 2026-10-11 | v1.5 | Stage 7.6 approval decisions: additive `POST .../approvals/{id}/approve|reject` (pending → approved|rejected via one conditional UPDATE + audit event in one txn; repeat = 200 `already_*`, opposite-after-terminal = 409 `conflict`, uniform 404 for foreign/missing; linked task untouched — executor re-reads the gate live) — new endpoints + `DecisionResponse` only; existing shapes, codes and wire `v1` unchanged |
 | 2026-10-11 | v1.6 | `GET /auth/me` re-issues the session `csrf_token` (same value, additive optional field): full page loads recover mutation ability without re-login — existing shapes, codes and wire `v1` unchanged |
+| 2026-10-11 | v1.7 | Stage 8.1 Team-Lead intake: additive `POST .../briefs` (goal → 2–4 validated questions, ≤2 LLM generations, then 422 `validation_error`) + `GET .../briefs/{id}`, new `Brief` entity + `BriefStatus` — new endpoints and shapes only; existing shapes, codes and wire `v1` unchanged |
+| 2026-10-11 | v1.8 | Stage 8.2 answers & brief: additive `POST .../briefs/{id}/answers` (answers validated against stored questions, ≤2 summary generations, atomic `questions_ready` → `brief_ready` CAS; identical repeat = 200 saved result, different answers after finalize = 409 `conflict`) — new endpoint only; existing shapes, codes and wire `v1` unchanged |
+| 2026-10-11 | v1.9 | Stage 8.3 planning: additive `POST .../briefs/{id}/plan` (brief_ready only; ≤2 plan generations, ≤20 tasks; agents/refs/gates/budget validated; project + tasks + edges + approvals + `brief_ready` → `planned` CAS in one txn, full rollback on any error; concurrent planners serialize — loser re-reads the saved graph; planned repeat = 200 saved graph, no LLM; tasks never auto-started) + `PlanResponse` — new endpoint and shape only; existing shapes, codes and wire `v1` unchanged |

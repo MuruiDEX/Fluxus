@@ -25,6 +25,7 @@ TABLES = (
     "approvals",
     "tasks",
     "brain_entries",
+    "briefs",
     "marketplace_listings",
     "projects",
     "agents",

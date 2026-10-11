@@ -44,6 +44,16 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class BriefStatus(StrEnum):
+    DRAFT = "draft"
+    QUESTIONS_READY = "questions_ready"
+    BRIEF_READY = "brief_ready"
+    PLANNED = "planned"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class BrainCategory(StrEnum):
     COMPANY = "company"
     AUDIENCE = "audience"

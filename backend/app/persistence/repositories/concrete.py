@@ -22,6 +22,7 @@ from app.persistence.models.agent import Agent
 from app.persistence.models.approval import Approval
 from app.persistence.models.auth_session import AuthSession
 from app.persistence.models.brain_entry import BrainEntry
+from app.persistence.models.brief import Brief
 from app.persistence.models.business import Business
 from app.persistence.models.marketplace_listing import MarketplaceListing
 from app.persistence.models.membership import Membership
@@ -280,6 +281,28 @@ class ApprovalRepository(BaseRepository[Approval]):
             raise DanglingReferenceError(f"approval references missing gated task: {gated}")
         return await super().create(session, business_id, payload)
 
+    async def list_for_project(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        project_id: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[Approval]:
+        """Approvals of one project, stable id order (read API paging)."""
+        from sqlalchemy import select
+
+        stmt = (
+            select(Approval)
+            .where(Approval.business_id == business_id, Approval.project_id == project_id)
+            .order_by(Approval.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
     async def decide(
         self,
         session: AsyncSession,
@@ -352,6 +375,183 @@ class BrainRepository(BaseRepository[BrainEntry]):
             stmt = stmt.where(BrainEntry.category == category)
         res = await session.execute(stmt)
         return int(res.scalar_one())
+
+
+class BriefRepository(BaseRepository[Brief]):
+    model = Brief
+
+    async def create(self, session: AsyncSession, business_id: str, data: dict[str, Any]) -> Brief:
+        payload = dict(data)
+        raw_id = payload.get("id")
+        payload["id"] = raw_id if raw_id is not None else new_id()
+        validate_id(payload["id"])
+        goal = payload.get("goal", "")
+        if not isinstance(goal, str) or not goal.strip():
+            raise ValueError("goal must be a non-empty string")
+        payload["goal"] = goal.strip()
+        return await super().create(session, business_id, payload)
+
+    async def save_answers(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        brief_id: str,
+        *,
+        answers: list[dict],
+        summary: dict,
+    ) -> bool:
+        """Atomic finalize: single conditional UPDATE from questions_ready only.
+
+        Returns True iff this caller transitioned the row (rowcount==1).
+        Concurrent finalizers serialize on the row: exactly one wins, the
+        rest see rowcount 0 and must re-read instead of assuming ownership —
+        the same pattern as TaskRepository.claim_task. The caller MUST commit
+        promptly; answers and summary are already validated.
+        """
+        from app.persistence.enums import BriefStatus
+
+        stmt = (
+            update(Brief)
+            .where(
+                Brief.business_id == business_id,
+                Brief.id == brief_id,
+                Brief.status == BriefStatus.QUESTIONS_READY.value,
+            )
+            # Explicit updated_at: bulk UPDATE does not fire column onupdate.
+            .values(
+                answers=answers,
+                summary=summary,
+                status=BriefStatus.BRIEF_READY.value,
+                updated_at=func.now(),
+            )
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
+
+    async def mark_planned(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        brief_id: str,
+        *,
+        project_id: str,
+    ) -> bool:
+        """Atomic plan commit: single conditional UPDATE from brief_ready only.
+
+        Returns True iff this caller transitioned the row (rowcount==1).
+        Concurrent planners serialize on the row: exactly one wins, the rest
+        see rowcount 0 and must re-read instead of assuming ownership — the
+        same pattern as save_answers / TaskRepository.claim_task. The caller
+        creates the project graph in the SAME transaction before this call,
+        so a win means graph + brief transition commit together, and a loss
+        rolls the whole graph back with it.
+        """
+        from app.persistence.enums import BriefStatus
+
+        stmt = (
+            update(Brief)
+            .where(
+                Brief.business_id == business_id,
+                Brief.id == brief_id,
+                Brief.status == BriefStatus.BRIEF_READY.value,
+            )
+            # Explicit updated_at: bulk UPDATE does not fire column onupdate.
+            .values(
+                project_id=project_id,
+                status=BriefStatus.PLANNED.value,
+                updated_at=func.now(),
+            )
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
+
+
+class PlanningRepository:
+    """Atomic work-plan materialization (Stage 8.3).
+
+    `create_plan_graph` turns a validated + normalized plan into a project,
+    its tasks, dependency edges, and gate approvals. The caller MUST hold one
+    database transaction around this call plus `BriefRepository.mark_planned`:
+    any error rolls the whole graph back, and the brief transition commits
+    if and only if the graph does.
+
+    Insert ordering is explicit, never assumed from a single flush: every
+    referenced row is flushed by its repository create before anything points
+    at it (project → gateless/edgeless tasks → approvals → gate links +
+    edges). Tasks and approvals reference each other through two nullable FKs
+    (`tasks.approval_gate_id`, `approvals.gates_task_id`), so the links land
+    last, by direct attribute assignment on same-session ORM objects.
+    """
+
+    async def create_plan_graph(
+        self, session: AsyncSession, business_id: str, plan: dict[str, Any]
+    ) -> tuple[Project, list[Task], list[Approval]]:
+        raw_project = plan["project"]
+        plan_tasks = plan["tasks"]
+        owners = sorted({t["owner_agent_id"] for t in plan_tasks})
+        requesters = sorted({t["gate"]["requested_by_agent_id"] for t in plan_tasks if "gate" in t})
+        agents = AgentRepository()
+        for agent_id in (*owners, *requesters):
+            if await agents.get(session, business_id, agent_id) is None:
+                raise DanglingReferenceError(f"plan references missing agent: {agent_id}")
+        projects = ProjectRepository()
+        project_payload: dict[str, Any] = {
+            "title": raw_project["title"],
+            "goal": raw_project.get("goal", ""),
+            "deadline": raw_project.get("deadline", ""),
+            "team_ids": owners,
+        }
+        for money_key in ("budget", "ai_budget"):
+            if money_key in raw_project:
+                project_payload[money_key] = raw_project[money_key]
+        project = await projects.create(session, business_id, project_payload)
+
+        tasks_repo = TaskRepository()
+        made: list[Task] = []
+        by_key: dict[str, Task] = {}
+        for item in plan_tasks:
+            task_payload: dict[str, Any] = {
+                "project_id": project.id,
+                "title": item["title"],
+                "summary": item.get("summary", ""),
+                "eta_minutes": item.get("eta_minutes", 0),
+                "gate_at": item.get("gate_at", 100),
+                "owner_agent_id": item["owner_agent_id"],
+            }
+            task = await tasks_repo.create(session, business_id, task_payload)
+            made.append(task)
+            by_key[item["key"]] = task
+
+        approvals_repo = ApprovalRepository()
+        made_approvals: list[Approval] = []
+        for item, task in zip(plan_tasks, made, strict=True):
+            gate = item.get("gate")
+            if gate is None:
+                continue
+            approval_payload: dict[str, Any] = {
+                "project_id": project.id,
+                "title": gate["title"],
+                "requested_by_agent_id": gate["requested_by_agent_id"],
+                "requested_by": gate.get("requested_by", ""),
+                "what": gate.get("what", ""),
+                "expected_result": gate.get("expected_result", ""),
+                "cost": gate.get("cost", ""),
+                "affects": gate.get("affects", ""),
+                "rationale": gate.get("rationale", ""),
+                "gates_task_id": task.id,
+            }
+            approval = await approvals_repo.create(session, business_id, approval_payload)
+            task.approval_gate_id = approval.id
+            made_approvals.append(approval)
+
+        for item in plan_tasks:
+            task = by_key[item["key"]]
+            for dep_key in item.get("depends_on", []):
+                session.add(TaskDependency(task_id=task.id, depends_on_id=by_key[dep_key].id))
+        await session.flush()
+        return project, made, made_approvals
 
 
 class UserRepository:

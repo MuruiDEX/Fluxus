@@ -58,6 +58,7 @@ async def test_upgrade_downgrade_cycle(mig_db_url: str) -> None:
         "task_dependencies",
         "approvals",
         "brain_entries",
+        "briefs",
         "marketplace_listings",
         "activity_events",
         "users",
@@ -68,10 +69,11 @@ async def test_upgrade_downgrade_cycle(mig_db_url: str) -> None:
 
     command.downgrade(cfg, "-1")
     names_after = await _table_names(mig_db_url)
-    assert "businesses" in names_after  # only 0002 reverted
-    assert "users" not in names_after
-    assert "memberships" not in names_after
-    assert "auth_sessions" not in names_after
+    assert "businesses" in names_after  # only 0003 reverted
+    assert "briefs" not in names_after
+    assert "users" in names_after
+    assert "memberships" in names_after
+    assert "auth_sessions" in names_after
 
     command.downgrade(cfg, "base")
     assert "businesses" not in await _table_names(mig_db_url)

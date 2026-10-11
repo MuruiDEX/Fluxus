@@ -38,6 +38,23 @@ class ExecutionCreate(BaseModel):
     timeout_s: float | None = Field(default=None, gt=0)
 
 
+class BriefQuestionResponse(BaseModel):
+    id: str
+    text: str
+    options: list[str] | None = None
+
+
+class BriefResponse(Contracted):
+    id: str
+    business_id: str = Field(alias="businessId")
+    goal: str
+    status: str
+    questions: list[BriefQuestionResponse] = Field(default_factory=list)
+    answers: list = Field(default_factory=list)
+    summary: dict | None = None
+    project_id: str | None = Field(default=None, alias="projectId")
+
+
 class ExecutionError(BaseModel):
     code: str
     message: str
@@ -196,3 +213,12 @@ class DecisionResponse(Contracted):
     outcome: str
     approval_id: str = Field(alias="approvalId")
     status: str | None = None
+
+
+class PlanResponse(Contracted):
+    # Stage 8.3: the materialized work plan — saved project graph + gate
+    # approvals for a planned brief. Additive shape; wire stays v1.
+    brief_id: str = Field(alias="briefId")
+    project: ProjectResponse
+    tasks: list[TaskResponse] = Field(default_factory=list)
+    approvals: list[ApprovalResponse] = Field(default_factory=list)

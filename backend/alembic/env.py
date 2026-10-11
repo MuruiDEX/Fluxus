@@ -22,6 +22,7 @@ from app.persistence.models import (  # noqa: F401
     approval,
     auth_session,
     brain_entry,
+    brief,
     business,
     marketplace_listing,
     membership,

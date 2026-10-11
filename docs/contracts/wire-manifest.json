@@ -62,6 +62,26 @@
       "response": "BrainListResponse"
     },
     {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/briefs",
+      "response": "BriefResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}",
+      "response": "BriefResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}/answers",
+      "response": "BriefResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}/plan",
+      "response": "PlanResponse"
+    },
+    {
       "method": "GET",
       "path": "/api/v1/businesses/{business_id}/projects",
       "response": "ProjectListResponse"
@@ -398,6 +418,69 @@
         "title"
       ]
     },
+    "BriefQuestionResponse": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "options": {
+          "default": null,
+          "nullable": true,
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "BriefResponse": {
+      "properties": {
+        "answers": {
+          "default": [],
+          "type": "array"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "questions": {
+          "default": [],
+          "type": "array"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "default": null,
+          "nullable": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "businessId",
+        "goal",
+        "id",
+        "status"
+      ]
+    },
     "BusinessListResponse": {
       "properties": {
         "contract": {
@@ -549,6 +632,32 @@
       "required": [
         "outcome",
         "taskId"
+      ]
+    },
+    "PlanResponse": {
+      "properties": {
+        "approvals": {
+          "default": [],
+          "type": "array"
+        },
+        "briefId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "project": {
+          "type": "ProjectResponse"
+        },
+        "tasks": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "briefId",
+        "project"
       ]
     },
     "ProjectListResponse": {
