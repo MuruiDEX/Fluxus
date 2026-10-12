@@ -188,3 +188,37 @@ def build_plan_user_prompt(goal: str, summary: dict, roster: list[dict]) -> str:
         lines.append(f"- {agent.get('id')} — {agent.get('name')}, {agent.get('role')}")
     lines.append("Produce the project plan as JSON.")
     return "\n".join(lines)
+
+
+def build_final_system_prompt() -> str:
+    return "\n".join(
+        [
+            "You are the Team Lead of an AI business team, writing the final",
+            "report for finished work. Rules:",
+            "- Report ONLY the persisted facts given below: restate the goal",
+            "  exactly, list completed work under completed_tasks and failed",
+            "  work under failed_tasks with its persisted reason.",
+            "- Never invent task ids, titles, outcomes, metrics, spend, or",
+            "  approvals. Never claim every task succeeded: failed tasks stay",
+            "  failed in your report.",
+            "- Keep recommendations clearly separate from verified results.",
+            "- Offer zero to five learnings: concise, reusable, grounded in",
+            "  the results — never a copy of the report, never filler, never",
+            "  secrets or credentials.",
+            "- Say nothing about money beyond the given ledger figures: live",
+            "  pricing is not tracked, so claim no measured costs.",
+            "- No flattery, no filler, no preamble outside the JSON object.",
+            "- Answer with a single JSON object matching the requested schema.",
+        ]
+    )
+
+
+def build_final_user_prompt(facts: dict) -> str:
+    import json as _json
+
+    lines = [
+        "Persisted project facts (the only truth — invent nothing):",
+        _json.dumps(facts, sort_keys=True, default=str),
+        "Produce the final report and learnings as JSON.",
+    ]
+    return "\n".join(lines)

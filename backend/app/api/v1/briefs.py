@@ -1,4 +1,4 @@
-"""Team-Lead intake endpoints (Stages 8.1–8.3): goal → questions → brief → plan.
+"""Team-Lead intake endpoints (Stages 8.1–8.5): goal → questions → brief → plan.
 
 POST .../briefs runs one bounded Team-Lead generation (at most two LLM
 calls) OUTSIDE any database transaction, then persists the validated Brief
@@ -9,8 +9,12 @@ generation outside any transaction, then finalizes answers + summary + the
 brief_ready transition atomically. POST .../briefs/{id}/plan runs one
 bounded plan generation outside any transaction, then materializes the
 project graph (project + tasks + dependency edges + gate approvals) and the
-brief_ready → planned transition in ONE transaction. GET re-reads saved rows
-so clients resume after reload. Created tasks are never started here.
+brief_ready → planned transition in ONE transaction. POST
+.../briefs/{id}/finalize runs one bounded report generation outside any
+transaction, then persists the validated report + Brain learnings + the
+planned → completed transition + audit event in ONE transaction. GET
+re-reads saved rows so clients resume after reload. Created tasks are never
+started here.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.executions import _factory, _settings, _task_responses
 from app.api.v1.reads import _approval_response, _project_response
-from app.api.v1.schemas import BriefResponse, PlanResponse
+from app.api.v1.schemas import BriefResponse, FinalizeResponse, PlanResponse
 from app.core.auth import check_client_contract
 from app.core.identity import require_business
 from app.llm.base import create_provider
@@ -30,10 +34,13 @@ from app.persistence.repositories.concrete import (
     ApprovalRepository,
     BriefRepository,
     BusinessRepository,
+    FinalizationRepository,
+    FinalizeNotEligible,
     PlanningRepository,
     ProjectRepository,
     TaskRepository,
 )
+from app.teamlead.finalize import generate_finalization
 from app.teamlead.planning import generate_plan
 from app.teamlead.questions import BriefGenerationError, generate_questions
 from app.teamlead.summary import generate_summary, validate_answers
@@ -51,6 +58,7 @@ _projects = ProjectRepository()
 _tasks = TaskRepository()
 _approvals = ApprovalRepository()
 _planning = PlanningRepository()
+_finalizing = FinalizationRepository()
 
 _GUARD = [Depends(check_client_contract), Depends(require_business)]
 
@@ -78,6 +86,7 @@ def _brief_response(brief, contract: str) -> BriefResponse:
         answers=brief.answers,
         summary=brief.summary,
         projectId=brief.project_id,
+        finalReport=brief.final_report,
         contract=contract,
     )
 
@@ -398,3 +407,158 @@ async def create_plan(business_id: str, brief_id: str, request: Request):
                 "message": f"Brief is {current.status}, not plannable.",
             },
         )
+
+
+def _finalize_response(envelope: dict, brief_id: str, contract: str) -> FinalizeResponse:
+    return FinalizeResponse(
+        briefId=brief_id,
+        projectId=envelope["project_id"],
+        status="completed",
+        report=envelope["report"],
+        learnings=envelope["learnings"],
+        costs=envelope["costs"],
+        contract=contract,
+    )
+
+
+def _stored_finalization(brief, contract: str) -> FinalizeResponse:
+    """Serve the persisted finalization result (no LLM, idempotent repeat)."""
+    envelope = brief.final_report
+    if not isinstance(envelope, dict):
+        # completed implies a report — anything else is corruption.
+        raise HTTPException(status_code=500, detail="Brief state unclear.")
+    return _finalize_response(envelope, brief.id, contract)
+
+
+@router.post(
+    "/businesses/{business_id}/briefs/{brief_id}/finalize",
+    response_model=FinalizeResponse,
+    dependencies=_GUARD,
+)
+async def finalize_brief(business_id: str, brief_id: str, request: Request):
+    settings = _settings(request)
+    factory = _factory(request)
+    async with factory() as session:
+        brief = await _briefs.get(session, business_id, brief_id)
+        if brief is None:
+            # Uniform 404: never distinguish "missing" from "foreign scope".
+            raise HTTPException(status_code=404, detail="Brief not found in scope.")
+        if brief.status == "completed":
+            # Idempotent repeat: the stored report, no LLM call.
+            return _stored_finalization(brief, settings.contract_version)
+        if brief.status != "planned":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "conflict",
+                    "message": f"Brief is {brief.status}, not finalizable.",
+                },
+            )
+        if not brief.project_id:
+            raise HTTPException(status_code=500, detail="Brief state unclear.")
+        goal = brief.goal
+        project_id = brief.project_id
+        project = await _projects.get(session, business_id, project_id)
+        if project is None:
+            raise HTTPException(status_code=500, detail="Brief state unclear.")
+        tasks = await _tasks.list_for_project(session, business_id, project_id)
+        approvals = await _approvals.list_for_project(session, business_id, project_id)
+        facts = {
+            "goal": goal,
+            "tasks": [
+                {"id": t.id, "title": t.title, "status": t.status, "summary": t.summary}
+                for t in tasks
+            ],
+            "approvals": [{"id": a.id, "title": a.title, "status": a.status} for a in approvals],
+            "ledger": {
+                "budget": str(project.budget),
+                "ai_budget": str(project.ai_budget),
+                "ai_spent": str(project.ai_spent),
+            },
+        }
+    # Pre-LLM eligibility: refuse early without spending the generation
+    # budget. Revalidated inside the transaction — races re-check there.
+    _require_finalizable(tasks, approvals)
+    try:
+        provider = create_provider(settings)
+    except LlmError as exc:
+        raise _provider_error_to_http(exc) from exc
+    try:
+        result = await generate_finalization(provider, settings, facts)
+    except BriefGenerationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "validation_error",
+                "message": "Model output failed validation.",
+                "details": exc.violations,
+            },
+        ) from exc
+    except LlmError as exc:
+        raise _provider_error_to_http(exc) from exc
+    try:
+        async with factory() as session:
+            async with session.begin():
+                outcome = await _finalizing.finalize(session, business_id, brief_id, result=result)
+                if outcome is None:
+                    # Lost the race or vanished: roll back, re-read below.
+                    raise _FinalizeRaceLost()
+                envelope, _, _ = outcome
+                response = _finalize_response(envelope, brief_id, settings.contract_version)
+    except FinalizeNotEligible as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "conflict", "message": str(exc)},
+        ) from exc
+    except _FinalizeRaceLost:
+        pass
+    except IntegrityError as exc:
+        # Unreachable after validation + scoped checks; fail closed.
+        raise HTTPException(status_code=500, detail="Brief could not be finalized.") from exc
+    except Exception as exc:
+        # Fail closed with a fixed safe message (never leak internals).
+        # CancelledError is BaseException, not Exception: cancellation still
+        # propagates untouched and stores nothing.
+        raise HTTPException(status_code=500, detail="Brief could not be finalized.") from exc
+    else:
+        return response
+    # CAS lost: a concurrent finalization won — re-read under scope, never assume.
+    async with factory() as session:
+        current = await _briefs.get(session, business_id, brief_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Brief not found in scope.")
+        if current.status == "completed":
+            return _stored_finalization(current, settings.contract_version)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "conflict",
+                "message": f"Brief is {current.status}, not finalizable.",
+            },
+        )
+
+
+class _FinalizeRaceLost(Exception):
+    """Internal signal: CAS lost, roll back and re-read the brief."""
+
+
+def _require_finalizable(tasks, approvals) -> None:
+    """Pre-LLM terminal-state check; revalidated in-transaction at commit."""
+    for task in tasks:
+        if task.status not in ("completed", "failed"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "conflict",
+                    "message": f"Task {task.id} is {task.status}, not terminal.",
+                },
+            )
+    for approval in approvals:
+        if approval.status not in ("approved", "rejected"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "conflict",
+                    "message": f"Approval {approval.id} is {approval.status}, not terminal.",
+                },
+            )

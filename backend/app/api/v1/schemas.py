@@ -56,6 +56,9 @@ class BriefResponse(Contracted):
     answers: list = Field(default_factory=list)
     summary: dict | None = None
     project_id: str | None = Field(default=None, alias="projectId")
+    # Stage 8.5 finalization envelope (report + learnings + costs); NULL until
+    # the brief completes. Additive optional field — wire stays v1.
+    final_report: dict | None = Field(default=None, alias="finalReport")
 
 
 class ExecutionError(BaseModel):
@@ -225,3 +228,22 @@ class PlanResponse(Contracted):
     project: ProjectResponse
     tasks: list[TaskResponse] = Field(default_factory=list)
     approvals: list[ApprovalResponse] = Field(default_factory=list)
+
+
+class FinalizeLearning(BaseModel):
+    id: str
+    category: str
+    title: str
+    body: str
+
+
+class FinalizeResponse(Contracted):
+    # Stage 8.5: the persisted finalization result — validated report from
+    # saved rows, stored Brain learnings, and server-rendered ledger costs.
+    # Additive shape; wire stays v1.
+    brief_id: str = Field(alias="briefId")
+    project_id: str = Field(alias="projectId")
+    status: str
+    report: dict = Field(default_factory=dict)
+    learnings: list[FinalizeLearning] = Field(default_factory=list)
+    costs: dict = Field(default_factory=dict)

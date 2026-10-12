@@ -587,6 +587,13 @@ export interface ApiBrief {
   answers: unknown[];
   summary: Record<string, unknown> | null;
   projectId: string | null;
+  /** Stage 8.5 finalization envelope; null until the brief completes. */
+  finalReport?: {
+    project_id: string;
+    report: ApiFinalReport;
+    learnings: ApiFinalLearning[];
+    costs: ApiFinalCosts;
+  } | null;
   contract: string;
 }
 
@@ -594,6 +601,65 @@ export async function apiGetBrief(businessId: string, briefId: string, opts?: Re
   return api<ApiBrief>(`/api/v1/businesses/${id(businessId)}/briefs/${id(briefId)}`, {
     signal: opts?.signal,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Stage 8.5 finalization — mirrors FinalizeResponse (verified shapes only).
+// ---------------------------------------------------------------------------
+
+export interface ApiFinalTaskEntry {
+  id: string;
+  title: string;
+  summary: string;
+}
+
+export interface ApiFinalFailedEntry {
+  id: string;
+  title: string;
+  reason: string;
+}
+
+export interface ApiFinalReport {
+  goal: string;
+  completed_tasks: ApiFinalTaskEntry[];
+  failed_tasks: ApiFinalFailedEntry[];
+  limitations: string[];
+  recommendations: string[];
+}
+
+export interface ApiFinalLearning {
+  id: string;
+  category: string;
+  title: string;
+  body: string;
+}
+
+export interface ApiFinalCosts {
+  budget: string;
+  ai_budget: string;
+  ai_spent: string;
+  note: string;
+}
+
+export interface ApiFinalize {
+  briefId: string;
+  projectId: string;
+  status: string;
+  report: ApiFinalReport;
+  learnings: ApiFinalLearning[];
+  costs: ApiFinalCosts;
+  contract: string;
+}
+
+export async function apiFinalizeBrief(
+  businessId: string,
+  briefId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiFinalize>(
+    `/api/v1/businesses/${id(businessId)}/briefs/${id(briefId)}/finalize`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
 }
 
 export type RecoveryOutcome = "recovered" | "not_stale" | "not_found";

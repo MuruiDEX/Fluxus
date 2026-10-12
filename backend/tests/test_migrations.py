@@ -32,6 +32,14 @@ async def _table_names(url: str) -> set[str]:
     return names
 
 
+async def _column_names(url: str, table: str) -> set[str]:
+    engine = create_engine_from_url(url)
+    async with engine.connect() as conn:
+        cols = await conn.run_sync(lambda c: {col["name"] for col in inspect(c).get_columns(table)})
+    await engine.dispose()
+    return cols
+
+
 @pytest.mark.asyncio()
 async def test_upgrade_downgrade_cycle(mig_db_url: str) -> None:
     # Start from a guaranteed-empty schema (two statements: asyncpg
@@ -69,11 +77,15 @@ async def test_upgrade_downgrade_cycle(mig_db_url: str) -> None:
 
     command.downgrade(cfg, "-1")
     names_after = await _table_names(mig_db_url)
-    assert "businesses" in names_after  # only 0003 reverted
-    assert "briefs" not in names_after
+    assert "businesses" in names_after  # only 0004 reverted
+    assert "briefs" in names_after
     assert "users" in names_after
     assert "memberships" in names_after
     assert "auth_sessions" in names_after
+    assert "final_report" not in await _column_names(mig_db_url, "briefs")
+
+    command.upgrade(cfg, "head")
+    assert "final_report" in await _column_names(mig_db_url, "briefs")
 
     command.downgrade(cfg, "base")
     assert "businesses" not in await _table_names(mig_db_url)

@@ -78,6 +78,11 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}/finalize",
+      "response": "FinalizeResponse"
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}/plan",
       "response": "PlanResponse"
     },
@@ -450,6 +455,11 @@
           "default": "v1",
           "type": "string"
         },
+        "finalReport": {
+          "default": null,
+          "nullable": true,
+          "type": "object"
+        },
         "goal": {
           "type": "string"
         },
@@ -632,6 +642,62 @@
       "required": [
         "outcome",
         "taskId"
+      ]
+    },
+    "FinalizeLearning": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "category",
+        "id",
+        "title"
+      ]
+    },
+    "FinalizeResponse": {
+      "properties": {
+        "briefId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "costs": {
+          "default": {},
+          "type": "object"
+        },
+        "learnings": {
+          "default": [],
+          "type": "array"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "report": {
+          "default": {},
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "briefId",
+        "projectId",
+        "status"
       ]
     },
     "PlanResponse": {

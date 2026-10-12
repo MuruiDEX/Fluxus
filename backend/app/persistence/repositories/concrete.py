@@ -492,6 +492,44 @@ class BriefRepository(BaseRepository[Brief]):
         await session.flush()
         return (result.rowcount or 0) == 1
 
+    async def mark_completed(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        brief_id: str,
+        *,
+        final_report: dict,
+    ) -> bool:
+        """Atomic finalization claim: single conditional UPDATE from planned only.
+
+        Returns True iff this caller transitioned the row (rowcount==1).
+        Concurrent finalizers serialize on the row: exactly one wins, the rest
+        see rowcount 0 and must re-read instead of assuming ownership — the
+        same pattern as mark_planned / save_answers. The caller persists the
+        report envelope, Brain entries, and audit event in the SAME
+        transaction before this call, so a win commits everything together
+        and a loss rolls everything back.
+        """
+        from app.persistence.enums import BriefStatus
+
+        stmt = (
+            update(Brief)
+            .where(
+                Brief.business_id == business_id,
+                Brief.id == brief_id,
+                Brief.status == BriefStatus.PLANNED.value,
+            )
+            # Explicit updated_at: bulk UPDATE does not fire column onupdate.
+            .values(
+                final_report=final_report,
+                status=BriefStatus.COMPLETED.value,
+                updated_at=func.now(),
+            )
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
+
 
 class PlanningRepository:
     """Atomic work-plan materialization (Stage 8.3).
@@ -577,6 +615,105 @@ class PlanningRepository:
                 session.add(TaskDependency(task_id=task.id, depends_on_id=by_key[dep_key].id))
         await session.flush()
         return project, made, made_approvals
+
+
+class FinalizeNotEligible(Exception):
+    """Persisted state does not permit finalization (maps to 409 conflict)."""
+
+
+class FinalizationRepository:
+    """Atomic brief finalization (Stage 8.5).
+
+    `finalize` revalidates the authoritative state inside the caller's
+    transaction, persists the validated report envelope + Brain entries +
+    audit event, and claims planned → completed via one conditional UPDATE.
+    Returns the finalization result, or None when the CAS lost (caller
+    rolled back, must re-read). Raises FinalizeNotEligible when the
+    persisted graph is not terminally complete — nothing is written then
+    either. Any error rolls the whole batch back: never a completed brief
+    without its report, never a report with partial Brain entries.
+    """
+
+    _TERMINAL_TASKS = ("completed", "failed")
+    _TERMINAL_APPROVALS = ("approved", "rejected")
+
+    async def finalize(
+        self, session: AsyncSession, business_id: str, brief_id: str, *, result: dict
+    ) -> tuple[dict, list[BrainEntry], ActivityEvent] | None:
+        briefs = BriefRepository()
+        brief = await briefs.get(session, business_id, brief_id)
+        if brief is None:
+            return None
+        if brief.status == "completed":
+            # A concurrent finalizer won — serve the stored result instead.
+            return None
+        if brief.status != "planned":
+            raise FinalizeNotEligible(f"Brief is {brief.status}, not finalizable.")
+        if not brief.project_id:
+            raise FinalizeNotEligible("Brief has no project to finalize.")
+        project = await ProjectRepository().get(session, business_id, brief.project_id)
+        if project is None:
+            raise FinalizeNotEligible("Brief project is missing in scope.")
+        tasks = await TaskRepository().list_for_project(session, business_id, project.id)
+        for task in tasks:
+            if task.status not in self._TERMINAL_TASKS:
+                raise FinalizeNotEligible(f"Task {task.id} is {task.status}, not terminal.")
+        approvals = await ApprovalRepository().list_for_project(session, business_id, project.id)
+        for approval in approvals:
+            if approval.status not in self._TERMINAL_APPROVALS:
+                raise FinalizeNotEligible(
+                    f"Approval {approval.id} is {approval.status}, not terminal."
+                )
+        brains: list[BrainEntry] = []
+        for learning in result["learnings"]:
+            brains.append(
+                await BrainRepository().create(
+                    session,
+                    business_id,
+                    {
+                        "id": new_id(),
+                        "category": learning["category"],
+                        "title": learning["title"],
+                        "body": learning["body"],
+                    },
+                )
+            )
+        completed = sum(1 for t in tasks if t.status == "completed")
+        costs = {
+            "budget": str(project.budget),
+            "ai_budget": str(project.ai_budget),
+            "ai_spent": str(project.ai_spent),
+            "note": (
+                "Configured ledger values, not measured costs: live pricing "
+                "is not tracked in this version."
+            ),
+        }
+        envelope = {
+            "project_id": project.id,
+            "report": result["report"],
+            "learnings": [
+                {"id": b.id, "category": b.category, "title": b.title, "body": b.body}
+                for b in brains
+            ],
+            "costs": costs,
+        }
+        won = await briefs.mark_completed(session, business_id, brief_id, final_report=envelope)
+        if not won:
+            return None
+        event = await ActivityRepository().append(
+            session,
+            business_id,
+            {
+                "project_id": project.id,
+                "agent_name": "Team Lead",
+                "kind": "result",
+                "text": (
+                    f"Brief {brief_id} finalized: {completed} of {len(tasks)} "
+                    f"tasks completed, {len(brains)} learnings saved."
+                ),
+            },
+        )
+        return envelope, brains, event
 
 
 class UserRepository:
