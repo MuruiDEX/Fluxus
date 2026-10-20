@@ -113,6 +113,70 @@ export interface Project {
   deadline: string;
   teamIds: ID[];
   milestones: { label: string; done: boolean }[];
+  /** Stage 16 (v1.17): opt in to best-effort AI calls without a tariff. */
+  allowUnpricedAi?: boolean;
+}
+
+export type UsageCostSource = "provider" | "tariff" | "unknown";
+export type UsageStatus = "confirmed" | "estimated" | "unknown";
+export type UsageCallKind =
+  | "task_execution"
+  | "brief_questions"
+  | "brief_summary"
+  | "plan_generation"
+  | "brief_finalize";
+
+export interface UsageRecord {
+  id: ID;
+  businessId: ID;
+  projectId: ID | null;
+  taskId: ID | null;
+  agentId: ID | null;
+  attempt: number;
+  provider: string;
+  model: string;
+  callKind: UsageCallKind | null;
+  providerRequestId: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens: number | null;
+  reasoningTokens: number | null;
+  /** `null` when unknown — never coerced to zero (v1.17). */
+  costAmount: number | null;
+  currency: string;
+  costSource: UsageCostSource;
+  usageStatus: UsageStatus;
+  tariffVersion: string | null;
+  occurredAt: string;
+}
+
+export interface UsageReservationSummary {
+  active: number;
+  ambiguous: number;
+  consumed: number;
+  released: number;
+  writtenOff: number;
+}
+
+export interface UsageCallKindSummary {
+  confirmedCost: number;
+  estimatedCost: number;
+  unknownCount: number;
+}
+
+export interface UsageSummary {
+  confirmedCost: number;
+  estimatedCost: number;
+  unknownCount: number;
+  byCallKind: Record<string, UsageCallKindSummary>;
+  reservations: UsageReservationSummary;
+}
+
+export interface UsageView {
+  records: UsageRecord[];
+  total: number;
+  summary: UsageSummary;
 }
 
 export interface Approval {
@@ -163,6 +227,58 @@ export interface MarketplaceAgent {
   permissions: AgentPermissions;
   capabilities: string[];
   category: "employee" | "pack" | "automation" | "template" | "integration";
+  /** LIVE only: hired into the requesting business (server-computed). */
+  hired?: boolean;
+  /** LIVE only: pack installed for the requesting business (server-computed). */
+  installed?: boolean;
+  installedVersion?: string | null;
+}
+
+export interface PackAgentPreview {
+  slug: string;
+  name: string;
+  role: string;
+  capabilities: string[];
+  agentId: string | null;
+  action: "create" | "reuse" | "blocked";
+}
+
+export interface PackWorkflowTask {
+  key: string;
+  title: string;
+  ownerAgentSlug: string;
+  dependsOn: string[];
+}
+
+export interface PackWorkflow {
+  ref: string;
+  title: string;
+  goal: string;
+  projectId: string | null;
+  tasks: PackWorkflowTask[];
+}
+
+export interface Pack {
+  slug: string;
+  version: string;
+  name: string;
+  description: string;
+  blurb: string;
+  price: string;
+  priceNote: string;
+  rating: number;
+  installs: string;
+  installed: boolean;
+  installedVersion: string | null;
+  installedAt: string | null;
+  agents: PackAgentPreview[];
+  workflow: PackWorkflow | null;
+}
+
+export interface PackPreview {
+  pack: Pack;
+  canInstall: boolean;
+  blockers: { code: string; message: string }[];
 }
 
 export interface ActivityEvent {

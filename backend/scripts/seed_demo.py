@@ -18,11 +18,132 @@ from app.persistence.engine import create_engine_from_url, session_factory  # no
 from app.persistence.models.agent import Agent  # noqa: E402
 from app.persistence.models.approval import Approval  # noqa: E402
 from app.persistence.models.business import Business  # noqa: E402
+from app.persistence.models.marketplace_listing import MarketplaceListing  # noqa: E402
 from app.persistence.models.project import Project  # noqa: E402
 from app.persistence.models.task import Task, TaskDependency  # noqa: E402
 from app.persistence.repositories.spend import recalculate_project_spend  # noqa: E402
 
 DEV_URL = os.environ.get("APP_DATABASE_URL", "postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse")
+
+# Global catalog mirror of frontend/lib/data/seed-northstar.ts `marketplace`
+# (slugs, categories, copy, capabilities, permissions, prices). Idempotent:
+# existing slugs are left untouched so re-runs never duplicate or reset.
+CATALOG: list[dict] = [
+    {
+        "id": "fitness-pack",
+        "name": "Fitness Business Pack",
+        "role": "Business pack",
+        "blurb": "Complete AI team and tools to run a fitness business.",
+        "price": "$99/month",
+        "price_note": "one-click install",
+        "rating": 4.9,
+        "installs": "2.1k",
+        "badge": "Popular",
+        "capabilities": ["Sales AI", "Support AI", "Booking flow", "CRM pipeline"],
+        "permissions": {
+            "read": ["CRM"],
+            "write": ["CRM"],
+            "actions": ["Send email"],
+            "denied": ["Spend over budget"],
+        },
+        "category": "pack",
+    },
+    {
+        "id": "sales-manager",
+        "name": "AI Sales Manager",
+        "role": "Sales",
+        "blurb": "Qualify leads, follow up, update CRM.",
+        "price": "$29/month",
+        "price_note": "per month",
+        "rating": 4.9,
+        "installs": "5.1k",
+        "badge": None,
+        "capabilities": ["Lead scoring", "Follow-up", "Reports"],
+        "permissions": {
+            "read": ["CRM", "Customer data"],
+            "write": ["CRM"],
+            "actions": ["Send email"],
+            "denied": ["Change pricing"],
+        },
+        "category": "employee",
+    },
+    {
+        "id": "marketing-manager",
+        "name": "Marketing Manager",
+        "role": "Marketing",
+        "blurb": "Campaigns, content, ads.",
+        "price": "$29/month",
+        "price_note": "per month",
+        "rating": 4.8,
+        "installs": "3.2k",
+        "badge": None,
+        "capabilities": ["Campaigns", "Content", "Ads"],
+        "permissions": {
+            "read": ["CRM", "Analytics"],
+            "write": ["Draft campaigns"],
+            "actions": ["Prepare ads"],
+            "denied": ["Publish without approval"],
+        },
+        "category": "employee",
+    },
+    {
+        "id": "seo-specialist",
+        "name": "SEO Specialist AI",
+        "role": "SEO",
+        "blurb": "Keywords, briefs, audits for local search.",
+        "price": "$19/month",
+        "price_note": "per month",
+        "rating": 4.8,
+        "installs": "1.8k",
+        "badge": "New",
+        "capabilities": ["Keywords", "Briefs", "Audits"],
+        "permissions": {
+            "read": ["Web", "Analytics"],
+            "write": ["SEO briefs"],
+            "actions": [],
+            "denied": ["Edit production site"],
+        },
+        "category": "employee",
+    },
+    {
+        "id": "support-ai",
+        "name": "Customer Support AI",
+        "role": "Support",
+        "blurb": "Answer, classify, book, escalate.",
+        "price": "$19/month",
+        "price_note": "per month",
+        "rating": 4.7,
+        "installs": "4.4k",
+        "badge": None,
+        "capabilities": ["Chat", "Booking", "Escalation"],
+        "permissions": {
+            "read": ["Inbox", "Business Brain"],
+            "write": ["Replies"],
+            "actions": ["Reply"],
+            "denied": ["Refund"],
+        },
+        "category": "employee",
+    },
+    {
+        "id": "cfo-ai",
+        "name": "CFO AI",
+        "role": "Finance",
+        "blurb": "Forecasts, budgets, pricing analysis.",
+        "price": "$29/month",
+        "price_note": "per month",
+        "rating": 5.0,
+        "installs": "2.7k",
+        "badge": "Trending",
+        "capabilities": ["Forecasts", "Break-even", "Pricing"],
+        "permissions": {
+            "read": ["Finance"],
+            "write": ["Financial reports"],
+            "actions": [],
+            "denied": ["Move money"],
+        },
+        "category": "employee",
+    },
+]
 
 
 async def main() -> None:
@@ -30,6 +151,12 @@ async def main() -> None:
     factory = session_factory(engine)
     async with factory() as session:
         async with session.begin():
+            # Global catalog first: independent of the demo business, so a
+            # re-run backfills listings even when the business already exists.
+            for row in CATALOG:
+                if await session.get(MarketplaceListing, row["id"]) is None:
+                    session.add(MarketplaceListing(**row))
+            await session.flush()
             exists = await session.get(Business, "biz_northstar")
             if exists is not None:
                 print("demo seed already present — skipping")

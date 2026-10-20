@@ -19,6 +19,7 @@ import {
   Megaphone,
   Palette,
   Plug,
+  ReceiptText,
   Settings,
   ShoppingBag,
   Sparkles,
@@ -72,6 +73,7 @@ const groups: { label?: string; items: NavItem[] }[] = [
     label: "System",
     items: [
       { href: "/approvals", label: "Approvals", icon: Layers, badgeKind: "approvals" },
+      { href: "/usage", label: "Usage", icon: ReceiptText },
       { href: "/integrations", label: "Integrations", icon: Plug },
       { href: "/settings", label: "Settings", icon: Settings },
     ],

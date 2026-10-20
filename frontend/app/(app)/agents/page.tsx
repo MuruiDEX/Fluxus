@@ -1,16 +1,26 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { AgentStatusBadge, Avatar } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { AgentToggleButton } from "@/components/system/AgentToggle";
 
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgentsList } from "@/lib/store/live";
 import { useAgents } from "@/lib/store/app";
 import type { Agent } from "@/lib/domain/types";
 
-function AgentGrid({ agents }: { agents: Agent[] }) {
+function AgentGrid({
+  agents,
+  renderAction,
+  live,
+}: {
+  agents: Agent[];
+  renderAction?: (agent: Agent) => ReactNode;
+  /** LIVE rows use `hired` as the active flag; DEMO rows use it for suggestions. */
+  live?: boolean;
+}) {
   const hired = agents.filter((a) => a.hired);
   return (
     <>
@@ -20,26 +30,31 @@ function AgentGrid({ agents }: { agents: Agent[] }) {
       />
       <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
         {agents.map((a) => (
-          <Link key={a.id} href={`/agents/${a.id}`}>
-            <Card className="flex h-full flex-col gap-2 p-4 transition-transform hover:-translate-y-0.5">
-              <div className="flex items-center gap-2.5">
-                <Avatar name={a.name} hue={a.avatarHue} size={38} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[14px] font-bold">{a.role}</p>
-                  <p className="truncate text-[12px] text-ink-400">{a.currentTask ?? "Standing by"}</p>
-                </div>
+          <div key={a.id} className="flex h-full flex-col gap-2">
+            <Link href={`/agents/${a.id}`} className="flex-1">
+              <Card className="flex h-full flex-col gap-2 p-4 transition-transform hover:-translate-y-0.5">
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={a.name} hue={a.avatarHue} size={38} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-bold">{a.role}</p>
+                    <p className="truncate text-[12px] text-ink-400">{a.currentTask ?? "Standing by"}</p>
+                  </div>
                 {!a.hired && (
-                  <span className="rounded-full bg-mist-100 px-2 py-0.5 text-[10.5px] font-bold text-ink-500 dark:bg-white/10">MARKETPLACE</span>
+                  <span className="rounded-full bg-mist-100 px-2 py-0.5 text-[10.5px] font-bold text-ink-500 dark:bg-white/10">
+                    {live ? "DISABLED" : "MARKETPLACE"}
+                  </span>
                 )}
-              </div>
-              <div className="flex items-center justify-between">
-                <AgentStatusBadge status={a.status} live />
-                <span className="text-[11.5px] tabular-nums text-ink-400">
-                  {a.performance.completionRate}% · ★{a.performance.rating.toFixed(1)}
-                </span>
-              </div>
-            </Card>
-          </Link>
+                </div>
+                <div className="flex items-center justify-between">
+                  <AgentStatusBadge status={a.status} live />
+                  <span className="text-[11.5px] tabular-nums text-ink-400">
+                    {a.performance.completionRate}% · ★{a.performance.rating.toFixed(1)}
+                  </span>
+                </div>
+              </Card>
+            </Link>
+            {renderAction?.(a)}
+          </div>
         ))}
       </div>
     </>
@@ -103,7 +118,13 @@ function LiveAgentsView({ businessId }: { businessId: string }) {
         sub={`${total} AI employees on your team. Each has permissions, tools and a performance record.`}
         badge={<LiveBadge />}
       />
-      <AgentGrid agents={agents} />
+      <AgentGrid
+        agents={agents}
+        live
+        renderAction={(a) => (
+          <AgentToggleButton businessId={businessId} agentId={a.id} hired={a.hired} />
+        )}
+      />
     </>
   );
 }

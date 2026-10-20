@@ -9,11 +9,16 @@ shape, then explicit business rules the validator subset cannot express
 outside its subset and would be silently ignored).
 """
 
+from typing import TYPE_CHECKING
+
 from app.core.config import Settings
 from app.llm.base import LlmProvider
 from app.llm.types import BadResponseError, LlmMessage, LlmRequest, StructuredOutput
 from app.llm.validate import validate_against_schema
 from app.teamlead.prompts import MAX_OPTIONS, MAX_QUESTIONS, MIN_QUESTIONS, QUESTIONS_SCHEMA
+
+if TYPE_CHECKING:
+    from app.usage.metering import TeamLeadMeter
 
 
 class BriefGenerationError(Exception):
@@ -91,12 +96,13 @@ async def generate_questions(
     goal: str,
     *,
     max_generations: int = 2,
+    meter: "TeamLeadMeter | None" = None,
 ) -> list[dict]:
     """Ask the Team Lead for clarifying questions; raise on exhausted budget."""
     from app.teamlead.prompts import build_questions_system_prompt, build_questions_user_prompt
 
     last_violations: list[str] = ["no generation attempted"]
-    for _ in range(max(1, max_generations)):
+    for generation in range(max(1, max_generations)):
         request = LlmRequest(
             messages=[
                 LlmMessage(role="system", content=build_questions_system_prompt()),
@@ -116,7 +122,10 @@ async def generate_questions(
         # a provider failure — it consumes budget and is retried below.
         # CancelledError is not an LlmError and propagates untouched.
         try:
-            response = await provider.complete(request)
+            if meter is not None:
+                response = await meter.complete(provider, request, generation=generation)
+            else:
+                response = await provider.complete(request)
         except BadResponseError as exc:
             last_violations = [str(exc)]
             continue

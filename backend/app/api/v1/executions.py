@@ -35,6 +35,7 @@ _REFUSED_HTTP = {
     "not_found": 404,
     "conflict": 409,
     "budget_exceeded": 409,
+    "budget_unpriced": 409,
     "approval_required": 409,
 }
 
@@ -103,6 +104,7 @@ async def run_execution(
                 project_id=project_id,
                 task_id=task_id,
                 timeout_s=timeout_s,
+                settings=settings,
             ),
         )
     status_code = _OUTCOME_HTTP[result.outcome]

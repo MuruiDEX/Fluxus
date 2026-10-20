@@ -7,8 +7,8 @@
  * `dependsOn` rides the wire since contract amendment v1.10 (Stage 8.4).
  */
 
-import { parseMoney, type ApiActivityEvent, type ApiAgent, type ApiApproval, type ApiBrainEntry, type ApiProject, type ApiTask } from "@/lib/api";
-import type { ActivityEvent, Agent, Approval, BrainEntry, Project, Task } from "@/lib/domain/types";
+import { parseMoney, type ApiActivityEvent, type ApiAgent, type ApiApproval, type ApiBrainEntry, type ApiMarketplaceEntry, type ApiPack, type ApiPackPreview, type ApiProject, type ApiTask, type ApiUsagePage, type ApiUsageRecord } from "@/lib/api";
+import type { ActivityEvent, Agent, Approval, BrainEntry, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageRecord, UsageView } from "@/lib/domain/types";
 
 export function toDomainProject(p: ApiProject): Project {
   return {
@@ -24,6 +24,43 @@ export function toDomainProject(p: ApiProject): Project {
     deadline: p.deadline,
     teamIds: [...p.teamIds],
     milestones: p.milestones.map((m) => ({ label: m.label, done: m.done })),
+    allowUnpricedAi: p.allowUnpricedAi ?? false,
+  };
+}
+
+export function toDomainUsageRecord(r: ApiUsageRecord): UsageRecord {
+  return {
+    ...r,
+    costAmount: r.costAmount == null ? null : parseMoney(r.costAmount),
+  };
+}
+
+export function toDomainUsage(page: ApiUsagePage): UsageView {
+  return {
+    records: page.items.map(toDomainUsageRecord),
+    total: page.total,
+    summary: {
+      confirmedCost: parseMoney(page.summary.confirmedCost),
+      estimatedCost: parseMoney(page.summary.estimatedCost),
+      unknownCount: page.summary.unknownCount,
+      byCallKind: Object.fromEntries(
+        Object.entries(page.summary.byCallKind ?? {}).map(([kind, item]) => [
+          kind,
+          {
+            confirmedCost: parseMoney(item.confirmedCost),
+            estimatedCost: parseMoney(item.estimatedCost),
+            unknownCount: item.unknownCount,
+          },
+        ]),
+      ),
+      reservations: {
+        active: parseMoney(page.summary.reservations.active),
+        ambiguous: parseMoney(page.summary.reservations.ambiguous),
+        consumed: parseMoney(page.summary.reservations.consumed),
+        released: parseMoney(page.summary.reservations.released),
+        writtenOff: parseMoney(page.summary.reservations.writtenOff),
+      },
+    },
   };
 }
 
@@ -115,5 +152,62 @@ export function toDomainBrainEntry(e: ApiBrainEntry): BrainEntry {
     title: e.title,
     body: e.body,
     updatedLabel: e.updatedLabel,
+  };
+}
+
+export function toDomainMarketplaceEntry(e: ApiMarketplaceEntry): MarketplaceAgent {
+  return {
+    slug: e.slug,
+    name: e.name,
+    role: e.role,
+    blurb: e.blurb,
+    price: e.price,
+    priceNote: e.priceNote,
+    rating: e.rating,
+    installs: e.installs,
+    badge: (e.badge ?? undefined) as MarketplaceAgent["badge"],
+    permissions: {
+      read: e.permissions.read ?? [],
+      write: e.permissions.write ?? [],
+      actions: e.permissions.actions ?? [],
+      denied: e.permissions.denied ?? [],
+    },
+    capabilities: [...e.capabilities],
+    category: e.category as MarketplaceAgent["category"],
+    hired: e.hired,
+    installed: e.installed,
+    installedVersion: e.installedVersion,
+  };
+}
+
+export function toDomainPack(p: ApiPack): Pack {
+  return {
+    slug: p.slug,
+    version: p.version,
+    name: p.name,
+    description: p.description,
+    blurb: p.blurb,
+    price: p.price,
+    priceNote: p.priceNote,
+    rating: p.rating,
+    installs: p.installs,
+    installed: p.installed,
+    installedVersion: p.installedVersion,
+    installedAt: p.installedAt,
+    agents: p.agents.map((a) => ({ ...a, capabilities: [...a.capabilities] })),
+    workflow: p.workflow
+      ? {
+          ...p.workflow,
+          tasks: p.workflow.tasks.map((t) => ({ ...t, dependsOn: [...t.dependsOn] })),
+        }
+      : null,
+  };
+}
+
+export function toDomainPackPreview(p: ApiPackPreview): PackPreview {
+  return {
+    pack: toDomainPack(p.pack),
+    canInstall: p.canInstall,
+    blockers: p.blockers.map((b) => ({ ...b })),
   };
 }

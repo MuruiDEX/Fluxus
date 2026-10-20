@@ -4,6 +4,7 @@ All secrets arrive via environment variables; nothing secret is ever
 defaulted, logged, or sent to the frontend.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,7 +32,20 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 30.0
     # Retries of idempotent-safe failures (429/5xx/network). Attempts total = 1 + max.
     llm_max_retries: int = 2
-    llm_max_tokens: int | None = None
+    # Hard cap on completion tokens for every call. Stage 16 turns this into a
+    # real request field AND the output bound for guaranteed budget reservations.
+    llm_max_tokens: int | None = 1024
+
+    # --- Usage accounting & budget enforcement (Stage 16). ---
+    # Operator-supplied tariff catalog (JSON array). Empty = no verified prices,
+    # so unpriced calls are recorded as `unknown` (fail-closed in strict mode).
+    usage_tariffs_json: str | None = None
+    # Internal reserve amount for allow_unpriced_ai projects. NOT a proven
+    # maximum provider cost — the bill may exceed it (best-effort mode).
+    usage_unpriced_reserve_amount: float = 1.0
+    # Automatic release of aged `ambiguous` reservations after N minutes.
+    # 0 (default) disables time-based release: ambiguous holds never auto-clear.
+    usage_ambiguous_release_minutes: int = 0
 
     # --- Execution API (Stage 5). ---
     # Hard ceiling for a single LLM call inside one execution.
@@ -54,6 +68,27 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     login_max_attempts: int = 5
     login_window_seconds: int = 300
+
+    # --- CORS allowlist (Stage 12: env-configurable for deployments). ---
+    # Default is the local-first set (Next dev on both loopback spellings +
+    # Tauri schemes). Production MUST override with its exact origins as a
+    # JSON array — never "*" with credentials (browsers reject it anyway).
+    # Example: APP_CORS_ORIGINS='["https://app.example.com"]'
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "tauri://localhost",
+        "http://tauri.localhost",
+    ]
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _no_wildcard_origin(cls, value: list[str]) -> list[str]:
+        # "*" with allow_credentials=True is rejected by browsers AND would
+        # let any site read authenticated responses if it ever worked.
+        if "*" in value:
+            raise ValueError('cors_origins must list exact origins, never "*"')
+        return value
 
 
 def _worst_case_live_run_seconds(
@@ -105,3 +140,26 @@ def validate_recovery_bound(settings: "Settings") -> None:
 
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_production_config(settings: "Settings") -> None:
+    """Fail fast on production misconfiguration (Stage 12 hardening).
+
+    Local/dev/test are untouched — this runs only when
+    environment == "prod". Production without a database serves 500s from
+    every domain endpoint, and a non-Secure session cookie over HTTPS is
+    either dropped or exposed: both must be explicit operator decisions,
+    never silent defaults.
+    """
+    if settings.environment != "prod":
+        return
+    if not settings.database_url:
+        raise ValueError(
+            "APP_DATABASE_URL is required when APP_ENVIRONMENT=prod: "
+            "serving without persistence turns every domain endpoint into a 500."
+        )
+    if not settings.session_cookie_secure:
+        raise ValueError(
+            "APP_SESSION_COOKIE_SECURE=true is required when APP_ENVIRONMENT=prod: "
+            "session cookies must not travel over plain HTTP in production."
+        )

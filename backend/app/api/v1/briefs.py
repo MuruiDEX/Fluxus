@@ -28,7 +28,8 @@ from app.core.auth import check_client_contract
 from app.core.identity import require_business
 from app.llm.base import create_provider
 from app.llm.types import LlmConfigurationError, LlmError, ProviderAuthError
-from app.persistence.exceptions import DanglingReferenceError
+from app.persistence.enums import UsageCallKind
+from app.persistence.exceptions import AgentDisabledError, DanglingReferenceError, new_id
 from app.persistence.repositories.concrete import (
     AgentRepository,
     ApprovalRepository,
@@ -44,6 +45,7 @@ from app.teamlead.finalize import generate_finalization
 from app.teamlead.planning import generate_plan
 from app.teamlead.questions import BriefGenerationError, generate_questions
 from app.teamlead.summary import generate_summary, validate_answers
+from app.usage.metering import MeteringRefused, TeamLeadMeter
 
 router = APIRouter()
 _briefs = BriefRepository()
@@ -106,6 +108,12 @@ def _provider_error_to_http(exc: LlmError) -> HTTPException:
     return HTTPException(status_code=500, detail="LLM request failed.")
 
 
+def _metering_error_to_http(exc: MeteringRefused) -> HTTPException:
+    # Budget guardrails (fail closed before the provider call) — 409 like the
+    # executor's refusal envelope, with a machine-readable code.
+    return HTTPException(status_code=409, detail={"code": exc.code, "message": exc.message})
+
+
 @router.post(
     "/businesses/{business_id}/briefs",
     response_model=BriefResponse,
@@ -129,10 +137,20 @@ async def create_brief(business_id: str, body: BriefCreate, request: Request):
         provider = create_provider(settings)
     except LlmError as exc:
         raise _provider_error_to_http(exc) from exc
+    brief_id = new_id()
+    meter = TeamLeadMeter(
+        factory,
+        settings,
+        business_id=business_id,
+        brief_id=brief_id,
+        call_kind=UsageCallKind.BRIEF_QUESTIONS.value,
+    )
     try:
         questions = await generate_questions(
-            provider, settings, business.name, business.industry, goal
+            provider, settings, business.name, business.industry, goal, meter=meter
         )
+    except MeteringRefused as exc:
+        raise _metering_error_to_http(exc) from exc
     except BriefGenerationError as exc:
         raise HTTPException(
             status_code=422,
@@ -150,6 +168,7 @@ async def create_brief(business_id: str, body: BriefCreate, request: Request):
                 session,
                 business_id,
                 {
+                    "id": brief_id,
                     "goal": goal,
                     "questions": questions,
                     "answers": [],
@@ -231,8 +250,19 @@ async def submit_answers(business_id: str, brief_id: str, body: BriefAnswers, re
         provider = create_provider(settings)
     except LlmError as exc:
         raise _provider_error_to_http(exc) from exc
+    meter = TeamLeadMeter(
+        factory,
+        settings,
+        business_id=business_id,
+        brief_id=brief_id,
+        call_kind=UsageCallKind.BRIEF_SUMMARY.value,
+    )
     try:
-        summary = await generate_summary(provider, settings, goal, stored_questions, normalized)
+        summary = await generate_summary(
+            provider, settings, goal, stored_questions, normalized, meter=meter
+        )
+    except MeteringRefused as exc:
+        raise _metering_error_to_http(exc) from exc
     except BriefGenerationError as exc:
         raise HTTPException(
             status_code=422,
@@ -335,8 +365,19 @@ async def create_plan(business_id: str, brief_id: str, request: Request):
         provider = create_provider(settings)
     except LlmError as exc:
         raise _provider_error_to_http(exc) from exc
+    # Generation happens BEFORE the project exists, so this call is
+    # business-scoped (no project to attribute to or reserve against).
+    meter = TeamLeadMeter(
+        factory,
+        settings,
+        business_id=business_id,
+        brief_id=brief_id,
+        call_kind=UsageCallKind.PLAN_GENERATION.value,
+    )
     try:
-        plan = await generate_plan(provider, settings, goal, summary, roster)
+        plan = await generate_plan(provider, settings, goal, summary, roster, meter=meter)
+    except MeteringRefused as exc:
+        raise _metering_error_to_http(exc) from exc
     except BriefGenerationError as exc:
         raise HTTPException(
             status_code=422,
@@ -373,6 +414,11 @@ async def create_plan(business_id: str, brief_id: str, request: Request):
         raise HTTPException(
             status_code=422,
             detail={"code": "dangling_reference", "message": str(exc)},
+        ) from exc
+    except AgentDisabledError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "agent_disabled", "message": str(exc)},
         ) from exc
     except ValueError as exc:
         # Defense in depth: pure plan validation rejects bad money/counts
@@ -483,8 +529,20 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
         provider = create_provider(settings)
     except LlmError as exc:
         raise _provider_error_to_http(exc) from exc
+    # Project-scoped: the brief already has a project, so this call is
+    # budget-enforced (fail closed on unpriced budgets unless opted in).
+    meter = TeamLeadMeter(
+        factory,
+        settings,
+        business_id=business_id,
+        brief_id=brief_id,
+        call_kind=UsageCallKind.BRIEF_FINALIZE.value,
+        project_id=project_id,
+    )
     try:
-        result = await generate_finalization(provider, settings, facts)
+        result = await generate_finalization(provider, settings, facts, meter=meter)
+    except MeteringRefused as exc:
+        raise _metering_error_to_http(exc) from exc
     except BriefGenerationError as exc:
         raise HTTPException(
             status_code=422,

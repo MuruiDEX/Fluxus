@@ -8,10 +8,16 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import v1_router
-from app.core.config import Settings, get_settings, validate_recovery_bound
+from app.core.config import (
+    Settings,
+    get_settings,
+    validate_production_config,
+    validate_recovery_bound,
+)
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
 from app.persistence.engine import create_engine_from_url, session_factory
+from app.usage.pricing import configure_tariffs
 
 log = get_logger(__name__)
 
@@ -55,24 +61,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Fail fast (construction AND lifespan): a threshold that cannot prove
     # staleness must never serve, in any process that builds the app.
     validate_recovery_bound(settings)
+    # Production misconfiguration must never serve either (no-op elsewhere).
+    validate_production_config(settings)
     configure_logging(settings.log_level)
+    # Load operator tariffs (fail fast on malformed config, before serving).
+    configure_tariffs(settings.usage_tariffs_json)
 
     app = FastAPI(title="MUSE SPARK backend", version=settings.version)
     app.state.settings = settings
 
-    # Local-first CORS: the Tauri shell and local Next dev server.
-    # Tighten origins per deployment; never use ["*"] with credentials.
-    # `next dev` listens on localhost:3000 and answers on 127.0.0.1:3000 too —
-    # browsers treat them as distinct origins, so both are listed explicitly.
-    # Playwright's :3210 port is e2e-only (demo mode, no backend) and stays out.
+    # CORS: exact-origin allowlist from settings (local-first defaults;
+    # production overrides via APP_CORS_ORIGINS). Never ["*"] with
+    # credentials. Playwright's :3210 port is e2e-only (demo mode, no
+    # backend) and stays out of the defaults.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "tauri://localhost",
-            "http://tauri.localhost",
-        ],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-Client-Contract", "X-CSRF-Token", "X-Trace-Id"],

@@ -44,8 +44,12 @@ function finalizeJson(): ApiFinalize {
     costs: {
       budget: "1000.00",
       ai_budget: "100.00",
-      ai_spent: "0.00",
-      note: "Configured ledger values, not measured costs: live pricing is not tracked in this version.",
+      ai_spent: "0.10",
+      ai_estimated: "0.00",
+      note:
+        "Confirmed AI spend from the usage ledger (task-linked plus project-scoped " +
+        "Team Lead calls, including this finalization). Estimated cost is tracked " +
+        "separately and never presented as confirmed spend.",
     },
     contract: "v1",
   };
@@ -167,7 +171,7 @@ describe("FinalizeSection + FinalReportView", () => {
     expect(html).toContain("Recommendations (not verified results)");
     expect(html).toContain("Learnings saved to Brain (1)");
     expect(html).toContain("Small slices ship");
-    expect(html).toContain("configured values, not measured");
-    expect(html).toContain("live pricing is not tracked");
+    expect(html).toContain("AI spend $0.10 / $100.00");
+    expect(html).toContain("usage ledger");
   });
 });

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
 import { PlanDriverPanel } from "@/components/system/PlanDriver";
+import { ProjectEditButton } from "@/components/system/ProjectEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
+import { UsagePanel } from "@/components/system/UsagePanel";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useApprovals, useProjects } from "@/lib/store/app";
@@ -24,6 +26,7 @@ function ProjectLayout({
   badge,
   engineSlot,
   renderTaskAction,
+  projectEditSlot,
 }: {
   project: Project;
   projectTasks: Task[];
@@ -32,6 +35,8 @@ function ProjectLayout({
   badge?: ReactNode;
   engineSlot: ReactNode;
   renderTaskAction?: (task: Task) => ReactNode;
+  /** LIVE-only slot (project edit). DEMO callers omit it. */
+  projectEditSlot?: ReactNode;
 }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const agentOf = (agentId: string) => agents.find((a) => a.id === agentId);
@@ -54,6 +59,7 @@ function ProjectLayout({
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {engineSlot}
+            {projectEditSlot}
             <span data-testid="project-status" className={cn("rounded-full px-2.5 py-1 text-[12px] font-semibold", statusPill)}>
               {statusLabel}
             </span>
@@ -210,6 +216,10 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
   const agents = useLiveAgents((s) => s.agents);
   const ensureAgents = useLiveAgents((s) => s.ensure);
   const resetAgents = useLiveAgents((s) => s.reset);
+  // Optional brief deep-link (?brief=...): wires the driver to the persisted
+  // plan so terminal graphs offer server-side finalization in place.
+  // Absent by default — plain project views never assume a brief.
+  const briefId = useSearchParams().get("brief") ?? undefined;
 
   useEffect(() => {
     void load(businessId, projectId);
@@ -264,15 +274,17 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
   }
 
   return (
+    <>
     <ProjectLayout
       project={project}
       projectTasks={tasksSlice.tasks}
       agents={agents}
       approvals={[]}
       badge={<LiveBadge />}
+      projectEditSlot={<ProjectEditButton businessId={businessId} project={project} />}
       engineSlot={
         <div className="flex flex-wrap items-center gap-2">
-          <PlanDriverPanel businessId={businessId} projectId={project.id} />
+          <PlanDriverPanel businessId={businessId} projectId={project.id} briefId={briefId} />
           <span
             title="Each task runs on the server when you press its Run button."
             className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
@@ -285,6 +297,10 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
         <TaskRunButton businessId={businessId} projectId={project.id} taskId={t.id} />
       )}
     />
+    <div className="mt-3">
+      <UsagePanel businessId={businessId} projectId={project.id} />
+    </div>
+    </>
   );
 }
 

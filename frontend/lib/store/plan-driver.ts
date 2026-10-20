@@ -36,6 +36,7 @@ import { create } from "zustand";
 import {
   ApiError,
   apiGetBrief,
+  apiGetProject,
   apiGetTask,
   apiListApprovals,
   apiListTasks,
@@ -45,7 +46,7 @@ import {
   type ApiApproval,
   type BriefStatus,
 } from "@/lib/api";
-import { toDomainApproval, toDomainTask } from "@/lib/live/mappers";
+import { toDomainApproval, toDomainProject, toDomainTask } from "@/lib/live/mappers";
 import { useLiveExecution } from "@/lib/store/execution";
 import { useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useSession } from "@/lib/store/auth";
@@ -231,7 +232,15 @@ async function listSnapshot(businessId: string, projectId: string): Promise<Snap
       }
       const proj = useLiveProject.getState();
       if (proj.key === `${businessId}/${projectId}`) {
-        void proj.load(businessId, projectId);
+        // Background refresh must NOT reset the slice: load() clears the
+        // project and unmounts the mounted detail view (including this
+        // driver). Apply the server-confirmed row in place instead.
+        try {
+          proj.replace(toDomainProject(await apiGetProject(businessId, projectId)));
+        } catch {
+          // Best effort: the tasks below are the snapshot payload; the
+          // header refreshes on the next poll.
+        }
       }
       return {
         tasks: taskPage.items.map(toDomainTask),

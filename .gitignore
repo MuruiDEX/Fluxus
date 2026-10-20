@@ -43,6 +43,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+backend/*.log
+frontend/*.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -60,3 +63,6 @@ next-env.d.ts
 
 # playwright
 /frontend/.playwright
+# live e2e session (single-run cookie, never commit)
+/frontend/e2e/.auth-state.json
+/frontend/test-results/

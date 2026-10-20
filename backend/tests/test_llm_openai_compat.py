@@ -88,6 +88,74 @@ async def test_json_schema_mode_and_validation() -> None:
     assert res.data == {"name": "a", "age": 3}
 
 
+async def test_usage_details_and_provider_request_id_extracted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_ok_payload(
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "prompt_tokens_details": {"cached_tokens": 64},
+                    "completion_tokens_details": {"reasoning_tokens": 8},
+                }
+            ),
+        )
+
+    res = await _provider(handler).complete(_req())
+    assert res.provider_request_id == "chatcmpl-1"
+    assert res.usage.reported is True
+    assert res.usage.cached_tokens == 64
+    assert res.usage.reasoning_tokens == 8
+
+
+async def test_missing_usage_is_reported_false() -> None:
+    body = _ok_payload()
+    body.pop("usage")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    res = await _provider(handler).complete(_req())
+    assert res.usage.reported is False
+    assert res.usage.total_tokens == 0
+
+
+async def test_transport_error_ambiguity_classification() -> None:
+    provider = _provider(lambda request: httpx.Response(200, json=_ok_payload()))
+    # Pre-send failures prove no paid operation: retryable, not ambiguous.
+    pre = provider._classify_transport_error(httpx.ConnectError("refused"))
+    assert pre.ambiguous is False and pre.retryable is True
+    pre_to = provider._classify_transport_error(httpx.ConnectTimeout("x"))
+    assert pre_to.ambiguous is False and pre_to.retryable is True
+    # Post-send failures are possibly billed: ambiguous, never retried.
+    post = provider._classify_transport_error(httpx.ReadTimeout("stall"))
+    assert post.ambiguous is True and post.retryable is False
+    post_read = provider._classify_transport_error(httpx.ReadError("dropped"))
+    assert post_read.ambiguous is True and post_read.retryable is False
+
+
+async def test_idempotency_header_only_for_official_openai() -> None:
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, json=_ok_payload())
+
+    official = _provider(handler)
+    await official.complete(_req(idempotency_key="abc"))
+    assert seen[-1].get("idempotency-key") == "abc"
+
+    gateway = OpenAICompatProvider(
+        api_key=SECRET,
+        base_url="https://gateway.example/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    await gateway.complete(_req(idempotency_key="abc"))
+    assert seen[-1].get("idempotency-key") is None
+
+
 async def test_schema_violation_rejected() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_ok_payload('{"name": "a"}'))

@@ -2,7 +2,7 @@
   "name": "muse-spark-root",
   "version": "2.0.0",
   "private": true,
-  "description": "MUSE SPARK — AI Business Office. Root orchestration (frontend-only phase; see backend/README.md).",
+  "description": "MUSE SPARK — AI Business Office. Root orchestration (full-stack local phase; see backend/README.md).",
   "scripts": {
     "install:all": "npm --prefix frontend install",
     "dev": "npm --prefix frontend run dev",
@@ -11,6 +11,7 @@
     "lint": "npm --prefix frontend run lint",
     "typecheck": "npm --prefix frontend run typecheck",
     "test": "npm --prefix frontend run test",
-    "test:e2e": "npm --prefix frontend run test:e2e"
+    "test:e2e": "npm --prefix frontend run test:e2e",
+    "test:e2e:live": "npm --prefix frontend run test:e2e:live"
   }
 }

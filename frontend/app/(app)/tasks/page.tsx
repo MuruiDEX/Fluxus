@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { TaskEditButton } from "@/components/system/TaskEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { failTaskInExecution, retryTaskInExecution } from "@/lib/sim/engine";
 import { useSession } from "@/lib/store/auth";
@@ -183,7 +184,10 @@ function LiveTasksView({ businessId }: { businessId: string }) {
           projects={projectsSlice.projects}
           demoActions={false}
           renderAction={(t) => (
-            <TaskRunButton businessId={businessId} projectId={t.projectId} taskId={t.id} />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <TaskEditButton businessId={businessId} task={t} />
+              <TaskRunButton businessId={businessId} projectId={t.projectId} taskId={t.id} />
+            </div>
           )}
         />
       )}

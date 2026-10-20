@@ -13,6 +13,7 @@ dependencies = [
   "alembic>=1.13",
   "asyncpg>=0.29",
   "aiosqlite>=0.19",
+  "argon2-cffi>=23.0",
 ]
 
 [project.optional-dependencies]
@@ -48,3 +49,10 @@ select = ["E", "F", "I", "UP", "B"]
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
+# The repo root holds several top-level directories (app/, alembic/,
+# scripts/, tests/); only app/ is an installable package. Without this,
+# setuptools flat-layout discovery fails on `pip install -e .` with
+# "Multiple top-level packages discovered".
+[tool.setuptools.packages.find]
+include = ["app*"]

@@ -23,7 +23,7 @@ import {
   usePlanDriver,
 } from "@/lib/store/plan-driver";
 import { describeDriver, PlanDriverPanel } from "@/components/system/PlanDriver";
-import type { Approval, Task } from "@/lib/domain/types";
+import type { Approval, Project, Task } from "@/lib/domain/types";
 
 const BIZ = "biz_test";
 const PROJ = "proj_1";
@@ -64,6 +64,24 @@ function taskJson(t: FakeTask) {
     approvalGateId: t.approvalGateId,
     gateAt: 100,
     costRate: null,
+    contract: "v1",
+  };
+}
+
+function projectJson(title: string) {
+  return {
+    id: PROJ,
+    businessId: BIZ,
+    title,
+    goal: "",
+    status: "in_progress",
+    progress: 0,
+    budget: "0",
+    aiBudget: "0",
+    aiSpent: "0",
+    deadline: "",
+    teamIds: [],
+    milestones: [],
     contract: "v1",
   };
 }
@@ -112,6 +130,8 @@ interface FakeServer {
   tasks: Map<string, FakeTask>;
   approvals: Map<string, FakeApproval>;
   briefStatus: string;
+  /** Title served by GET project (proves in-place refresh). */
+  projectTitle: string;
   /** executions POST behavior override per test. */
   onExecute?: (taskId: string) => Response | Promise<Response> | never;
   /** recover POST behavior override per test. */
@@ -129,6 +149,13 @@ function serve(server: FakeServer) {
       const signal = init?.signal;
       if (signal?.aborted) throw new DOMException("aborted", "AbortError");
       const respond = (): Response | Promise<Response> => {
+        const singleProject = url.match(/\/projects\/([^/?]+)(?:\?|$)/);
+        if (singleProject && method === "GET" && !url.includes("/tasks")) {
+          if (singleProject[1] !== PROJ) {
+            return jsonResponse(404, { error: { code: "not_found", message: "no" } });
+          }
+          return jsonResponse(200, projectJson(server.projectTitle));
+        }
         if (method === "GET" && /\/briefs\/[^/]+$/.test(url)) {
           return jsonResponse(200, {
             id: "brief_1",
@@ -209,6 +236,7 @@ function newServer(): FakeServer {
     ]),
     approvals: new Map(),
     briefStatus: "planned",
+    projectTitle: "Server Title",
     approvalListCalls: 0,
     calls: [],
   };
@@ -377,6 +405,46 @@ describe("plan driver", () => {
       expect.stringContaining("/tasks/t_2/executions"),
     ]);
     expect(record().phase).toBe("awaiting_finalization");
+  });
+
+  it("snapshot refresh applies the server row without resetting the slice", async () => {
+    // Regression: listSnapshot used to call proj.load(), which clears the
+    // project and unmounts the mounted detail view (killing the driver via
+    // its unmount cleanup). Background refresh must apply in place.
+    const server = newServer();
+    server.tasks.get("t_1")!.status = "completed";
+    server.tasks.get("t_2")!.status = "completed";
+    serve(server);
+    signIn();
+    const local: Project = {
+      id: PROJ,
+      businessId: BIZ,
+      title: "Local Title",
+      goal: "",
+      status: "in_progress",
+      progress: 0,
+      budget: 0,
+      aiBudget: 0,
+      aiSpent: 0,
+      deadline: "",
+      teamIds: [],
+      milestones: [],
+    };
+    useLiveProject.setState({
+      status: "ready",
+      key: `${BIZ}/${PROJ}`,
+      project: local,
+      notFound: false,
+      error: null,
+    });
+
+    await usePlanDriver.getState().start(BIZ, PROJ);
+
+    expect(record().phase).toBe("awaiting_finalization");
+    const proj = useLiveProject.getState();
+    expect(proj.status).toBe("ready");
+    expect(proj.key).toBe(`${BIZ}/${PROJ}`);
+    expect(proj.project?.title).toBe("Server Title");
   });
 
   it("waits for a pending approval without bypassing the gate", async () => {

@@ -1,10 +1,10 @@
-# Backend — FastAPI + persistence + LLM layer + execution API + auth (Stages 1–6)
+# Backend — FastAPI + persistence + LLM layer + execution API + auth (Stages 1–11)
 
-> Stage 6 implemented: cookie-session authentication with per-business
-> membership isolation. The Stage 5 operator bearer (`APP_OPERATOR_TOKEN`)
-> is fully removed — no fallback auth path exists.
-> Still absent (Stage 7+): CRUD endpoints, frontend API integration behind
-> feature flag, Tauri packaging.
+> Stages 7–11 implemented on top of Stage 6: management writes
+> (Project/Task PATCH, Brain POST), marketplace reads + agent hire, brief
+> intake + finalize API, LIVE frontend integration, Playwright LIVE E2E
+> (deterministic stub LLM, test-only config). No public registration, no
+> billing, no pack install — see Roadmap.
 
 ## What exists now
 
@@ -196,4 +196,59 @@ frontend can tell which one is underneath. No decision by code yet.
   per-business membership isolation on every domain endpoint, owner
   bootstrap CLI, additive migration preserving Stage 5 data, minimal
   frontend slice (login/logout/me, route guard, 401 handling, DEMO banner).
-- Stage 7+: CRUD API; full frontend API integration; Tauri packaging.
+- Stage 7+: DONE — management writes; marketplace + hire; brief intake,
+  planning, finalization API with strict server-side validation; LIVE
+  frontend integration (reads, decisions, executions, writes, hire,
+  intake, finalize); Playwright LIVE E2E against a deterministic stub LLM.
+- Stage 12: production hardening — env-configurable CORS, prod startup
+  guard, bounded login-throttle memory (see Production deployment below).
+- Stage 14: agent lifecycle — `Agent.hired` is the active flag (no migration,
+  no enum change); `POST .../agents/{id}/activate|disable` (idempotent,
+  audited); disabled owners take no new work (PATCH owner/team_ids, plan
+  save, execution claim refuse with 422/`agent_disabled`); in-flight runs,
+  history and terminal answers untouched.
+- Still absent: Tauri packaging, pack install, billing.
+
+## Production deployment (Stage 12)
+
+The app is loopback-first by default. A network deployment needs explicit
+operator configuration — nothing production-sensitive has a usable default.
+
+Required environment (`APP_` prefix, see `app/core/config.py`):
+
+| Variable | Production value | Why |
+|---|---|---|
+| `APP_ENVIRONMENT=prod` | `prod` | Enables the startup guard below |
+| `APP_DATABASE_URL` | real Postgres URL, e.g. `postgresql+asyncpg://user:pass@host:5432/muse` | Without it every domain endpoint is a 500 |
+| `APP_SESSION_COOKIE_SECURE=true` | `true` | Session cookies must not travel over plain HTTP |
+| `APP_CORS_ORIGINS` | JSON array of exact origins, e.g. `'["https://app.example.com"]'` | Default is the local dev/Tauri set; `"*"` is rejected at startup |
+| `APP_LLM_PROVIDER` + `APP_LLM_API_KEY` (+ `APP_LLM_BASE_URL` for compatibles) | real provider credentials | `mock` (default) performs no real work |
+
+Startup guard (`validate_production_config`, covered by
+`tests/test_prod_config.py`): with `APP_ENVIRONMENT=prod` the process
+refuses to serve without `APP_DATABASE_URL` or with
+`APP_SESSION_COOKIE_SECURE` unset/false. Local/dev/test are unaffected.
+
+Login throttle is in-memory per process (5 attempts / 300s per email,
+bounded to 10000 identifiers) and resets on restart. For multi-process or
+SaaS deployments move it to a shared store; single-desktop use needs
+nothing.
+
+Backup & restore (documented procedure — no automation is bundled, so
+schedule this at the operator level):
+
+```powershell
+# backup (custom format, includes schema + data)
+pg_dump "$env:APP_DATABASE_URL" -Fc -f muse-backup.dump
+# verify a backup by restoring to a scratch database, never over live data
+pg_restore -d "postgresql://muse:muse@127.0.0.1:5432/muse_restore" muse-backup.dump
+# restore over live data only after stopping the backend
+$env:APP_DATABASE_URL = "...live url..."
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Rules: back up before every `alembic upgrade head` on a database with
+real data; verify with `alembic current`; never downgrade a production
+database in place — restore from backup instead (downgrades are covered
+only by the isolated-schema migration tests). Never point tests at a
+production database (`muse_test`/`muse_mig` only).

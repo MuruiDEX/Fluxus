@@ -29,6 +29,7 @@
 import { create } from "zustand";
 import {
   ApiError,
+  apiGetProject,
   apiGetTask,
   apiRunExecution,
   executionErrorOf,
@@ -36,7 +37,7 @@ import {
   isAbortError,
   type ApiExecution,
 } from "@/lib/api";
-import { toDomainTask } from "@/lib/live/mappers";
+import { toDomainProject, toDomainTask } from "@/lib/live/mappers";
 import { useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useSession } from "@/lib/store/auth";
 import type { Task } from "@/lib/domain/types";
@@ -82,10 +83,15 @@ function upsertTask(task: Task): void {
 }
 
 /** Refresh the open project header (spend/progress move after a terminal run). */
-function refreshProjectIfOpen(businessId: string, projectId: string): void {
+async function refreshProjectIfOpen(businessId: string, projectId: string): Promise<void> {
   const proj = useLiveProject.getState();
-  if (proj.key === `${businessId}/${projectId}`) {
-    void proj.load(businessId, projectId);
+  if (proj.key !== `${businessId}/${projectId}`) return;
+  // Same rule as the driver's snapshot: never reset the mounted slice —
+  // load() clears the project and unmounts the detail view. Best effort.
+  try {
+    proj.replace(toDomainProject(await apiGetProject(businessId, projectId)));
+  } catch {
+    // The header refreshes on the next load; the run record below is exact.
   }
 }
 
@@ -326,7 +332,7 @@ async function runWork(
     try {
       const task = await readTask(businessId, projectId, taskId);
       upsertTask(task);
-      refreshProjectIfOpen(businessId, projectId);
+      void refreshProjectIfOpen(businessId, projectId);
     } catch {
       // Fall through to the inline error below.
     }
@@ -344,7 +350,7 @@ async function runWork(
   try {
     const task = await readTask(businessId, projectId, taskId);
     upsertTask(task);
-    refreshProjectIfOpen(businessId, projectId);
+    void refreshProjectIfOpen(businessId, projectId);
   } catch {
     // The completion itself stands; the re-read is best effort.
   }

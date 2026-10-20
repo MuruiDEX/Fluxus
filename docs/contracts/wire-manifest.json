@@ -37,6 +37,16 @@
       "response": "AgentResponse"
     },
     {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/agents/{agent_id}/activate",
+      "response": "AgentResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/agents/{agent_id}/disable",
+      "response": "AgentResponse"
+    },
+    {
       "method": "GET",
       "path": "/api/v1/businesses/{business_id}/approvals",
       "response": "ApprovalListResponse"
@@ -60,6 +70,11 @@
       "method": "GET",
       "path": "/api/v1/businesses/{business_id}/brain",
       "response": "BrainListResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/brain",
+      "response": "BrainResponse"
     },
     {
       "method": "POST",
@@ -88,11 +103,51 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/marketplace",
+      "response": "MarketplaceListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/marketplace/{slug}",
+      "response": "MarketplaceResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/marketplace/{slug}/hire",
+      "response": "AgentResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/packs",
+      "response": "PackListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/packs/{slug}",
+      "response": "PackResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/packs/{slug}/install",
+      "response": "PackInstallResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/packs/{slug}/preview",
+      "response": "PackPreviewResponse"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/businesses/{business_id}/projects",
       "response": "ProjectListResponse"
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}",
+      "response": "ProjectResponse"
+    },
+    {
+      "method": "PATCH",
       "path": "/api/v1/businesses/{business_id}/projects/{project_id}",
       "response": "ProjectResponse"
     },
@@ -103,6 +158,11 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks/{task_id}",
+      "response": "TaskResponse"
+    },
+    {
+      "method": "PATCH",
       "path": "/api/v1/businesses/{business_id}/projects/{project_id}/tasks/{task_id}",
       "response": "TaskResponse"
     },
@@ -118,8 +178,18 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/usage",
+      "response": "UsageListResponse"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/health",
       "response": "HealthResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/readiness",
+      "response": "ReadinessResponse"
     }
   ],
   "generated_by": "backend/scripts/gen_wire_manifest.py (do not hand-edit)",
@@ -361,6 +431,24 @@
         "projectId",
         "requestedByAgentId",
         "status",
+        "title"
+      ]
+    },
+    "BrainCreate": {
+      "properties": {
+        "body": {
+          "default": "",
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
         "title"
       ]
     },
@@ -700,6 +788,352 @@
         "status"
       ]
     },
+    "MarketplaceListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "MarketplaceResponse": {
+      "properties": {
+        "badge": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "blurb": {
+          "default": "",
+          "type": "string"
+        },
+        "capabilities": {
+          "default": [],
+          "type": "array"
+        },
+        "category": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "hired": {
+          "default": false,
+          "type": "boolean"
+        },
+        "installed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "installedVersion": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "installs": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "permissions": {
+          "default": {},
+          "type": "object"
+        },
+        "price": {
+          "default": "",
+          "type": "string"
+        },
+        "priceNote": {
+          "default": "",
+          "type": "string"
+        },
+        "rating": {
+          "default": 0.0,
+          "type": "number"
+        },
+        "role": {
+          "default": "",
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "name",
+        "slug"
+      ]
+    },
+    "PackAgentResponse": {
+      "properties": {
+        "action": {
+          "default": "create",
+          "type": "string"
+        },
+        "agentId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "capabilities": {
+          "default": [],
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "slug"
+      ]
+    },
+    "PackBlockerResponse": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "PackInstallResponse": {
+      "properties": {
+        "agents": {
+          "default": [],
+          "type": "array"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "installationId": {
+          "type": "string"
+        },
+        "installedAt": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "pack": {
+          "type": "PackResponse"
+        },
+        "project": {
+          "default": null,
+          "nullable": true,
+          "type": "ProjectResponse"
+        },
+        "tasks": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "installationId",
+        "installedAt",
+        "outcome",
+        "pack"
+      ]
+    },
+    "PackListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "PackPreviewResponse": {
+      "properties": {
+        "blockers": {
+          "default": [],
+          "type": "array"
+        },
+        "canInstall": {
+          "type": "boolean"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "pack": {
+          "type": "PackResponse"
+        }
+      },
+      "required": [
+        "canInstall",
+        "pack"
+      ]
+    },
+    "PackResponse": {
+      "properties": {
+        "agents": {
+          "default": [],
+          "type": "array"
+        },
+        "blurb": {
+          "default": "",
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "installed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "installedAt": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "installedVersion": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "installs": {
+          "default": "",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "price": {
+          "default": "",
+          "type": "string"
+        },
+        "priceNote": {
+          "default": "",
+          "type": "string"
+        },
+        "rating": {
+          "default": 0.0,
+          "type": "number"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "workflow": {
+          "default": null,
+          "nullable": true,
+          "type": "PackWorkflowResponse"
+        }
+      },
+      "required": [
+        "description",
+        "name",
+        "slug",
+        "version"
+      ]
+    },
+    "PackWorkflowResponse": {
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "projectId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "tasks": {
+          "default": [],
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "ref",
+        "title"
+      ]
+    },
+    "PackWorkflowTaskResponse": {
+      "properties": {
+        "dependsOn": {
+          "default": [],
+          "type": "array"
+        },
+        "key": {
+          "type": "string"
+        },
+        "ownerAgentSlug": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "ownerAgentSlug",
+        "title"
+      ]
+    },
     "PlanResponse": {
       "properties": {
         "approvals": {
@@ -751,6 +1185,56 @@
       },
       "required": []
     },
+    "ProjectPatch": {
+      "properties": {
+        "aiBudget": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "allowUnpricedAi": {
+          "default": null,
+          "nullable": true,
+          "type": "boolean"
+        },
+        "budget": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "deadline": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "goal": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "milestones": {
+          "default": null,
+          "nullable": true,
+          "type": "array"
+        },
+        "status": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "teamIds": {
+          "default": null,
+          "nullable": true,
+          "type": "array"
+        },
+        "title": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": []
+    },
     "ProjectResponse": {
       "properties": {
         "aiBudget": {
@@ -758,6 +1242,10 @@
         },
         "aiSpent": {
           "type": "decimal-as-string"
+        },
+        "allowUnpricedAi": {
+          "default": false,
+          "type": "boolean"
         },
         "budget": {
           "type": "decimal-as-string"
@@ -857,6 +1345,36 @@
       },
       "required": []
     },
+    "TaskPatch": {
+      "properties": {
+        "etaMinutes": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "gateAt": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "ownerAgentId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "summary": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "title": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": []
+    },
     "TaskResponse": {
       "properties": {
         "approvalGateId": {
@@ -930,6 +1448,201 @@
         "summary",
         "title"
       ]
+    },
+    "UsageCallKindSummary": {
+      "properties": {
+        "confirmedCost": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "estimatedCost": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "unknownCount": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "UsageItemResponse": {
+      "properties": {
+        "agentId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "attempt": {
+          "default": 0,
+          "type": "integer"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "cachedTokens": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "callKind": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "completionTokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "costAmount": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "costSource": {
+          "type": "string"
+        },
+        "currency": {
+          "default": "USD",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "occurredAt": {
+          "type": "string"
+        },
+        "projectId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "promptTokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerRequestId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "reasoningTokens": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "tariffVersion": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "taskId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "totalTokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "usageStatus": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "businessId",
+        "costSource",
+        "id",
+        "model",
+        "occurredAt",
+        "provider",
+        "usageStatus"
+      ]
+    },
+    "UsageListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "default": "confirmed_cost=Decimal('0') estimated_cost=Decimal('0') unknown_count=0 by_call_kind={} reservations=UsageReservationSummary(active=Decimal('0'), ambiguous=Decimal('0'), consumed=Decimal('0'), released=Decimal('0'), written_off=Decimal('0'))",
+          "type": "UsageSummary"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "UsageReservationSummary": {
+      "properties": {
+        "active": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "ambiguous": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "consumed": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "released": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "writtenOff": {
+          "default": "0",
+          "type": "decimal-as-string"
+        }
+      },
+      "required": []
+    },
+    "UsageSummary": {
+      "properties": {
+        "byCallKind": {
+          "default": {},
+          "type": "object"
+        },
+        "confirmedCost": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "estimatedCost": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "reservations": {
+          "default": "active=Decimal('0') ambiguous=Decimal('0') consumed=Decimal('0') released=Decimal('0') written_off=Decimal('0')",
+          "type": "UsageReservationSummary"
+        },
+        "unknownCount": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
     }
   }
 }

@@ -89,6 +89,14 @@ async def cmd_create_owner(args: argparse.Namespace) -> int:
                         f"user already exists: {email} (use reset-password to change credentials)"
                     )
                     return 0
+                # Validate the attach target BEFORE any write: returning
+                # inside `session.begin()` commits, so a late usage error
+                # would otherwise persist a membership-less user row.
+                if args.business_id:
+                    validate_id(args.business_id)
+                    if await _businesses.get(session, args.business_id, args.business_id) is None:
+                        print(f"error: business not found: {args.business_id}", file=sys.stderr)
+                        return 1
                 uid = args.user_id or uuid.uuid4().hex
                 validate_id(uid)
                 await _users.create(
@@ -99,10 +107,6 @@ async def cmd_create_owner(args: argparse.Namespace) -> int:
                     display_name=args.name or "",
                 )
                 if args.business_id:
-                    validate_id(args.business_id)
-                    if await _businesses.get(session, args.business_id, args.business_id) is None:
-                        print(f"error: business not found: {args.business_id}", file=sys.stderr)
-                        return 1
                     await _members.grant(session, uid, args.business_id, "owner")
                     print(f"created owner {email} attached to business {args.business_id}")
                 elif args.business_name:

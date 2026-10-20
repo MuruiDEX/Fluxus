@@ -93,7 +93,9 @@ def build_manifest() -> dict:
             continue
         for method, spec in sorted(methods.items()):
             responses = spec.get("responses", {})
-            ok = responses.get("200", {})
+            # Success payload lives under 200 (reads, patches, decisions) or
+            # 201 (creations, e.g. POST .../brain) — both are wire responses.
+            ok = responses.get("200", {}) or responses.get("201", {})
             content = ok.get("content", {}).get("application/json", {})
             ref = content.get("schema", {}).get("$ref", "")
             response = ref.rsplit("/", 1)[-1] if ref else ""

@@ -3,16 +3,28 @@
 ## Prerequisites
 
 - Node.js 20+ (developed with Node 24), npm 10+.
+- Python 3.12+ for the backend (`backend/`).
+- PostgreSQL 16 for the backend: Docker Compose `postgres` (:5432, dev) /
+  `postgres-test` (:5433, tests), or no install — pytest auto-starts embedded
+  PostgreSQL 16 binaries (`postgresql-binaries==16.15.0`) on :5433.
 - Playwright browsers for E2E: `npm --prefix frontend exec playwright install chromium`
   (one-time; binaries live outside the repo in the Playwright cache).
-- No backend, database, `.env`, or external services required.
+- No `.env` secrets or external AI provider required (`APP_LLM_PROVIDER=mock` default, offline).
 
 ## Install
 
 ```bash
-# from the repo root
+# from the repo root — frontend
 npm run install:all
 # equivalent: npm --prefix frontend install
+```
+
+```powershell
+# backend (Windows PowerShell, from backend/)
+python -m venv .venv
+.\.venv\Scripts\pip install -r requirements-dev.txt   # runtime + pytest/ruff/embedded PG
+# pip-only runtime alternative: pip install -r requirements.txt
+# (pyproject.toml is the source of truth; the requirements*.txt files mirror it)
 ```
 
 ## Run
@@ -21,6 +33,14 @@ npm run install:all
 npm run dev      # Next.js dev server → http://localhost:3000
 npm run build    # production build (Turbopack)
 npm run start    # serve the production build
+```
+
+```powershell
+# backend (from backend/, .venv active; loopback only by default)
+# docker compose up -d postgres-test   # optional — tests fall back to embedded PG
+.\.venv\Scripts\alembic upgrade head
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# frontend LIVE mode: $env:NEXT_PUBLIC_API_URL="http://127.0.0.1:8000" (see frontend/.env.example)
 ```
 
 All commands also work directly inside `frontend/` (`npm run dev`, …).
@@ -38,6 +58,16 @@ npm run typecheck   # tsc --noEmit
 npm run lint        # eslint
 npm run test        # vitest run (engine unit tests, ~1s)
 npm run test:e2e    # Playwright Chromium (spins up dev on :3210, ~1-2 min)
+```
+
+```powershell
+# backend (from backend/, .venv active)
+.\.venv\Scripts\python -m pytest -q
+.\.venv\Scripts\ruff check app tests alembic scripts
+.\.venv\Scripts\ruff format --check app tests alembic scripts
+.\.venv\Scripts\alembic upgrade head --sql | Out-Null  # migration chain renders
+# wire manifest: tests/test_wire_manifest.py fails when docs/contracts/wire-manifest.json
+# is stale; regenerate with .\.venv\Scripts\python scripts\gen_wire_manifest.py
 ```
 
 Run at minimum `typecheck + lint + test` before pushing; run `test:e2e`

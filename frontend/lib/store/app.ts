@@ -116,13 +116,18 @@ export const useBrain = create<BrainState>((set) => ({
 interface MarketState {
   listings: MarketplaceAgent[];
   hiredSlugs: string[];
+  installedSlugs: string[];
   hireSlug: (slug: string) => void;
+  installSlug: (slug: string) => void;
 }
 
 export const useMarketplace = create<MarketState>((set) => ({
   listings: seedMarketplace,
   hiredSlugs: ["sales-manager", "marketing-manager"],
+  installedSlugs: [],
   hireSlug: (slug) => set((s) => (s.hiredSlugs.includes(slug) ? s : { hiredSlugs: [...s.hiredSlugs, slug] })),
+  installSlug: (slug) =>
+    set((s) => (s.installedSlugs.includes(slug) ? s : { installedSlugs: [...s.installedSlugs, slug] })),
 }));
 
 interface ActivityState {

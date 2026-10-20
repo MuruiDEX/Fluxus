@@ -1,0 +1,10 @@
+# backend/requirements-dev.txt — local dev/test extras on top of requirements.txt.
+# Mirrors backend/pyproject.toml [project.optional-dependencies] dev.
+# Install: pip install -r backend/requirements-dev.txt
+# Note: postgresql-binaries is pinned to 16.x — PG 18.x binaries fail with
+# shared-memory reservation errors in this Windows environment (see backend/README.md).
+-r requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.24
+ruff>=0.8
+postgresql-binaries==16.15.0

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Search, Upload, X } from "lucide-react";
 import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { BrainCreateButton } from "@/components/system/BrainCreate";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveBrain } from "@/lib/store/live";
 import { useBrain, useBusiness } from "@/lib/store/app";
@@ -203,8 +204,9 @@ function LiveBrainView({ businessId }: { businessId: string }) {
     <>
       <PageHeader
         title="Business Brain"
-        sub="Server memory for your business. Read-only in this build — notes and imports stay in demo mode."
+        sub="Server memory for your business. New notes are saved to the backend."
         badge={<LiveBadge />}
+        actions={<BrainCreateButton businessId={businessId} />}
       />
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex h-9 max-w-xs flex-1 items-center gap-2 rounded-[10px] border border-mist-200 bg-white px-3 dark:border-white/10 dark:bg-night-900">

@@ -16,6 +16,8 @@ from app.llm.types import LlmChunk, LlmRequest, LlmResponse, LlmUsage
 
 
 class MockProvider:
+    name = "mock"
+
     def __init__(
         self,
         *,
@@ -29,7 +31,12 @@ class MockProvider:
         self._chunks: deque[list[str]] = deque(chunks or [])
         self._errors: deque[Exception] = deque(errors or [])
         self._latency_s = latency_s
-        self._usage = usage or LlmUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        # A test double that always reports usage; `reported=True` lets a
+        # registered tariff price it as `confirmed` (default catalog is empty,
+        # so an un-configured mock is recorded as `unknown`, never as free).
+        self._usage = usage or LlmUsage(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15, reported=True
+        )
         self.calls: list[LlmRequest] = []
 
     def _next_error(self) -> Exception | None:

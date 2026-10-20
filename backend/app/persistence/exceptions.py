@@ -32,6 +32,11 @@ class ImmutableFieldError(PersistenceError):
     """Attempt to change an immutable field (e.g. marketplace slug)."""
 
 
+class AgentDisabledError(PersistenceError):
+    """An operation requires an active (hired) agent, but the scoped row is
+    disabled. Maps to 422 `agent_disabled` at the API boundary."""
+
+
 def validate_id(value: str) -> str:
     if not isinstance(value, str) or not ID_RE.match(value):
         raise InvalidIdError(f"Invalid id: {value!r}")

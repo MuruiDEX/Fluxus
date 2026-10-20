@@ -80,6 +80,62 @@ class ActivityKind(StrEnum):
     RESULT = "result"
 
 
+class PackItemKind(StrEnum):
+    AGENT = "agent"
+    WORKFLOW = "workflow"
+
+
+class UsageStatus(StrEnum):
+    """Confidence in a ledger row's cost (Stage 16).
+
+    Only `confirmed` rows are aggregated into confirmed totals; `estimated`
+    and `unknown` are tracked separately and never presented as costed fact.
+    """
+
+    CONFIRMED = "confirmed"
+    ESTIMATED = "estimated"
+    UNKNOWN = "unknown"
+
+
+class UsageCostSource(StrEnum):
+    """Where a ledger row's cost came from. `unknown` means no cost at all."""
+
+    PROVIDER = "provider"  # provider reported it (authoritative)
+    TARIFF = "tariff"  # computed from our versioned tariff table
+    UNKNOWN = "unknown"  # not priceable — cost_amount stays NULL
+
+
+class UsageCallKind(StrEnum):
+    """Which product operation produced a ledger row (Stage 16.1).
+
+    Kept separate from provider/model/task identity and cost source so usage
+    rows stay queryable by call kind for summaries and analytics. `task_execution`
+    is the orchestrator (Stage 16); the rest are Team Lead brief operations.
+    """
+
+    TASK_EXECUTION = "task_execution"
+    BRIEF_QUESTIONS = "brief_questions"
+    BRIEF_SUMMARY = "brief_summary"
+    PLAN_GENERATION = "plan_generation"
+    BRIEF_FINALIZE = "brief_finalize"
+
+
+class ReservationStatus(StrEnum):
+    """Budget reservation lifecycle (Stage 16).
+
+    `active` and `ambiguous` reservations count against the budget ceiling;
+    `consumed` becomes the linked ledger row (counted once as confirmed);
+    `released`/`written_off` no longer count. Ambiguous reservations are
+    NEVER auto-released — only an explicit write-off or proven non-execution.
+    """
+
+    ACTIVE = "active"
+    CONSUMED = "consumed"
+    AMBIGUOUS = "ambiguous"
+    RELEASED = "released"
+    WRITTEN_OFF = "written_off"
+
+
 def check_values(enum_cls: type[StrEnum]) -> list[str]:
     return [m.value for m in enum_cls]
 

@@ -15,7 +15,7 @@ Server-rendered sections (costs envelope, learning ids) are never taken
 from model output.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import Settings
 from app.llm.base import LlmProvider
@@ -23,6 +23,9 @@ from app.llm.types import BadResponseError, LlmMessage, LlmRequest, StructuredOu
 from app.llm.validate import validate_against_schema
 from app.persistence.enums import BrainCategory, check_values
 from app.teamlead.questions import BriefGenerationError
+
+if TYPE_CHECKING:
+    from app.usage.metering import TeamLeadMeter
 
 MAX_LEARNINGS = 5
 MAX_TITLE_CHARS = 300
@@ -266,12 +269,13 @@ async def generate_finalization(
     facts: dict,
     *,
     max_generations: int = 2,
+    meter: "TeamLeadMeter | None" = None,
 ) -> dict:
     """Ask the Team Lead for the final report + learnings; raise on exhaustion."""
     from app.teamlead.prompts import build_final_system_prompt, build_final_user_prompt
 
     last_violations: list[str] = ["no generation attempted"]
-    for _ in range(max(1, max_generations)):
+    for generation in range(max(1, max_generations)):
         request = LlmRequest(
             messages=[
                 LlmMessage(role="system", content=build_final_system_prompt()),
@@ -291,7 +295,10 @@ async def generate_finalization(
         # a provider failure — it consumes budget and is retried below.
         # CancelledError is not an LlmError and propagates untouched.
         try:
-            response = await provider.complete(request)
+            if meter is not None:
+                response = await meter.complete(provider, request, generation=generation)
+            else:
+                response = await provider.complete(request)
         except BadResponseError as exc:
             last_violations = [str(exc)]
             continue

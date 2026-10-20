@@ -351,8 +351,11 @@ export function FinalReportView({ result }: { result: ApiFinalize }) {
         </div>
       )}
       <p className="text-[11px] text-ink-400">
-        Ledger budget ${costs.budget} · AI ${costs.ai_spent} / ${costs.ai_budget} (configured
-        values, not measured). {costs.note}
+        Ledger budget ${costs.budget} · AI spend ${costs.ai_spent} / ${costs.ai_budget}
+        {costs.ai_estimated && costs.ai_estimated !== "0.00" && costs.ai_estimated !== "0"
+          ? ` · estimated $${costs.ai_estimated} (not confirmed)`
+          : ""}
+        . {costs.note}
       </p>
     </div>
   );

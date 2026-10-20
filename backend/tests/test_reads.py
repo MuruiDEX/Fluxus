@@ -129,6 +129,7 @@ async def test_list_projects(session: AsyncSession, api_client: httpx.AsyncClien
             "budget",
             "aiBudget",
             "aiSpent",
+            "allowUnpricedAi",
             "deadline",
             "teamIds",
             "milestones",

@@ -10,7 +10,7 @@ transaction as the task-cost writes. See contract §5.1.
 
 from decimal import Decimal
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Numeric, String
+from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.persistence.base import ID_LEN, Base, BusinessScopedMixin, IdMixin, TimestampMixin
@@ -37,6 +37,10 @@ class Project(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     budget: Mapped[Decimal] = mapped_column(MONEY, default=0)
     ai_budget: Mapped[Decimal] = mapped_column(MONEY, default=0)
     ai_spent: Mapped[Decimal] = mapped_column(MONEY, default=0)
+    # Stage 16: explicit opt-in to run AI with no priceable tariff. Off by
+    # default (fail-closed: `budget_unpriced`); when on, the budget becomes
+    # best-effort — the real provider bill may exceed `ai_budget`.
+    allow_unpriced_ai: Mapped[bool] = mapped_column(Boolean, default=False)
     # Contract display string ("30 May 2026"): stored verbatim, never parsed.
     deadline: Mapped[str] = mapped_column(String(64), default="")
     team_ids: Mapped[list] = mapped_column(JSON, default=list)

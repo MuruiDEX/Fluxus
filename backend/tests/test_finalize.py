@@ -10,6 +10,7 @@ state. Concurrent finalizers serialize: exactly one batch wins.
 
 import asyncio
 import json as _json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -25,6 +26,7 @@ from app.persistence.repositories.concrete import (
     BriefRepository,
     TaskRepository,
 )
+from app.persistence.repositories.usage import UsageRepository
 from app.teamlead.finalize import (
     generate_finalization,
     normalize_finalization,
@@ -32,6 +34,8 @@ from app.teamlead.finalize import (
 )
 from app.teamlead.prompts import build_final_user_prompt
 from app.teamlead.questions import BriefGenerationError
+from app.usage import pricing
+from app.usage.tariffs import Tariff
 from tests.conftest import login_as, seed_operator
 from tests.factories import BIZ, BIZ_OTHER, make_business, make_world
 from tests.test_briefs import VALID_TEXT, _authed, _brief_url, _mocked
@@ -111,7 +115,20 @@ async def _make_planned(
     planned = await api_client.post(_plan_url(brief_id), headers=headers)
     assert planned.status_code == 200, planned.text
     body = planned.json()
-    return brief_id, body["project"]["id"], body["tasks"], body["approvals"]
+    project_id = body["project"]["id"]
+    # Stage 16.1 makes finalization budget-enforced. The plan sets a positive
+    # ai_budget, so price the mock provider to keep exercising report
+    # generation without touching project state (enforcement has its own
+    # tests).
+    pricing.register_tariff(
+        Tariff(
+            provider="mock",
+            model="mock",
+            input_per_1k=Decimal("5.00"),
+            output_per_1k=Decimal("10.00"),
+        )
+    )
+    return brief_id, project_id, body["tasks"], body["approvals"]
 
 
 async def _settle(
@@ -248,8 +265,8 @@ async def test_finalize_ok(
     assert body["report"]["failed_tasks"] == []
     assert len(body["learnings"]) == 1
     assert body["learnings"][0]["category"] == "results"
-    assert body["costs"]["note"].startswith("Configured ledger values")
-    assert body["costs"]["ai_spent"] == "0.00"
+    assert body["costs"]["note"].startswith("Confirmed AI spend from the usage ledger")
+    assert Decimal(body["costs"]["ai_spent"]) > 0
     assert len(provider.calls) == 1
 
     brains, events = await _counts(session, project_id)
@@ -261,6 +278,40 @@ async def test_finalize_ok(
     assert brief.json()["finalReport"]["report"] == body["report"]
     row = await _brief_row(session, brief_id)
     assert row.status == "completed" and row.project_id == project_id
+
+
+async def test_finalize_costs_report_estimated_separately(
+    session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    headers = await _authed(session, api_client)
+    brief_id, project_id, tasks, approvals = await _make_planned(api_client, headers, monkeypatch)
+    await _settle(session, tasks, approvals)
+    await UsageRepository().append(
+        session,
+        BIZ,
+        {
+            "idempotency_key": "usage:est-snapshot",
+            "attempt_key": "tl:b0:plan_generation:g0",
+            "attempt": 0,
+            "project_id": project_id,
+            "task_id": None,
+            "provider": "mock",
+            "model": "mock",
+            "cost_amount": Decimal("0.42"),
+            "cost_source": "tariff",
+            "usage_status": "estimated",
+        },
+    )
+    await session.commit()
+    _mocked(monkeypatch, MockProvider(texts=[_final_text(tasks)]))
+
+    res = await api_client.post(_final_url(brief_id), headers=headers)
+
+    assert res.status_code == 200, res.text
+    costs = res.json()["costs"]
+    assert costs["ai_estimated"] == "0.42"
+    # Estimated is never presented as confirmed; the finalization itself is.
+    assert costs["ai_spent"] == "0.10"
 
 
 async def test_finalize_zero_and_five_learnings(

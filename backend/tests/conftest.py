@@ -20,6 +20,10 @@ from app.persistence.engine import create_engine_from_url, session_factory
 from tests._pg_embedded import ensure_postgres
 
 TABLES = (
+    "usage_records",
+    "budget_reservations",
+    "pack_installation_items",
+    "pack_installations",
     "task_dependencies",
     "activity_events",
     "approvals",
@@ -34,6 +38,16 @@ TABLES = (
     "memberships",
     "users",
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_tariff_catalog() -> object:
+    """Isolate the process-global tariff catalog between tests."""
+    from app.usage.pricing import registry
+
+    registry.clear()
+    yield
+    registry.clear()
 
 
 @pytest.fixture(scope="session")

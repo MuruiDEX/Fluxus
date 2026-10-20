@@ -108,6 +108,9 @@ class ProjectResponse(Contracted):
     deadline: str = ""
     team_ids: list = Field(default_factory=list, alias="teamIds")
     milestones: list = Field(default_factory=list)
+    # Stage 16 (contract v1.17): opt-in to best-effort AI calls without a
+    # priceable tariff. Default false: a budgeted project fails closed.
+    allow_unpriced_ai: bool = Field(default=False, alias="allowUnpricedAi")
 
 
 class AgentResponse(Contracted):
@@ -212,6 +215,69 @@ class BrainListResponse(Contracted):
     offset: int = 0
 
 
+class UsageItemResponse(BaseModel):
+    """One canonical ledger row (contract v1.18). `costAmount` is NULL when the
+    cost is unknown — unknown is never reported as zero. `callKind` names the
+    operation that produced the call (Stage 16.1)."""
+
+    id: str
+    business_id: str = Field(alias="businessId")
+    project_id: str | None = Field(default=None, alias="projectId")
+    task_id: str | None = Field(default=None, alias="taskId")
+    agent_id: str | None = Field(default=None, alias="agentId")
+    attempt: int = 0
+    provider: str
+    model: str
+    call_kind: str | None = Field(default=None, alias="callKind")
+    provider_request_id: str | None = Field(default=None, alias="providerRequestId")
+    prompt_tokens: int = Field(default=0, alias="promptTokens")
+    completion_tokens: int = Field(default=0, alias="completionTokens")
+    total_tokens: int = Field(default=0, alias="totalTokens")
+    cached_tokens: int | None = Field(default=None, alias="cachedTokens")
+    reasoning_tokens: int | None = Field(default=None, alias="reasoningTokens")
+    cost_amount: Decimal | None = Field(default=None, alias="costAmount")
+    currency: str = "USD"
+    cost_source: str = Field(alias="costSource")
+    usage_status: str = Field(alias="usageStatus")
+    tariff_version: str | None = Field(default=None, alias="tariffVersion")
+    occurred_at: str = Field(alias="occurredAt")
+
+
+class UsageReservationSummary(BaseModel):
+    active: Decimal = Decimal("0")
+    ambiguous: Decimal = Decimal("0")
+    consumed: Decimal = Decimal("0")
+    released: Decimal = Decimal("0")
+    written_off: Decimal = Field(default=Decimal("0"), alias="writtenOff")
+
+
+class UsageCallKindSummary(BaseModel):
+    """Per-call-kind money breakdown (Stage 16.1). Confirmed and estimated stay
+    apart; `unknownCount` counts unpriceable rows (never reported as cost)."""
+
+    confirmed_cost: Decimal = Field(default=Decimal("0"), alias="confirmedCost")
+    estimated_cost: Decimal = Field(default=Decimal("0"), alias="estimatedCost")
+    unknown_count: int = Field(default=0, alias="unknownCount")
+
+
+class UsageSummary(BaseModel):
+    confirmed_cost: Decimal = Field(default=Decimal("0"), alias="confirmedCost")
+    estimated_cost: Decimal = Field(default=Decimal("0"), alias="estimatedCost")
+    unknown_count: int = Field(default=0, alias="unknownCount")
+    by_call_kind: dict[str, UsageCallKindSummary] = Field(
+        default_factory=dict, alias="byCallKind"
+    )
+    reservations: UsageReservationSummary = Field(default_factory=UsageReservationSummary)
+
+
+class UsageListResponse(Contracted):
+    items: list[UsageItemResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    summary: UsageSummary = Field(default_factory=UsageSummary)
+
+
 class DecisionResponse(Contracted):
     # approved|rejected: this call decided. already_*: idempotent repeat (200).
     # conflict: 409 body only — terminal for the other decision, with the
@@ -219,6 +285,49 @@ class DecisionResponse(Contracted):
     outcome: str
     approval_id: str = Field(alias="approvalId")
     status: str | None = None
+
+
+class BrainCreate(BaseModel):
+    """Stage 7.1: manual knowledge entry. Id is always server-generated."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    category: str
+    title: str = Field(min_length=1, max_length=300)
+    body: str = ""
+
+
+class ProjectPatch(BaseModel):
+    """Stage 7.1: project metadata patch. Executor/derived fields are NOT
+    accepted here — extra keys (status transitions excluded) are 422, so
+    ai_spent/progress can never be smuggled through this path."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    goal: str | None = Field(default=None, max_length=2000)
+    status: str | None = None
+    budget: Decimal | None = None
+    ai_budget: Decimal | None = Field(default=None, alias="aiBudget")
+    deadline: str | None = Field(default=None, max_length=64)
+    team_ids: list[str] | None = Field(default=None, alias="teamIds")
+    milestones: list | None = None
+    allow_unpriced_ai: bool | None = Field(default=None, alias="allowUnpricedAi")
+
+
+class TaskPatch(BaseModel):
+    """Stage 7.1: task metadata patch. Execution-owned fields (status,
+    progress, cost_accrued, attempts, approval_gate_id, cost_rate,
+    project_id) are NOT accepted — extra keys are 422, so the executor's
+    claim semantics and the ai_spent recompute path cannot be bypassed."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    summary: str | None = None
+    eta_minutes: int | None = Field(default=None, alias="etaMinutes", ge=0)
+    owner_agent_id: str | None = Field(default=None, alias="ownerAgentId")
+    gate_at: int | None = Field(default=None, alias="gateAt", ge=0, le=100)
 
 
 class PlanResponse(Contracted):
@@ -247,3 +356,100 @@ class FinalizeResponse(Contracted):
     report: dict = Field(default_factory=dict)
     learnings: list[FinalizeLearning] = Field(default_factory=list)
     costs: dict = Field(default_factory=dict)
+
+
+class MarketplaceResponse(Contracted):
+    # Stage 8.1: one catalog row. The wire id is `slug` (contract §1, §3 —
+    # kebab-case, immutable); `hired` is computed per requesting business.
+    id: str = Field(alias="slug")
+    name: str
+    role: str = ""
+    blurb: str = ""
+    price: str = ""
+    price_note: str = Field(default="", alias="priceNote")
+    rating: float = 0.0
+    installs: str = ""
+    badge: str | None = None
+    capabilities: list = Field(default_factory=list)
+    permissions: dict = Field(default_factory=dict)
+    category: str
+    hired: bool = False
+    # Stage 15: computed per business for pack listings; employees stay false.
+    installed: bool = False
+    installed_version: str | None = Field(default=None, alias="installedVersion")
+
+
+class MarketplaceListResponse(Contracted):
+    items: list[MarketplaceResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class PackAgentResponse(BaseModel):
+    slug: str
+    name: str
+    role: str
+    capabilities: list = Field(default_factory=list)
+    agent_id: str | None = Field(default=None, alias="agentId")
+    action: str = "create"  # create | reuse | blocked
+
+
+class PackWorkflowTaskResponse(BaseModel):
+    key: str
+    title: str
+    owner_agent_slug: str = Field(alias="ownerAgentSlug")
+    depends_on: list[str] = Field(default_factory=list, alias="dependsOn")
+
+
+class PackWorkflowResponse(BaseModel):
+    ref: str
+    title: str
+    goal: str
+    project_id: str | None = Field(default=None, alias="projectId")
+    tasks: list[PackWorkflowTaskResponse] = Field(default_factory=list)
+
+
+class PackResponse(Contracted):
+    slug: str
+    version: str
+    name: str
+    description: str
+    blurb: str = ""
+    price: str = ""
+    price_note: str = Field(default="", alias="priceNote")
+    rating: float = 0.0
+    installs: str = ""
+    installed: bool = False
+    installed_version: str | None = Field(default=None, alias="installedVersion")
+    installed_at: str | None = Field(default=None, alias="installedAt")
+    agents: list[PackAgentResponse] = Field(default_factory=list)
+    workflow: PackWorkflowResponse | None = None
+
+
+class PackListResponse(Contracted):
+    items: list[PackResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class PackBlockerResponse(BaseModel):
+    code: str
+    message: str
+
+
+class PackPreviewResponse(Contracted):
+    pack: PackResponse
+    can_install: bool = Field(alias="canInstall")
+    blockers: list[PackBlockerResponse] = Field(default_factory=list)
+
+
+class PackInstallResponse(Contracted):
+    outcome: str  # installed | already_installed
+    pack: PackResponse
+    installation_id: str = Field(alias="installationId")
+    installed_at: str = Field(alias="installedAt")
+    agents: list[PackAgentResponse] = Field(default_factory=list)
+    project: ProjectResponse | None = None
+    tasks: list[TaskResponse] = Field(default_factory=list)

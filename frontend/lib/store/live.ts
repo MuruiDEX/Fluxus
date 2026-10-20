@@ -18,13 +18,18 @@ import { create } from "zustand";
 import {
   ApiError,
   apiGetAgent,
+  apiGetListing,
   apiGetProject,
   apiListAgents,
   apiListApprovals,
   apiListActivity,
   apiListBrain,
+  apiListMarketplace,
+  apiListPacks,
   apiListProjects,
   apiListTasks,
+  apiListUsage,
+  apiPreviewPack,
   isAbortError,
   type BrainCategory,
 } from "@/lib/api";
@@ -34,10 +39,14 @@ import {
   toDomainAgent,
   toDomainApproval,
   toDomainBrainEntry,
+  toDomainMarketplaceEntry,
+  toDomainPack,
+  toDomainPackPreview,
   toDomainProject,
   toDomainTask,
+  toDomainUsage,
 } from "@/lib/live/mappers";
-import type { ActivityEvent, Agent, Approval, BrainEntry, Project, Task } from "@/lib/domain/types";
+import type { ActivityEvent, Agent, Approval, BrainEntry, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageView } from "@/lib/domain/types";
 
 export type LiveLoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -105,6 +114,12 @@ interface LiveProjectsState {
   total: number;
   error: string | null;
   load: (businessId: string) => Promise<void>;
+  /**
+   * Replace one row by id, or append it (ids are global PKs, so scope cannot
+   * collide). The row was just verified server-side in scope — used to apply
+   * management-write answers without a full reload.
+   */
+  upsertProject: (project: Project) => void;
   reset: () => void;
 }
 
@@ -141,6 +156,12 @@ export const useLiveProjects = create<LiveProjectsState>((set) => ({
     projectsCtl.seq += 1;
     set({ ...idleProjects });
   },
+  upsertProject: (project: Project) =>
+    set((s) => ({
+      projects: s.projects.some((p) => p.id === project.id)
+        ? s.projects.map((p) => (p.id === project.id ? project : p))
+        : [...s.projects, project].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -155,6 +176,12 @@ interface LiveProjectState {
   notFound: boolean;
   error: string | null;
   load: (businessId: string, projectId: string) => Promise<void>;
+  /**
+   * Replace the cached row with a server-confirmed row (management-write
+   * answer). Never invents rows and never guesses fields — callers pass back
+   * exactly what the backend answered.
+   */
+  replace: (project: Project) => void;
   reset: () => void;
 }
 
@@ -196,6 +223,8 @@ export const useLiveProject = create<LiveProjectState>((set) => ({
     projectCtl.seq += 1;
     set({ ...idleProject });
   },
+  replace: (project: Project) =>
+    set((s) => (s.project && s.project.id === project.id ? { project } : s)),
 }));
 
 // ---------------------------------------------------------------------------
@@ -282,6 +311,11 @@ interface LiveAgentsState {
   agents: Agent[];
   error: string | null;
   ensure: (businessId: string) => Promise<void>;
+  /**
+   * Drop the cache for one business (hire changed the team server-side).
+   * Other businesses are untouched; the next ensure() refetches.
+   */
+  invalidate: (businessId: string) => void;
   reset: () => void;
 }
 
@@ -315,6 +349,13 @@ export const useLiveAgents = create<LiveAgentsState>((set, get) => ({
     );
   },
   reset: () => {
+    agentsCtl.controller?.abort();
+    agentsCtl.seq += 1;
+    set({ ...idleAgents });
+  },
+  invalidate: (businessId) => {
+    const s = get();
+    if (s.businessId !== businessId) return;
     agentsCtl.controller?.abort();
     agentsCtl.seq += 1;
     set({ ...idleAgents });
@@ -448,6 +489,86 @@ export const useLiveActivity = create<LiveActivityState>((set) => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Usage ledger (Stage 16) — append-only rows + derived money summary
+// ---------------------------------------------------------------------------
+
+export interface LiveUsageScope {
+  businessId: string;
+  projectId?: string;
+}
+
+const EMPTY_USAGE_SUMMARY: UsageView["summary"] = {
+  confirmedCost: 0,
+  estimatedCost: 0,
+  unknownCount: 0,
+  byCallKind: {},
+  reservations: { active: 0, ambiguous: 0, consumed: 0, released: 0, writtenOff: 0 },
+};
+
+interface LiveUsageState {
+  status: LiveLoadStatus;
+  businessId: string | null;
+  projectId: string | null;
+  records: UsageView["records"];
+  total: number;
+  summary: UsageView["summary"];
+  error: string | null;
+  load: (scope: LiveUsageScope) => Promise<void>;
+  reset: () => void;
+}
+
+const usageCtl = createCtl();
+
+const idleUsage = {
+  status: "idle" as const,
+  businessId: null,
+  projectId: null,
+  records: [] as UsageView["records"],
+  total: 0,
+  summary: EMPTY_USAGE_SUMMARY,
+  error: null,
+};
+
+export const useLiveUsage = create<LiveUsageState>((set) => ({
+  ...idleUsage,
+  load: (scope) =>
+    runLoad(
+      usageCtl,
+      set,
+      {
+        status: "loading",
+        businessId: scope.businessId,
+        projectId: scope.projectId ?? null,
+        records: [],
+        total: 0,
+        summary: EMPTY_USAGE_SUMMARY,
+        error: null,
+      },
+      async (signal) => {
+        const page = await apiListUsage(
+          scope.businessId,
+          { projectId: scope.projectId, limit: 200 },
+          { signal },
+        );
+        const view = toDomainUsage(page);
+        return {
+          status: "ready" as const,
+          records: view.records,
+          total: view.total,
+          summary: view.summary,
+          error: null,
+        };
+      },
+      (message) => ({ status: "error" as const, error: message }),
+    ),
+  reset: () => {
+    usageCtl.controller?.abort();
+    usageCtl.seq += 1;
+    set({ ...idleUsage });
+  },
+}));
+
+// ---------------------------------------------------------------------------
 // Agents list (Stage 7.8; the ensure() display cache above stays untouched)
 // ---------------------------------------------------------------------------
 
@@ -458,6 +579,12 @@ interface LiveAgentsListState {
   total: number;
   error: string | null;
   load: (businessId: string) => Promise<void>;
+  /**
+   * Apply a server-confirmed lifecycle change to the cached row (same id =
+   * same row). Never invents rows and never guesses flags — callers pass
+   * back exactly what the backend answered.
+   */
+  updateAgent: (agent: Agent) => void;
   reset: () => void;
 }
 
@@ -494,6 +621,10 @@ export const useLiveAgentsList = create<LiveAgentsListState>((set) => ({
     agentsListCtl.seq += 1;
     set({ ...idleAgentsList });
   },
+  updateAgent: (agent: Agent) =>
+    set((s) => ({
+      agents: s.agents.map((a) => (a.id === agent.id ? agent : a)),
+    })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -508,6 +639,11 @@ interface LiveAgentState {
   notFound: boolean;
   error: string | null;
   load: (businessId: string, agentId: string) => Promise<void>;
+  /**
+   * Replace the cached row with a server-confirmed row (lifecycle answer).
+   * Same contract as the list updater: no invented rows, no guessed flags.
+   */
+  replace: (agent: Agent) => void;
   reset: () => void;
 }
 
@@ -549,6 +685,8 @@ export const useLiveAgent = create<LiveAgentState>((set) => ({
     agentCtl.seq += 1;
     set({ ...idleAgent });
   },
+  replace: (agent: Agent) =>
+    set((s) => (s.agent && s.agent.id === agent.id ? { agent } : s)),
 }));
 
 // ---------------------------------------------------------------------------
@@ -615,5 +753,213 @@ export const useLiveBrain = create<LiveBrainState>((set) => ({
     brainCtl.controller?.abort();
     brainCtl.seq += 1;
     set({ ...idleBrain });
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Marketplace catalog (Stage 8.1; global rows, hired computed per business)
+// ---------------------------------------------------------------------------
+
+interface LiveMarketplaceState {
+  status: LiveLoadStatus;
+  businessId: string | null;
+  listings: MarketplaceAgent[];
+  total: number;
+  error: string | null;
+  load: (businessId: string) => Promise<void>;
+  reset: () => void;
+}
+
+const marketplaceCtl = createCtl();
+
+const idleMarketplace = {
+  status: "idle" as const,
+  businessId: null,
+  listings: [],
+  total: 0,
+  error: null,
+};
+
+export const useLiveMarketplace = create<LiveMarketplaceState>((set) => ({
+  ...idleMarketplace,
+  load: (businessId) =>
+    runLoad(
+      marketplaceCtl,
+      set,
+      { status: "loading", businessId, listings: [], total: 0, error: null },
+      async (signal) => {
+        const page = await apiListMarketplace(businessId, { limit: 200 }, { signal });
+        return {
+          status: "ready" as const,
+          listings: page.items.map(toDomainMarketplaceEntry),
+          total: page.total,
+          error: null,
+        };
+      },
+      (message) => ({ status: "error" as const, error: message }),
+    ),
+  reset: () => {
+    marketplaceCtl.controller?.abort();
+    marketplaceCtl.seq += 1;
+    set({ ...idleMarketplace });
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Single listing (deep links resolve exactly, never fall back to [0])
+// ---------------------------------------------------------------------------
+
+interface LiveMarketplaceOneState {
+  status: LiveLoadStatus;
+  key: string | null;
+  listing: MarketplaceAgent | null;
+  /** True when the server answered 404: unknown slug, not a failure. */
+  notFound: boolean;
+  error: string | null;
+  load: (businessId: string, slug: string) => Promise<void>;
+  reset: () => void;
+}
+
+const marketplaceOneCtl = createCtl();
+
+const idleMarketplaceOne = {
+  status: "idle" as const,
+  key: null,
+  listing: null,
+  notFound: false,
+  error: null,
+};
+
+export const useLiveMarketplaceOne = create<LiveMarketplaceOneState>((set) => ({
+  ...idleMarketplaceOne,
+  load: (businessId, slug) =>
+    runLoad(
+      marketplaceOneCtl,
+      set,
+      {
+        status: "loading",
+        key: `${businessId}/${slug}`,
+        listing: null,
+        notFound: false,
+        error: null,
+      },
+      async (signal) => {
+        const raw = await apiGetListing(businessId, slug, { signal });
+        return { status: "ready" as const, listing: toDomainMarketplaceEntry(raw), error: null };
+      },
+      (message, err) => ({
+        status: "error" as const,
+        error: message,
+        notFound: err instanceof ApiError && err.status === 404,
+      }),
+    ),
+  reset: () => {
+    marketplaceOneCtl.controller?.abort();
+    marketplaceOneCtl.seq += 1;
+    set({ ...idleMarketplaceOne });
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Packs (Stage 15) - catalog list + detail/preview with install blockers
+// ---------------------------------------------------------------------------
+
+interface LivePacksState {
+  status: LiveLoadStatus;
+  businessId: string | null;
+  packs: Pack[];
+  total: number;
+  error: string | null;
+  load: (businessId: string) => Promise<void>;
+  reset: () => void;
+}
+
+const packsCtl = createCtl();
+
+const idlePacks = {
+  status: "idle" as const,
+  businessId: null,
+  packs: [] as Pack[],
+  total: 0,
+  error: null,
+};
+
+export const useLivePacks = create<LivePacksState>((set) => ({
+  ...idlePacks,
+  load: (businessId) =>
+    runLoad(
+      packsCtl,
+      set,
+      { status: "loading", businessId, packs: [], total: 0, error: null },
+      async (signal) => {
+        const page = await apiListPacks(businessId, { signal });
+        return {
+          status: "ready" as const,
+          packs: page.items.map(toDomainPack),
+          total: page.total,
+          error: null,
+        };
+      },
+      (message) => ({ status: "error" as const, error: message }),
+    ),
+  reset: () => {
+    packsCtl.controller?.abort();
+    packsCtl.seq += 1;
+    set({ ...idlePacks });
+  },
+}));
+
+interface LivePackOneState {
+  status: LiveLoadStatus;
+  key: string | null;
+  preview: PackPreview | null;
+  /** True when the server answered 404: unknown slug, not a failure. */
+  notFound: boolean;
+  error: string | null;
+  load: (businessId: string, slug: string) => Promise<void>;
+  reset: () => void;
+}
+
+const packOneCtl = createCtl();
+
+const idlePackOne = {
+  status: "idle" as const,
+  key: null,
+  preview: null,
+  notFound: false,
+  error: null,
+};
+
+export const useLivePackOne = create<LivePackOneState>((set) => ({
+  ...idlePackOne,
+  load: (businessId, slug) =>
+    runLoad(
+      packOneCtl,
+      set,
+      {
+        status: "loading",
+        key: `${businessId}/${slug}`,
+        preview: null,
+        notFound: false,
+        error: null,
+      },
+      async (signal) => {
+        const raw = await apiPreviewPack(businessId, slug, { signal });
+        return {
+          status: "ready" as const,
+          preview: toDomainPackPreview(raw),
+          error: null,
+        };
+      },
+      (message, err) => ({
+        status: "error" as const,
+        error: message,
+        notFound: err instanceof ApiError && err.status === 404,
+      }),
+    ),
+  reset: () => {
+    packOneCtl.controller?.abort();
+    packOneCtl.seq += 1;
+    set({ ...idlePackOne });
   },
 }));

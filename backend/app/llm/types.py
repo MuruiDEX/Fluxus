@@ -43,6 +43,9 @@ class LlmRequest(BaseModel):
     temperature: float | None = None
     structured: StructuredOutput | None = None
     timeout_s: float = 30.0
+    # Stable per-send key. Adapters that document idempotency send it so a
+    # post-send retry cannot double-bill; ignored elsewhere.
+    idempotency_key: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -50,7 +53,13 @@ class LlmUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    # Set only when the provider reports pricing; no billing tables exist.
+    cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    # True only when the provider actually returned a usage object. Missing
+    # usage must stay distinguishable from a real all-zero report (Stage 16:
+    # priced-with-missing-usage is `estimated`, never `confirmed`).
+    reported: bool = False
+    # Set only when the provider reports pricing (authoritative when present).
     cost_estimate: Decimal | None = None
 
 
@@ -60,6 +69,8 @@ class LlmResponse(BaseModel):
     data: Any = None
     usage: LlmUsage = Field(default_factory=LlmUsage)
     model: str = ""
+    # Provider-side call id when reported; used for reconciliation/audit.
+    provider_request_id: str | None = None
     # Attempts actually performed (1 + retries). Retried generations may be
     # metered twice provider-side after a network failure of unknown outcome.
     attempts: int = 1
@@ -77,10 +88,17 @@ class LlmError(Exception):
     code: str = "provider_error"
     # Whether the operation may be retried (429/5xx/network only).
     retryable: bool = False
+    # True when the request may have reached the provider and the outcome is
+    # unknown (post-send network failure). Such errors are NOT retried (an
+    # unsafe retry could double-bill) and trigger an `ambiguous` reservation.
+    ambiguous: bool = False
 
     def __init__(self, message: str, *, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.details = details or {}
+        # Per-instance so classification can refine the class defaults.
+        self.ambiguous = type(self).ambiguous
+        self.retryable = type(self).retryable
 
 
 class ProviderError(LlmError):

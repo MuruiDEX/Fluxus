@@ -18,7 +18,7 @@ accident.
 
 import math
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import Settings
 from app.llm.base import LlmProvider
@@ -26,6 +26,9 @@ from app.llm.types import BadResponseError, LlmMessage, LlmRequest, StructuredOu
 from app.llm.validate import validate_against_schema
 from app.teamlead.prompts import MAX_PLAN_TASKS, PLAN_SCHEMA
 from app.teamlead.questions import BriefGenerationError
+
+if TYPE_CHECKING:
+    from app.usage.metering import TeamLeadMeter
 
 # Allowlist per object: anything else is a violation (fail), never a silent
 # drop — protected columns must not be steerable through the plan.
@@ -298,12 +301,13 @@ async def generate_plan(
     roster: list[dict],
     *,
     max_generations: int = 2,
+    meter: "TeamLeadMeter | None" = None,
 ) -> dict:
     """Ask the Team Lead for a work plan; raise on exhausted budget."""
     from app.teamlead.prompts import build_plan_system_prompt, build_plan_user_prompt
 
     last_violations: list[str] = ["no generation attempted"]
-    for _ in range(max(1, max_generations)):
+    for generation in range(max(1, max_generations)):
         request = LlmRequest(
             messages=[
                 LlmMessage(role="system", content=build_plan_system_prompt()),
@@ -323,7 +327,10 @@ async def generate_plan(
         # a provider failure — it consumes budget and is retried below.
         # CancelledError is not an LlmError and propagates untouched.
         try:
-            response = await provider.complete(request)
+            if meter is not None:
+                response = await meter.complete(provider, request, generation=generation)
+            else:
+                response = await provider.complete(request)
         except BadResponseError as exc:
             last_violations = [str(exc)]
             continue

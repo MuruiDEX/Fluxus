@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
 import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { AgentToggleButton } from "@/components/system/AgentToggle";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgent, useLiveProjects, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useProjects } from "@/lib/store/app";
@@ -152,7 +153,22 @@ function LiveAgentDetail({ businessId, agentId }: { businessId: string; agentId:
   }
 
   const mine = tasksSlice.tasks.filter((t) => t.ownerAgentId === agent.id);
-  return <AgentProfile agent={agent} mine={mine} />;
+  return (
+    <>
+      <AgentProfile agent={agent} mine={mine} />
+      <Card className="mt-3 p-4">
+        <p className="text-[13px] font-bold">Team status</p>
+        <p className="mt-0.5 text-[12px] text-ink-500">
+          {agent.hired
+            ? "Active — can take new work."
+            : "Disabled — keeps history, takes no new work."}
+        </p>
+        <div className="mt-2">
+          <AgentToggleButton businessId={businessId} agentId={agent.id} hired={agent.hired} />
+        </div>
+      </Card>
+    </>
+  );
 }
 
 export function AgentDetail() {

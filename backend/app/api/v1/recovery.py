@@ -17,6 +17,7 @@ from app.api.v1.schemas import RecoveryResponse
 from app.core.auth import check_client_contract
 from app.core.identity import require_business
 from app.persistence.repositories.concrete import ActivityRepository, TaskRepository
+from app.usage.reconciliation import reconcile_task_reservations
 
 router = APIRouter()
 _tasks = TaskRepository()
@@ -76,6 +77,14 @@ async def recover_task(business_id: str, project_id: str, task_id: str, request:
                         f"Task {task_id} recovered from stale working state (reset to {reset_to})."
                     ),
                 },
+            )
+            # The crashed run may have reached the provider: hold (never drop)
+            # its budget reservation so the exposure stays counted.
+            await reconcile_task_reservations(
+                session,
+                business_id,
+                task_id,
+                ambiguous_release_minutes=settings.usage_ambiguous_release_minutes,
             )
     return RecoveryResponse(
         outcome="recovered", taskId=task_id, status=reset_to, contract=settings.contract_version

@@ -15,6 +15,11 @@ export const SLUG_TO_AGENT: Record<string, string | null> = {
   "fitness-pack": null,
 };
 
+/** Pack slug -> the employee listings its install attaches to the team. */
+export const PACK_AGENTS: Record<string, string[]> = {
+  "fitness-pack": ["sales-manager", "support-ai"],
+};
+
 export function hireListing(slug: string): string | null {
   useMarketplace.getState().hireSlug(slug);
   const agentId = SLUG_TO_AGENT[slug] ?? null;
@@ -23,4 +28,20 @@ export function hireListing(slug: string): string | null {
     if (exists) useAgents.getState().hire(agentId);
   }
   return agentId;
+}
+
+/**
+ * DEMO pack install: marks the pack installed and hires every bundled agent
+ * through the same hireListing path LIVE uses, so hired/installed state stays
+ * consistent everywhere. LIVE never calls this — it posts to the server.
+ */
+export function installListing(slug: string): string[] {
+  useMarketplace.getState().installSlug(slug);
+  const bundled = PACK_AGENTS[slug] ?? [];
+  for (const agentSlug of bundled) hireListing(agentSlug);
+  return bundled;
+}
+
+export function isPackInstalled(slug: string): boolean {
+  return useMarketplace.getState().installedSlugs.includes(slug);
 }

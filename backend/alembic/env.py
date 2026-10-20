@@ -26,6 +26,7 @@ from app.persistence.models import (  # noqa: F401
     business,
     marketplace_listing,
     membership,
+    pack,
     project,
     task,
     user,

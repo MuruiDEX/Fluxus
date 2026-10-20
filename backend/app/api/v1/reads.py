@@ -96,6 +96,7 @@ def _project_response(project, contract: str) -> ProjectResponse:
         deadline=project.deadline,
         teamIds=project.team_ids,
         milestones=project.milestones,
+        allowUnpricedAi=project.allow_unpriced_ai,
         contract=contract,
     )
 

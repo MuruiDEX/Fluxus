@@ -6,12 +6,14 @@ the API boundary). No business logic beyond integrity lives here.
 """
 
 from datetime import UTC
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import case, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.persistence.exceptions import (
+    AgentDisabledError,
     DanglingReferenceError,
     ImmutableFieldError,
     new_id,
@@ -26,6 +28,7 @@ from app.persistence.models.brief import Brief
 from app.persistence.models.business import Business
 from app.persistence.models.marketplace_listing import MarketplaceListing
 from app.persistence.models.membership import Membership
+from app.persistence.models.pack import PackInstallation, PackInstallationItem
 from app.persistence.models.project import Project
 from app.persistence.models.task import Task, TaskDependency
 from app.persistence.models.user import User
@@ -65,6 +68,42 @@ class AgentRepository(BaseRepository[Agent]):
         validate_id(payload["id"])
         return await super().create(session, business_id, payload)
 
+    async def hired_slugs(self, session: AsyncSession, business_id: str) -> set[str]:
+        """Slugs this business already hired (one query for the whole set).
+
+        Used by the marketplace read API to mark listings — list endpoints
+        must not fan out per row.
+        """
+        from sqlalchemy import select
+
+        stmt = select(Agent.source_slug).where(
+            Agent.business_id == business_id, Agent.source_slug.isnot(None)
+        )
+        res = await session.execute(stmt)
+        return {row for row in res.scalars().all() if row}
+
+    async def set_hired(
+        self, session: AsyncSession, business_id: str, agent_id: str, hired: bool
+    ) -> Agent | None:
+        """Activate/deactivate an agent in scope (idempotent, no-op if same).
+
+        Returns the row, or None when missing/foreign (callers map to
+        uniform 404). Disabled agents keep every row, task link, and audit
+        event — only future staffing is refused elsewhere.
+        """
+        agent = await self.get(session, business_id, agent_id)
+        if agent is None:
+            return None
+        agent.hired = bool(hired)
+        await session.flush()
+        return agent
+
+    @staticmethod
+    def require_active(agent: Agent) -> None:
+        """Staffing gate: disabled rows cannot take new work (any caller)."""
+        if not agent.hired:
+            raise AgentDisabledError(f"agent {agent.id!r} is disabled")
+
 
 class ProjectRepository(BaseRepository[Project]):
     model = Project
@@ -92,8 +131,10 @@ class ProjectRepository(BaseRepository[Project]):
             return
         repo = AgentRepository()
         for agent_id in team_ids:
-            if await repo.get(session, business_id, agent_id) is None:
+            agent = await repo.get(session, business_id, agent_id)
+            if agent is None:
                 raise DanglingReferenceError(f"team_ids references missing agent: {agent_id}")
+            AgentRepository.require_active(agent)
 
 
 class TaskRepository(BaseRepository[Task]):
@@ -122,8 +163,10 @@ class TaskRepository(BaseRepository[Task]):
         if await ProjectRepository().get(session, business_id, project_id) is None:
             raise DanglingReferenceError(f"task references missing project: {project_id}")
         owner_id = payload.get("owner_agent_id")
-        if await AgentRepository().get(session, business_id, owner_id) is None:
+        owner = await AgentRepository().get(session, business_id, owner_id)
+        if owner is None:
             raise DanglingReferenceError(f"task references missing agent: {owner_id}")
+        AgentRepository.require_active(owner)
         gate_id = payload.get("approval_gate_id")
         if (
             gate_id is not None
@@ -679,13 +722,26 @@ class FinalizationRepository:
                 )
             )
         completed = sum(1 for t in tasks if t.status == "completed")
+        # Snapshot semantics (Stage 16.1): the metering layer settles the
+        # finalize call BEFORE this transaction, so `ai_spent` (confirmed only,
+        # task-linked + task-less project-scoped) already includes it. Estimated
+        # cost is reported separately and never folded into ai_spent.
+        from app.persistence.repositories.usage import UsageRepository
+
+        status_totals = await UsageRepository().totals_by_status(
+            session, business_id, project_id=project.id
+        )
+        ai_estimated = status_totals.get("estimated", (Decimal("0"), 0))[0]
         costs = {
             "budget": str(project.budget),
             "ai_budget": str(project.ai_budget),
             "ai_spent": str(project.ai_spent),
+            "ai_estimated": str(ai_estimated),
             "note": (
-                "Configured ledger values, not measured costs: live pricing "
-                "is not tracked in this version."
+                "Confirmed AI spend from the usage ledger (task-linked plus "
+                "project-scoped Team Lead calls, including this finalization). "
+                "Estimated cost is tracked separately and never presented as "
+                "confirmed spend."
             ),
         }
         envelope = {
@@ -865,8 +921,61 @@ class MarketplaceRepository(BaseRepository[MarketplaceListing]):
         return await super().update(session, business_id, id, clean)
 
 
+class PackInstallationRepository(BaseRepository[PackInstallation]):
+    """Installation receipts are immutable: create, add items, and read."""
+
+    model = PackInstallation
+
+    async def get_by_slug(
+        self, session: AsyncSession, business_id: str, pack_slug: str
+    ) -> PackInstallation | None:
+        from sqlalchemy import select
+
+        res = await session.execute(
+            select(PackInstallation).where(
+                PackInstallation.business_id == business_id,
+                PackInstallation.pack_slug == pack_slug,
+            )
+        )
+        return res.scalar_one_or_none()
+
+    async def list_for_business(
+        self, session: AsyncSession, business_id: str
+    ) -> list[PackInstallation]:
+        from sqlalchemy import select
+
+        res = await session.execute(
+            select(PackInstallation)
+            .where(PackInstallation.business_id == business_id)
+            .order_by(PackInstallation.pack_slug)
+        )
+        return list(res.scalars().all())
+
+    async def add_item(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        installation_id: str,
+        *,
+        kind: str,
+        ref: str,
+        entity_id: str,
+    ) -> PackInstallationItem:
+        item = PackInstallationItem(
+            id=new_id(),
+            business_id=business_id,
+            installation_id=installation_id,
+            kind=kind,
+            ref=ref,
+            entity_id=entity_id,
+        )
+        session.add(item)
+        await session.flush()
+        return item
+
+
 class ActivityRepository:
-    """Append-only: create + scoped list. No update, no delete вЂ” by design."""
+    """Append-only: create + scoped list. No update, no delete - by design."""
 
     async def append(
         self, session: AsyncSession, business_id: str, data: dict[str, Any]

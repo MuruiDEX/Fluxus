@@ -11,6 +11,9 @@ import type { LeadAnswers } from "@/lib/sim/teamLead";
 import { buildBriefSummary, extractSignals, nextQuestion } from "@/lib/sim/teamLead";
 import { hireListing } from "@/lib/hiring";
 import { useActivity, useAgents, useProjects } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext } from "@/lib/store/live";
+import { LiveIntakeView } from "@/components/system/IntakeWizard";
 
 const missions = [
   "Launch Business",
@@ -246,6 +249,10 @@ function Wizard() {
 }
 
 export default function NewProjectPage() {
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveIntakeView businessId={currentBusinessId} />;
+  }
   return (
     <Suspense fallback={<p className="text-[13px] text-ink-400">Loading Team Lead…</p>}>
       <Wizard />

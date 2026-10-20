@@ -22,7 +22,8 @@ import {
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { useSession } from "@/lib/store/auth";
 import { useLiveExecution } from "@/lib/store/execution";
-import { useLiveTasks } from "@/lib/store/live";
+import { useLiveProject, useLiveTasks } from "@/lib/store/live";
+import type { Project } from "@/lib/domain/types";
 
 function taskJson(status: string, extra?: Record<string, unknown>) {
   return {
@@ -69,6 +70,24 @@ function jsonResponse(status: number, body: unknown) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function projectJson(title: string) {
+  return {
+    id: "proj_1",
+    businessId: "biz_test",
+    title,
+    goal: "",
+    status: "in_progress",
+    progress: 0,
+    budget: "0",
+    aiBudget: "0",
+    aiSpent: "0",
+    deadline: "",
+    teamIds: [],
+    milestones: [],
+    contract: "v1",
+  };
 }
 
 /** GET-task responder serving statuses in order (pre-read first, then reconciliations). */
@@ -229,6 +248,64 @@ describe("execution runner", () => {
     const cached = useLiveTasks.getState().tasks.find((t) => t.id === "t_1");
     expect(cached?.status).toBe("completed");
     expect(cached?.summary).toBe("Saved result");
+  });
+
+  it("terminal run refreshes the open project header without resetting it", async () => {
+    // Regression: the header refresh used to call proj.load(), which clears
+    // the project and unmounts the mounted detail view mid-run.
+    const { posts } = mockFlow([
+      {
+        test: (u) => u.includes("/executions"),
+        respond: () => jsonResponse(200, execJson("completed", { status: "completed" })),
+      },
+      {
+        test: (u) => u.includes("/tasks/t_1") && !u.includes("/executions"),
+        respond: taskSequence("not_started", "completed"),
+      },
+      {
+        test: (u) => /\/projects\/proj_1(\?|$)/.test(u),
+        respond: () => jsonResponse(200, projectJson("Server Title")),
+      },
+    ]);
+    signIn();
+    useLiveTasks.setState({
+      status: "ready",
+      key: "biz_test/proj_1",
+      tasks: [],
+      error: null,
+    });
+    const local: Project = {
+      id: "proj_1",
+      businessId: "biz_test",
+      title: "Local Title",
+      goal: "",
+      status: "in_progress",
+      progress: 0,
+      budget: 0,
+      aiBudget: 0,
+      aiSpent: 0,
+      deadline: "",
+      teamIds: [],
+      milestones: [],
+    };
+    useLiveProject.setState({
+      status: "ready",
+      key: "biz_test/proj_1",
+      project: local,
+      notFound: false,
+      error: null,
+    });
+    await useLiveExecution.getState().run("biz_test", "proj_1", "t_1");
+    expect(posts).toHaveLength(1);
+    expect(runOf()?.phase).toBe("done");
+    // The header refresh is fire-and-forget next to the run record: the
+    // slice must never reset, and the server row lands when it arrives.
+    expect(useLiveProject.getState().status).toBe("ready");
+    await vi.waitFor(() => {
+      expect(useLiveProject.getState().project?.title).toBe("Server Title");
+    });
+    expect(useLiveProject.getState().key).toBe("biz_test/proj_1");
+    useLiveProject.getState().reset();
   });
 
   it("sends exactly one POST on concurrent run calls", async () => {

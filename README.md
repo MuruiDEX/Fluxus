@@ -7,10 +7,12 @@ AI asks only the questions that matter, assembles AI employees, executes work
 in parallel with human approval gates, measures results, and remembers
 everything in the Business Brain. Marketplace hiring extends the team.
 
-**Status: frontend-only phase.** The app runs entirely in the browser with a
-deterministic simulated execution engine and Northstar Fitness demo data
-(clearly labeled as simulated). No backend, auth, payments, or real
-integrations exist yet — see [`backend/README.md`](backend/README.md).
+**Status: full-stack local phase.** The frontend runs in two modes: DEMO
+(simulated execution engine + Northstar Fitness demo data, clearly labeled)
+and LIVE (FastAPI backend on `http://127.0.0.1:8000` via `NEXT_PUBLIC_API_URL`,
+with cookie-session auth + membership isolation). Backend stages 1–6 are
+implemented (persistence, LLM layer, execution engine + API, session auth);
+see [`backend/README.md`](backend/README.md).
 
 ## Quick start
 
@@ -27,6 +29,7 @@ npm run dev        # → http://localhost:3000
 | `npm run lint` | eslint |
 | `npm run test` | Vitest unit tests (engine) |
 | `npm run test:e2e` | Playwright Chromium journey tests |
+| `npm run test:e2e:live` | Playwright LIVE tests (real backend + Postgres, stub LLM) |
 
 All commands delegate to `frontend/` — you can also run them there directly.
 
@@ -34,7 +37,8 @@ All commands delegate to `frontend/` — you can also run them there directly.
 
 - [`frontend/`](frontend/) — the whole application (Next.js 16, React 19,
   TypeScript, Tailwind v4, Zustand). See [`frontend/README.md`](frontend/README.md).
-- [`backend/`](backend/) — reserved slot, no server code yet (by design).
+- [`backend/`](backend/) — FastAPI backend (auth, persistence, LLM layer,
+  execution + briefs API, Alembic migrations). See [`backend/README.md`](backend/README.md).
 - [`docs/architecture.md`](docs/architecture.md) — where everything lives
   and where new code goes.
 - [`docs/development.md`](docs/development.md) — install, run, verify, workflows.

@@ -218,6 +218,8 @@ export interface ApiProject {
   deadline: string;
   teamIds: string[];
   milestones: { label: string; done: boolean }[];
+  /** Stage 16 (v1.17): opt in to best-effort AI calls without a tariff. */
+  allowUnpricedAi?: boolean;
   contract: string;
 }
 
@@ -315,6 +317,73 @@ export type ActivityFilter = PageParams & {
 
 export type BrainFilter = PageParams & {
   category?: BrainCategory;
+};
+
+export type UsageCostSource = "provider" | "tariff" | "unknown";
+export type UsageStatus = "confirmed" | "estimated" | "unknown";
+export type UsageCallKind =
+  | "task_execution"
+  | "brief_questions"
+  | "brief_summary"
+  | "plan_generation"
+  | "brief_finalize";
+
+export interface ApiUsageRecord {
+  id: string;
+  businessId: string;
+  projectId: string | null;
+  taskId: string | null;
+  agentId: string | null;
+  attempt: number;
+  provider: string;
+  model: string;
+  /** `null` for legacy rows written before the column existed (v1.18). */
+  callKind: UsageCallKind | null;
+  providerRequestId: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens: number | null;
+  reasoningTokens: number | null;
+  /** `null` when the cost is unknown — never coerced to zero (v1.17). */
+  costAmount: Money | null;
+  currency: string;
+  costSource: UsageCostSource;
+  usageStatus: UsageStatus;
+  tariffVersion: string | null;
+  occurredAt: string;
+}
+
+export interface ApiUsageReservationSummary {
+  active: Money;
+  ambiguous: Money;
+  consumed: Money;
+  released: Money;
+  writtenOff: Money;
+}
+
+export interface ApiUsageCallKindSummary {
+  confirmedCost: Money;
+  estimatedCost: Money;
+  unknownCount: number;
+}
+
+export interface ApiUsageSummary {
+  confirmedCost: Money;
+  estimatedCost: Money;
+  unknownCount: number;
+  /** Per-call-kind money split; NULL kinds are keyed by "" (v1.18). */
+  byCallKind: Record<string, ApiUsageCallKindSummary>;
+  reservations: ApiUsageReservationSummary;
+}
+
+export interface ApiUsagePage extends ApiPage<ApiUsageRecord> {
+  summary: ApiUsageSummary;
+}
+
+export type UsageFilter = PageParams & {
+  projectId?: string;
+  taskId?: string;
 };
 
 function pageQuery(params?: PageParams & Record<string, string | number | undefined>): string {
@@ -491,6 +560,22 @@ export async function apiListBrain(businessId: string, filter?: BrainFilter, opt
   );
 }
 
+export async function apiListUsage(
+  businessId: string,
+  filter?: UsageFilter,
+  opts?: RequestOpts,
+) {
+  const params: PageParams & Record<string, string | number | undefined> = {
+    limit: filter?.limit,
+    offset: filter?.offset,
+    project_id: filter?.projectId,
+    task_id: filter?.taskId,
+  };
+  return api<ApiUsagePage>(`/api/v1/businesses/${id(businessId)}/usage${pageQuery(params)}`, {
+    signal: opts?.signal,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Stage 7.4 execution — mirrors ExecutionResponse (verified outcomes only).
 // ---------------------------------------------------------------------------
@@ -604,6 +689,56 @@ export async function apiGetBrief(businessId: string, briefId: string, opts?: Re
 }
 
 // ---------------------------------------------------------------------------
+// Stage 11 intake — goal → questions → answers → brief → plan. Answers use
+// the backend's snake_case wire names (BriefAnswerItem has no camel alias).
+// ---------------------------------------------------------------------------
+
+export async function apiCreateBrief(
+  businessId: string,
+  goal: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiBrief>(`/api/v1/businesses/${id(businessId)}/briefs`, {
+    method: "POST",
+    body: { goal },
+    signal: opts?.signal,
+  });
+}
+
+export interface ApiBriefAnswer {
+  question_id: string;
+  text: string;
+}
+
+export async function apiAnswerBrief(
+  businessId: string,
+  briefId: string,
+  answers: ApiBriefAnswer[],
+  opts?: RequestOpts,
+) {
+  return api<ApiBrief>(`/api/v1/businesses/${id(businessId)}/briefs/${id(briefId)}/answers`, {
+    method: "POST",
+    body: { answers },
+    signal: opts?.signal,
+  });
+}
+
+export async function apiPlanBrief(businessId: string, briefId: string, opts?: RequestOpts) {
+  return api<ApiPlan>(
+    `/api/v1/businesses/${id(businessId)}/briefs/${id(briefId)}/plan`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+export interface ApiPlan {
+  briefId: string;
+  project: ApiProject;
+  tasks: ApiTask[];
+  approvals: ApiApproval[];
+  contract: string;
+}
+
+// ---------------------------------------------------------------------------
 // Stage 8.5 finalization — mirrors FinalizeResponse (verified shapes only).
 // ---------------------------------------------------------------------------
 
@@ -638,6 +773,8 @@ export interface ApiFinalCosts {
   budget: string;
   ai_budget: string;
   ai_spent: string;
+  /** Confirmed ledger snapshot also reports estimated cost separately (v1.18). */
+  ai_estimated?: string;
   note: string;
 }
 
@@ -695,5 +832,249 @@ export async function apiRecoverTask(
   return api<ApiRecovery>(
     `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/tasks/${id(taskId)}/recover`,
     { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 8 marketplace — mirrors MarketplaceResponse (verified shapes only).
+// `hired` is computed per requesting business; the catalog itself is global.
+// ---------------------------------------------------------------------------
+
+export interface ApiMarketplaceEntry {
+  slug: string;
+  name: string;
+  role: string;
+  blurb: string;
+  price: string;
+  priceNote: string;
+  rating: number;
+  installs: string;
+  badge: string | null;
+  capabilities: string[];
+  permissions: Record<string, string[]>;
+  category: string;
+  hired: boolean;
+  installed: boolean;
+  installedVersion: string | null;
+  contract: string;
+}
+
+export async function apiListMarketplace(
+  businessId: string,
+  params?: PageParams,
+  opts?: RequestOpts,
+) {
+  return api<ApiPage<ApiMarketplaceEntry>>(
+    `/api/v1/businesses/${id(businessId)}/marketplace${pageQuery(params)}`,
+    { signal: opts?.signal },
+  );
+}
+
+export async function apiGetListing(businessId: string, slug: string, opts?: RequestOpts) {
+  return api<ApiMarketplaceEntry>(
+    `/api/v1/businesses/${id(businessId)}/marketplace/${id(slug)}`,
+    { signal: opts?.signal },
+  );
+}
+
+/** Hire an employee listing: 201 answers the created ApiAgent in scope. */
+export async function apiHireAgent(businessId: string, slug: string, opts?: RequestOpts) {
+  return api<ApiAgent>(
+    `/api/v1/businesses/${id(businessId)}/marketplace/${id(slug)}/hire`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 15 packs - server manifests, preview blockers, atomic install.
+// Install is idempotent per version: 201 installed, 200 already_installed;
+// a different installed version is 409 pack_version_conflict.
+// ---------------------------------------------------------------------------
+
+export interface ApiPackAgent {
+  slug: string;
+  name: string;
+  role: string;
+  capabilities: string[];
+  agentId: string | null;
+  action: "create" | "reuse" | "blocked";
+}
+
+export interface ApiPackWorkflowTask {
+  key: string;
+  title: string;
+  ownerAgentSlug: string;
+  dependsOn: string[];
+}
+
+export interface ApiPackWorkflow {
+  ref: string;
+  title: string;
+  goal: string;
+  projectId: string | null;
+  tasks: ApiPackWorkflowTask[];
+}
+
+export interface ApiPack {
+  slug: string;
+  version: string;
+  name: string;
+  description: string;
+  blurb: string;
+  price: string;
+  priceNote: string;
+  rating: number;
+  installs: string;
+  installed: boolean;
+  installedVersion: string | null;
+  installedAt: string | null;
+  agents: ApiPackAgent[];
+  workflow: ApiPackWorkflow | null;
+  contract: string;
+}
+
+export interface ApiPackBlocker {
+  code: string;
+  message: string;
+}
+
+export interface ApiPackPreview {
+  pack: ApiPack;
+  canInstall: boolean;
+  blockers: ApiPackBlocker[];
+  contract: string;
+}
+
+export interface ApiPackInstall {
+  outcome: "installed" | "already_installed";
+  pack: ApiPack;
+  installationId: string;
+  installedAt: string;
+  agents: ApiPackAgent[];
+  project: ApiProject | null;
+  tasks: ApiTask[];
+  contract: string;
+}
+
+export async function apiListPacks(businessId: string, opts?: RequestOpts) {
+  return api<ApiPage<ApiPack>>(`/api/v1/businesses/${id(businessId)}/packs`, {
+    signal: opts?.signal,
+  });
+}
+
+export async function apiGetPack(businessId: string, slug: string, opts?: RequestOpts) {
+  return api<ApiPack>(`/api/v1/businesses/${id(businessId)}/packs/${id(slug)}`, {
+    signal: opts?.signal,
+  });
+}
+
+export async function apiPreviewPack(businessId: string, slug: string, opts?: RequestOpts) {
+  return api<ApiPackPreview>(
+    `/api/v1/businesses/${id(businessId)}/packs/${id(slug)}/preview`,
+    { signal: opts?.signal },
+  );
+}
+
+export async function apiInstallPack(businessId: string, slug: string, opts?: RequestOpts) {
+  return api<ApiPackInstall>(
+    `/api/v1/businesses/${id(businessId)}/packs/${id(slug)}/install`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 14 agent lifecycle — activate/disabled is the `hired` flag.
+// Idempotent 200s replays the current row; foreign/missing is uniform 404.
+// ---------------------------------------------------------------------------
+
+export async function apiActivateAgent(
+  businessId: string,
+  agentId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiAgent>(
+    `/api/v1/businesses/${id(businessId)}/agents/${id(agentId)}/activate`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+export async function apiDisableAgent(
+  businessId: string,
+  agentId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiAgent>(
+    `/api/v1/businesses/${id(businessId)}/agents/${id(agentId)}/disable`,
+    { method: "POST", body: {}, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 7.1 management writes — manual Brain entries + metadata patches.
+// Mutations: CSRF token is attached automatically, LIVE gating stays in the
+// stores (session + membership); these functions never touch DEMO state.
+// Executor/derived fields are not part of the input types by construction.
+// ---------------------------------------------------------------------------
+
+export interface BrainCreateInput {
+  category: string;
+  title: string;
+  body?: string;
+}
+
+export async function apiCreateBrain(
+  businessId: string,
+  input: BrainCreateInput,
+  opts?: RequestOpts,
+) {
+  return api<ApiBrainEntry>(`/api/v1/businesses/${id(businessId)}/brain`, {
+    method: "POST",
+    body: input,
+    signal: opts?.signal,
+  });
+}
+
+export interface ProjectPatchInput {
+  title?: string;
+  goal?: string;
+  status?: string;
+  budget?: Money;
+  aiBudget?: Money;
+  deadline?: string;
+  teamIds?: string[];
+  milestones?: { label: string; done: boolean }[];
+  allowUnpricedAi?: boolean;
+}
+
+export async function apiPatchProject(
+  businessId: string,
+  projectId: string,
+  patch: ProjectPatchInput,
+  opts?: RequestOpts,
+) {
+  return api<ApiProject>(
+    `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}`,
+    { method: "PATCH", body: patch, signal: opts?.signal },
+  );
+}
+
+export interface TaskPatchInput {
+  title?: string;
+  summary?: string;
+  etaMinutes?: number;
+  ownerAgentId?: string;
+  gateAt?: number;
+}
+
+export async function apiPatchTask(
+  businessId: string,
+  projectId: string,
+  taskId: string,
+  patch: TaskPatchInput,
+  opts?: RequestOpts,
+) {
+  return api<ApiTask>(
+    `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/tasks/${id(taskId)}`,
+    { method: "PATCH", body: patch, signal: opts?.signal },
   );
 }

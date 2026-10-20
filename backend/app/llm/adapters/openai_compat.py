@@ -108,16 +108,38 @@ def _extract_text(payload: Any) -> str:
         raise BadResponseError(f"Response has no usable message content: {exc}") from exc
 
 
-def _extract_usage(payload: dict[str, Any]) -> LlmUsage:
-    usage = payload.get("usage") or {}
+def _details_count(node: Any, key: str) -> int | None:
+    if not isinstance(node, dict):
+        return None
+    value = node.get(key)
+    if value is None:
+        return None
     try:
-        return LlmUsage(
-            prompt_tokens=int(usage.get("prompt_tokens", 0)),
-            completion_tokens=int(usage.get("completion_tokens", 0)),
-            total_tokens=int(usage.get("total_tokens", 0)),
-        )
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_usage(payload: dict[str, Any]) -> LlmUsage:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        # No usage object at all: reported stays False so the cost path can
+        # classify the call as `estimated`/`unknown` rather than pretend 0.
+        return LlmUsage()
+    try:
+        prompt = int(usage.get("prompt_tokens", 0))
+        completion = int(usage.get("completion_tokens", 0))
+        total = int(usage.get("total_tokens", prompt + completion))
     except (TypeError, ValueError):
         return LlmUsage()
+    return LlmUsage(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=total,
+        cached_tokens=_details_count(usage.get("prompt_tokens_details"), "cached_tokens"),
+        reasoning_tokens=_details_count(usage.get("completion_tokens_details"), "reasoning_tokens"),
+        reported=True,
+    )
 
 
 def _error_for_status(status: int) -> LlmError:
@@ -131,6 +153,8 @@ def _error_for_status(status: int) -> LlmError:
 
 
 class OpenAICompatProvider:
+    name = "openai_compat"
+
     def __init__(
         self,
         *,
@@ -149,10 +173,20 @@ class OpenAICompatProvider:
         self._timeout_s = timeout_s
         self._max_retries = max(0, max_retries)
         self._transport = transport
+        # Idempotency-Key is only documented for the official OpenAI endpoint.
+        # Sending it to arbitrary compatible gateways is avoided unless opted in.
+        self._supports_idempotency = self._base_url.startswith("https://api.openai.com")
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, request: LlmRequest | None = None) -> dict[str, str]:
         # The single place the key is ever used. Never log this dict.
-        return {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+        if (
+            request is not None
+            and request.idempotency_key
+            and self._supports_idempotency
+        ):
+            headers["Idempotency-Key"] = request.idempotency_key
+        return headers
 
     def _body(self, request: LlmRequest, *, stream: bool) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -201,9 +235,31 @@ class OpenAICompatProvider:
         return min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2**retry_index)) + random.uniform(0, 0.25)
 
     def _classify_transport_error(self, exc: Exception) -> LlmError:
+        """Map a transport failure, distinguishing pre-send from post-send.
+
+        A pre-send failure (connect refused, connect timeout, pool timeout)
+        proves the request never reached the provider, so it is safe to retry
+        and its reservation can be released. A post-send failure (read/write
+        error, read timeout) leaves the outcome unknown — possibly billed — so
+        it is marked `ambiguous` and is NOT retried (an unsafe retry could
+        double-bill), and its reservation is held, never auto-released.
+        """
         if isinstance(exc, httpx.TimeoutException):
-            return ProviderTimeoutError(f"Provider request timed out: {type(exc).__name__}.")
-        return TransientProviderError(f"Provider network failure: {type(exc).__name__}.")
+            error: LlmError = ProviderTimeoutError(
+                f"Provider request timed out: {type(exc).__name__}."
+            )
+            error.ambiguous = not isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout))
+        elif isinstance(exc, (httpx.ConnectError, httpx.PoolTimeout)):
+            error = TransientProviderError(
+                f"Provider unreachable before send: {type(exc).__name__}."
+            )
+            error.ambiguous = False
+        else:
+            error = TransientProviderError(f"Provider network failure: {type(exc).__name__}.")
+            error.ambiguous = True
+        # Never retry an ambiguous (possibly-billed) failure.
+        error.retryable = error.retryable and not error.ambiguous
+        return error
 
     async def _single_attempt(
         self, client: httpx.AsyncClient, request: LlmRequest, *, stream: bool
@@ -211,7 +267,7 @@ class OpenAICompatProvider:
         url = f"{self._base_url}/chat/completions"
         try:
             response = await client.post(
-                url, headers=self._headers(), json=self._body(request, stream=stream)
+                url, headers=self._headers(request), json=self._body(request, stream=stream)
             )
         except asyncio.CancelledError:
             raise
@@ -264,11 +320,13 @@ class OpenAICompatProvider:
         text = _extract_text(payload)
         data = self._prepare_structured(text, request.structured)
         usage = _extract_usage(payload) if isinstance(payload, dict) else LlmUsage()
+        request_id = payload.get("id") if isinstance(payload, dict) else None
         return LlmResponse(
             text=text,
             data=data,
             usage=usage,
             model=str(payload.get("model", "")) if isinstance(payload, dict) else "",
+            provider_request_id=str(request_id) if request_id else None,
             attempts=attempts,
             metadata={"provider": "openai_compat"},
         )
