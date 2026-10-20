@@ -1,0 +1,15 @@
+# backend/requirements.txt — production runtime for pip installs.
+# Primary source of truth is backend/pyproject.toml [project.dependencies];
+# this file mirrors it pin-for-pin so a clean env works with:
+#   pip install -r backend/requirements.txt
+# Dev/test extras (pytest, ruff, embedded Postgres) live in requirements-dev.txt.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.0
+pydantic-settings>=2.0
+httpx>=0.27
+sqlalchemy[asyncio]>=2.0
+alembic>=1.13
+asyncpg>=0.29
+aiosqlite>=0.19
+argon2-cffi>=23.0
