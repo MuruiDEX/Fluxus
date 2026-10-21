@@ -38,13 +38,20 @@ def _port_open() -> bool:
             return False
 
 
-def _run(*args: str, env_extra: dict | None = None) -> None:
+def _run(*args: str, env_extra: dict | None = None, capture: bool = True) -> None:
     import os
 
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
-    subprocess.run(list(args), check=True, capture_output=True, text=True, env=env)
+    kwargs: dict = {"check": True, "env": env}
+    if capture:
+        kwargs.update(capture_output=True, text=True)
+    else:
+        # pg_ctl start must not inherit a captured pipe: the long-lived
+        # postgres child keeps the handle open and the parent waits forever.
+        kwargs.update(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(list(args), **kwargs)
 
 
 def ensure_postgres(timeout_s: float = 90.0) -> str:
@@ -68,7 +75,15 @@ def ensure_postgres(timeout_s: float = 90.0) -> str:
         )
     with open(PGDATA / "postgresql.conf", "a", encoding="utf-8") as fh:
         fh.write("\nlisten_addresses = '127.0.0.1'\nport = 5433\n")
-    _run(_bin("pg_ctl"), "-D", str(PGDATA), "-l", str(PGDATA / "server.log"), "start")
+    _run(
+        _bin("pg_ctl"),
+        "-D",
+        str(PGDATA),
+        "-l",
+        str(PGDATA / "server.log"),
+        "start",
+        capture=False,
+    )
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if _port_open():

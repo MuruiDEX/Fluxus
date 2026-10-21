@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Cpu } from "lucide-react";
 import { useSession } from "@/lib/store/auth";
+import { runtimeMode } from "@/lib/runtime-config";
 import { Card, GhostButton, PrimaryButton } from "@/components/system/ui";
 
 export default function LoginPage() {
@@ -23,6 +24,29 @@ export default function LoginPage() {
     }
   }
 
+  if (runtimeMode === "demo") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-mist-50 px-4 dark:bg-night-950">
+        <Card className="w-full max-w-sm p-6">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-cyan-500 text-white">
+              <Cpu className="h-4 w-4" />
+            </span>
+            <span className="text-[15px] font-bold">MUSE SPARK</span>
+          </div>
+          <h1 className="mt-3 text-[18px] font-bold">Demo mode</h1>
+          <p className="mt-0.5 text-[13px] text-ink-500 dark:text-slate-400">
+            This deployment is running the simulated Northstar business. All figures are fictional
+            and no backend is contacted.
+          </p>
+          <GhostButton className="mt-4 w-full justify-center" onClick={() => router.push("/")}>
+            Enter demo office
+          </GhostButton>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-mist-50 px-4 dark:bg-night-950">
       <Card className="w-full max-w-sm p-6">
@@ -34,7 +58,7 @@ export default function LoginPage() {
         </div>
         <h1 className="mt-3 text-[18px] font-bold">Log in</h1>
         <p className="mt-0.5 text-[13px] text-ink-500 dark:text-slate-400">
-          Local operator account. No demo data leaves this view.
+          Sign in to your business workspace.
         </p>
         <form onSubmit={submit} className="mt-4 flex flex-col gap-3">
           <label className="text-[12.5px] font-medium">
@@ -68,9 +92,6 @@ export default function LoginPage() {
             {busy || status === "unknown" ? "Please wait…" : "Log in"}
           </PrimaryButton>
         </form>
-        <GhostButton className="mt-3 w-full justify-center" onClick={() => router.push("/")}>
-          Continue in demo mode
-        </GhostButton>
       </Card>
     </div>
   );

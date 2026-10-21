@@ -1,0 +1,27 @@
+# Root .dockerignore — applies when a Dockerfile uses the repo root as its
+# build context (see frontend/Dockerfile). Keeps contexts small, hermetic,
+# and secret-free. Per-service .dockerignore files still apply to their own
+# narrower builds.
+**/node_modules
+**/.next
+**/out
+**/coverage
+frontend/test-results
+frontend/playwright-report
+frontend/.playwright
+frontend/e2e/.auth-state.json
+backend/.pgdata*/
+backend/.pytest_cache
+backend/.ruff_cache
+backend/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.log
+**/.env*
+!frontend/.env.example
+deploy/prod.env
+deploy/backups
+**/*.dump
+**/.git
+**/Dockerfile
+**/.dockerignore

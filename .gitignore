@@ -51,7 +51,13 @@ frontend/*.log
 .env*
 !/frontend/.env.example
 /.env.example
+# deploy/prod.env does not match .env* because of its prod. prefix.
+/deploy/prod.env
 backend/.pgdata*/
+
+# local production backups / database dumps
+/deploy/backups/
+*.dump
 
 # vercel
 .vercel

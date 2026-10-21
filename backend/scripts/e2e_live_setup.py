@@ -14,8 +14,11 @@ Creates/resets isolated contexts for the Playwright LIVE journeys:
 
 Usage (from backend/, dev postgres on :5432):
     $env:APP_DATABASE_URL="postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse"
+    $env:APP_ALLOW_E2E_SETUP="1"
     python scripts/e2e_live_setup.py
 
+Requires APP_ALLOW_E2E_SETUP=1. A non-loopback database also requires
+APP_ALLOW_REMOTE_E2E_SETUP=1 and is intended only for an isolated dev/test DB.
 Idempotent: safe to run before every LIVE E2E pass.
 """
 
@@ -29,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy import delete, select  # noqa: E402
 
 from app.core.passwords import hash_password  # noqa: E402
+from app.core.script_safety import UnsafeScriptError, guard_development_script  # noqa: E402
 from app.persistence.engine import create_engine_from_url, session_factory  # noqa: E402
 from app.persistence.models.agent import Agent  # noqa: E402
 from app.persistence.models.approval import Approval  # noqa: E402
@@ -93,6 +97,15 @@ PLAN = {
 
 
 async def main() -> None:
+    try:
+        guard_development_script(
+            "e2e_live_setup",
+            DB_URL,
+            opt_in_env="APP_ALLOW_E2E_SETUP",
+            allow_remote_env="APP_ALLOW_REMOTE_E2E_SETUP",
+        )
+    except UnsafeScriptError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     engine = create_engine_from_url(DB_URL)
     factory = session_factory(engine)
     async with factory() as session:
@@ -142,9 +155,7 @@ async def _reset_workflow_graph(session) -> None:
     await session.execute(
         delete(PackInstallationItem).where(PackInstallationItem.business_id == BIZ)
     )
-    await session.execute(
-        delete(PackInstallation).where(PackInstallation.business_id == BIZ)
-    )
+    await session.execute(delete(PackInstallation).where(PackInstallation.business_id == BIZ))
     await session.execute(delete(Approval).where(Approval.business_id == BIZ))
     await session.execute(delete(Task).where(Task.business_id == BIZ))
     await session.execute(delete(Project).where(Project.business_id == BIZ))

@@ -1,0 +1,146 @@
+# deploy/docker-compose.prod.yml — production topology (Stage 17).
+#
+# Usage (from repo root; prod.env holds REAL secrets and is gitignored):
+#   cp deploy/prod.env.example deploy/prod.env   # then fill in real values
+#   docker compose --env-file deploy/prod.env -f deploy/docker-compose.prod.yml config
+#   docker compose --env-file deploy/prod.env -f deploy/docker-compose.prod.yml build
+#
+# Safety properties (validated by `config`, never by running against prod here):
+# - Only Caddy publishes ports (80/443). PostgreSQL, backend, and frontend
+#   have NO published ports; the database lives on an internal-only network.
+# - One-shot `migrate` (alembic upgrade head) must complete successfully
+#   before `backend` starts. Migration failure blocks deployment — it never
+#   reports success. Back up the database BEFORE migrating live data
+#   (see docs/deployment.md §12); there is no automatic backup here.
+# - `backend` is a single replica with a single uvicorn worker (see
+#   backend/Dockerfile): the login throttle is process-local
+#   (app/core/rate_limit.py). Do NOT scale past 1 or add workers without
+#   moving the throttle to a shared store.
+# - DEMO/LIVE separation is deployment-time: the frontend image bakes
+#   NEXT_PUBLIC_APP_MODE=live + the public https origin. LIVE never falls
+#   back to demo data (fail-closed AuthGate + backendRequestsEnabled).
+# - No secrets in this file. Passwords/keys arrive via deploy/prod.env
+#   (gitignored) or the shell. Never commit prod.env.
+
+name: fluxus-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-muse}
+      POSTGRES_DB: ${POSTGRES_DB:-muse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/prod.env}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-muse} -d $${POSTGRES_DB:-muse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - backend_net
+    # No ports: database is reachable only inside backend_net.
+
+  migrate:
+    build:
+      context: ../backend
+    image: fluxus-api:prod
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - path: ./prod.env
+        required: false
+    environment:
+      APP_ENVIRONMENT: prod
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in deploy/prod.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend_net
+    # One-shot: run to completion, never restart.
+    restart: "no"
+
+  backend:
+    build:
+      context: ../backend
+    image: fluxus-api:prod
+    env_file:
+      - path: ./prod.env
+        required: false
+    environment:
+      APP_ENVIRONMENT: prod
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in deploy/prod.env}
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:?set APP_CORS_ORIGINS in deploy/prod.env}
+      # Pinned secure defaults for any HTTPS production deployment.
+      APP_SESSION_COOKIE_SECURE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - frontend_net
+      - backend_net
+    restart: unless-stopped
+    healthcheck:
+      # Readiness (live SELECT 1), not just liveness: traffic is gated on the DB.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/readiness',timeout=4).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # No published ports: reached only through Caddy. Single replica (see header).
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_APP_MODE: live
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_ORIGIN:?set PUBLIC_API_ORIGIN in deploy/prod.env}
+    image: fluxus-web:live-prod
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - frontend_net
+    restart: unless-stopped
+    # No published ports: reached only through Caddy.
+    # Healthcheck comes from the image (GET / on :3000).
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/prod.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/prod.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    networks:
+      - frontend_net
+    restart: unless-stopped
+    # No healthcheck: certificate issuance on first boot can take minutes;
+    # verify manually (docs/deployment.md §13 + deploy verification step).
+
+networks:
+  frontend_net: {}
+  # Database traffic never leaves this network.
+  backend_net:
+    internal: true
+
+volumes:
+  pgdata_prod:
+  caddy_data:
+  caddy_config:

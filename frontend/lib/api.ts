@@ -1,13 +1,20 @@
 /**
  * Backend API client (Stage 6 frontend slice).
  *
- * - Base URL from `NEXT_PUBLIC_API_URL` (default: local backend).
+ * - Base URL is the build-time `NEXT_PUBLIC_API_URL` origin in LIVE mode.
+ *   There is no production loopback fallback; DEMO mode never contacts it.
  * - Session cookie is HttpOnly: the browser sends it automatically, so we
  *   only set `credentials: "include"`. No session id, password, or CSRF
  *   secret ever touches localStorage — CSRF lives in memory only.
  * - Mutations carry the in-memory `X-CSRF-Token`; 401s notify the session
  *   store through `onUnauthorized` (wired by the auth store, no imports).
  */
+
+import {
+  backendRequestsEnabled,
+  readRuntimeEnv,
+  resolveApiOrigin,
+} from "@/lib/runtime-config";
 
 export interface ApiErrorDetails {
   status: number;
@@ -48,8 +55,7 @@ export function onUnauthorized(handler: (() => void) | null) {
 }
 
 export function apiBaseUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL ?? "";
-  return raw.replace(/\/$/, "") || "http://127.0.0.1:8000";
+  return resolveApiOrigin(readRuntimeEnv()) ?? "";
 }
 
 export interface ApiUser {
@@ -66,6 +72,13 @@ export async function api<T>(
   path: string,
   init?: { method?: string; body?: unknown; signal?: AbortSignal },
 ): Promise<T> {
+  if (!backendRequestsEnabled()) {
+    throw new ApiError({
+      status: 0,
+      code: "demo_mode_blocked",
+      message: "Backend requests are disabled in demo mode.",
+    });
+  }
   const method = init?.method ?? "GET";
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

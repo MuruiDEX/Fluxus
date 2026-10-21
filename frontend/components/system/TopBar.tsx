@@ -8,16 +8,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useApprovals, useUI } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
+import { isLiveContext, useLiveApprovals } from "@/lib/store/live";
 import { BusinessSwitcher } from "./BusinessSwitcher";
 import { SidebarLinks } from "./Sidebar";
 import { Avatar } from "./badges";
 
 export function TopBar() {
   const { setCommandOpen } = useUI();
-  const pending = useApprovals((s) => s.approvals.filter((a) => a.status === "pending").length);
   const { theme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { status, user, logout } = useSession();
+  const { status, user, logout, currentBusinessId } = useSession();
+  const demoPending = useApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+  const livePending = useLiveApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+  const pending = isLiveContext(status, currentBusinessId) ? livePending : demoPending;
+  const displayName = status === "authenticated" && user ? user.displayName : "Demo operator";
   const router = useRouter();
 
   return (
@@ -67,7 +75,7 @@ export function TopBar() {
           >
             <Plus className="h-4 w-4" /> New Project
           </Link>
-          <Avatar name="Alex Morgan" hue={217} />
+          <Avatar name={displayName} hue={217} />
           <BusinessSwitcher />
           {status === "authenticated" && user ? (
             <button

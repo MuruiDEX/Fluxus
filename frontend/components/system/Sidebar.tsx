@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAgents, useApprovals, useBusiness } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext, useLiveAgentsList, useLiveApprovals } from "@/lib/store/live";
 
 interface NavItem {
   href: string;
@@ -81,13 +83,33 @@ const groups: { label?: string; items: NavItem[] }[] = [
 ];
 
 function OfficeBadge() {
-  const working = useAgents((s) => s.agents.filter((a) => a.hired && (a.status === "working" || a.status === "thinking")).length);
+  const { status, currentBusinessId } = useSession();
+  const demoWorking = useAgents(
+    (s) =>
+      s.agents.filter(
+        (agent) => agent.hired && (agent.status === "working" || agent.status === "thinking"),
+      ).length,
+  );
+  const liveWorking = useLiveAgentsList(
+    (s) =>
+      s.agents.filter(
+        (agent) => agent.hired && (agent.status === "working" || agent.status === "thinking"),
+      ).length,
+  );
+  const working = isLiveContext(status, currentBusinessId) ? liveWorking : demoWorking;
   if (working === 0) return null;
   return <BadgePill label={`${working} working`} />;
 }
 
 function ApprovalsBadge() {
-  const pending = useApprovals((s) => s.approvals.filter((a) => a.status === "pending").length);
+  const { status, currentBusinessId } = useSession();
+  const demoPending = useApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+  const livePending = useLiveApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+  const pending = isLiveContext(status, currentBusinessId) ? livePending : demoPending;
   if (pending === 0) return null;
   return <BadgePill label={String(pending)} />;
 }
@@ -142,8 +164,20 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-function DemoFooter() {
+function WorkspaceFooter() {
+  const { status, currentBusinessId, businessNames } = useSession();
   const { business } = useBusiness();
+  if (status === "authenticated" && currentBusinessId) {
+    const name = businessNames[currentBusinessId] ?? `${currentBusinessId.slice(0, 8)}…`;
+    return (
+      <div className="mt-auto rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+        <p className="truncate text-[12px] font-bold">{name}</p>
+        <p className="mt-0.5 text-[11px] leading-4 text-emerald-700 dark:text-emerald-300">
+          Live business · server data only.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="mt-auto rounded-xl border border-dashed border-mist-200 p-2.5 dark:border-white/10">
       <p className="truncate text-[12px] font-bold">{business.name}</p>
@@ -168,7 +202,7 @@ export function Sidebar() {
       <Suspense>
         <SidebarLinks />
       </Suspense>
-      <DemoFooter />
+      <WorkspaceFooter />
     </aside>
   );
 }

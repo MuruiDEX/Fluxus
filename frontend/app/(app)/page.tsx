@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2, CircleAlert, Lightbulb, TrendingUp } from "lucide-react";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
 import { Card, DemoBadge, MetricCard, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { LiveHome } from "@/components/live/LiveHome";
 import { useActivity, useAgents, useApprovals, useBusiness, useProjects } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext } from "@/lib/store/live";
 
 const briefing = [
   { icon: CircleAlert, tone: "text-red-500", text: "Competitor X reduced pricing by 10%.", action: "Investigate", goal: "Respond to competitor X cutting prices by 10%." },
@@ -14,7 +17,7 @@ const briefing = [
   { icon: CheckCircle2, tone: "text-emerald-500", text: "Launch a retention campaign for inactive customers.", action: "Create Project", goal: "Launch a retention campaign for inactive customers." },
 ];
 
-export default function HomePage() {
+function DemoHomePage() {
   const { business } = useBusiness();
   const { projects } = useProjects();
   const agents = useAgents((s) => s.agents);
@@ -178,4 +181,12 @@ export default function HomePage() {
       </Card>
     </>
   );
+}
+
+export default function HomePage() {
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveHome businessId={currentBusinessId} />;
+  }
+  return <DemoHomePage />;
 }

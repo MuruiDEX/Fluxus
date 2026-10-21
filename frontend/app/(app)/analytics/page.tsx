@@ -2,9 +2,12 @@
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, PageHeader } from "@/components/system/ui";
+import { LiveAnalytics } from "@/components/live/LiveAnalytics";
 import { useAgents, useProjects } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext } from "@/lib/store/live";
 
-export default function AnalyticsPage() {
+function DemoAnalyticsPage() {
   const agents = useAgents((s) => s.agents);
   const { tasks, projects } = useProjects();
   const project = projects[0];
@@ -57,4 +60,12 @@ export default function AnalyticsPage() {
       </div>
     </>
   );
+}
+
+export default function AnalyticsPage() {
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveAnalytics businessId={currentBusinessId} />;
+  }
+  return <DemoAnalyticsPage />;
 }

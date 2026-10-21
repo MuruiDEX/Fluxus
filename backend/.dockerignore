@@ -1,0 +1,22 @@
+# backend/.dockerignore — keep the build context small and secret-free (Stage 17).
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.venv
+*.egg-info
+tests
+alembic/versions/__pycache__
+scripts/seed_demo.py
+scripts/e2e_live_setup.py
+scripts/repro_flush_anomaly.py
+scripts/pg_*.py
+scripts/gen_wire_manifest.py
+.pgdata*/
+*.log
+.env*
+!.env.example
+.git
+Dockerfile
+.dockerignore
+docker-compose.yml

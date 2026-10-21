@@ -56,6 +56,11 @@ async def test_custom_cors_origins_take_effect() -> None:
         assert "access-control-allow-origin" not in {k.lower() for k in other.headers}
 
 
+def test_environment_rejects_typos() -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="production")  # type: ignore[arg-type]
+
+
 def test_prod_guard_is_noop_off_prod() -> None:
     validate_production_config(Settings(environment="local"))
     validate_production_config(Settings(environment="test"))
@@ -80,12 +85,50 @@ def test_prod_guard_requires_secure_cookies() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://app.example.com",
+        "https://localhost:3000",
+        "https://127.0.0.1:3000",
+        "https://tauri.localhost",
+        "https://app.example.com/",
+        "https://app.example.com/path",
+        "https://app.example.com:notaport",
+        "https://user:secret@app.example.com",
+    ],
+)
+def test_prod_guard_rejects_unsafe_cors_origins(origin: str) -> None:
+    with pytest.raises(ValueError, match=r"APP_CORS_ORIGINS\[0\]"):
+        validate_production_config(
+            Settings(
+                environment="prod",
+                session_cookie_secure=True,
+                database_url="postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse",
+                cors_origins=[origin],
+            )
+        )
+
+
+def test_prod_guard_requires_explicit_cors_origins() -> None:
+    with pytest.raises(ValueError, match="APP_CORS_ORIGINS"):
+        validate_production_config(
+            Settings(
+                environment="prod",
+                session_cookie_secure=True,
+                database_url="postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse",
+                cors_origins=[],
+            )
+        )
+
+
 def test_prod_guard_passes_when_configured() -> None:
     validate_production_config(
         Settings(
             environment="prod",
             session_cookie_secure=True,
             database_url="postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse",
+            cors_origins=["https://app.example.com", "https://app.example.com:8443"],
         )
     )
 

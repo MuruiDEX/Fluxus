@@ -7,8 +7,31 @@
  * `dependsOn` rides the wire since contract amendment v1.10 (Stage 8.4).
  */
 
-import { parseMoney, type ApiActivityEvent, type ApiAgent, type ApiApproval, type ApiBrainEntry, type ApiMarketplaceEntry, type ApiPack, type ApiPackPreview, type ApiProject, type ApiTask, type ApiUsagePage, type ApiUsageRecord } from "@/lib/api";
-import type { ActivityEvent, Agent, Approval, BrainEntry, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageRecord, UsageView } from "@/lib/domain/types";
+import { parseMoney, type ApiActivityEvent, type ApiAgent, type ApiApproval, type ApiBrainEntry, type ApiBusiness, type ApiMarketplaceEntry, type ApiPack, type ApiPackPreview, type ApiProject, type ApiTask, type ApiUsagePage, type ApiUsageRecord } from "@/lib/api";
+import type { ActivityEvent, Agent, Approval, BrainEntry, Business, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageRecord, UsageView } from "@/lib/domain/types";
+
+export function toDomainBusiness(b: ApiBusiness): Business {
+  return {
+    id: b.id,
+    name: b.name,
+    tagline: b.tagline,
+    industry: b.industry,
+    location: b.location,
+    ownerName: b.ownerName,
+    healthScore: b.healthScore,
+    healthBreakdown: b.healthBreakdown.map((item) => ({ ...item })),
+    metrics: {
+      revenue: b.metrics.revenue ?? 0,
+      revenueDelta: b.metrics.revenueDelta ?? 0,
+      customers: b.metrics.customers ?? 0,
+      customersDelta: b.metrics.customersDelta ?? 0,
+      conversion: b.metrics.conversion ?? 0,
+      conversionDelta: b.metrics.conversionDelta ?? 0,
+      leads: b.metrics.leads ?? 0,
+    },
+    revenueSeries: b.revenueSeries.map((point) => ({ ...point })),
+  };
+}
 
 export function toDomainProject(p: ApiProject): Project {
   return {

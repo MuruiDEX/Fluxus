@@ -1,0 +1,46 @@
+# deploy/Caddyfile — production reverse proxy (Stage 17).
+#
+# Automatic HTTPS for {$DOMAIN}: point the domain's A/AAAA record at this
+# server and keep ports 80+443 reachable so Let's Encrypt (ACME) can
+# validate. Certificates and OCSP state persist in the caddy_data volume.
+#
+# Routing (single public origin — no CORS across origins, Secure Lax
+# session cookie works same-site):
+#   https://{$DOMAIN}/api/* -> backend:8000 (FastAPI, /api/v1/...)
+#   everything else         -> frontend:3000 (Next.js standalone)
+#
+# Backend/frontend bind loopback inside their own containers; only Caddy
+# touches the public internet. Client IPs reaching the backend are Caddy's;
+# nothing auth-related trusts them (login throttle keys on email, session
+# cookie + CSRF prove identity), so no trusted_proxies mapping is needed.
+
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

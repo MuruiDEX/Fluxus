@@ -4,6 +4,9 @@ All secrets arrive via environment variables; nothing secret is ever
 defaulted, logged, or sent to the frontend.
 """
 
+from typing import Literal
+from urllib.parse import urlparse
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,7 +16,8 @@ class Settings(BaseSettings):
 
     app_name: str = "muse-spark-backend"
     version: str = "0.1.0"
-    environment: str = "local"  # local | dev | prod
+    # Reject typo'd environments instead of silently bypassing the prod guard.
+    environment: Literal["local", "dev", "test", "prod"] = "local"
     log_level: str = "INFO"
 
     # Local-first binding: loopback only unless explicitly overridden.
@@ -142,14 +146,39 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def _production_origin_problem(origin: str) -> str | None:
+    """Return why an exact CORS origin is unsafe for production, if at all."""
+    if not origin or origin != origin.strip():
+        return "the origin must be non-empty with no surrounding whitespace"
+    try:
+        parsed = urlparse(origin)
+        _ = parsed.port  # validate the port alongside the hostname
+        host = parsed.hostname
+    except ValueError:
+        return "the origin is not a valid URL"
+    if parsed.scheme != "https":
+        return "the origin must use https"
+    if not host:
+        return "the origin must include a host"
+    if parsed.username or parsed.password:
+        return "the origin must not contain credentials"
+    if parsed.path or parsed.params or parsed.query or parsed.fragment:
+        return "the origin must not contain a path, query, fragment, or trailing slash"
+    host = host.lower()
+    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".localhost"):
+        return "the origin must not point at loopback or a local-only host"
+    return None
+
+
 def validate_production_config(settings: "Settings") -> None:
     """Fail fast on production misconfiguration (Stage 12 hardening).
 
     Local/dev/test are untouched — this runs only when
     environment == "prod". Production without a database serves 500s from
-    every domain endpoint, and a non-Secure session cookie over HTTPS is
-    either dropped or exposed: both must be explicit operator decisions,
-    never silent defaults.
+    every domain endpoint, a non-Secure session cookie over HTTPS is either
+    dropped or exposed, and the localhost CORS defaults would both reject
+    the real frontend and trust development-only origins. All must be
+    explicit operator decisions, never silent defaults.
     """
     if settings.environment != "prod":
         return
@@ -163,3 +192,14 @@ def validate_production_config(settings: "Settings") -> None:
             "APP_SESSION_COOKIE_SECURE=true is required when APP_ENVIRONMENT=prod: "
             "session cookies must not travel over plain HTTP in production."
         )
+    if not settings.cors_origins:
+        raise ValueError(
+            "APP_CORS_ORIGINS must list at least one exact https origin when "
+            "APP_ENVIRONMENT=prod (for example '[\"https://app.example.com\"]')."
+        )
+    for index, origin in enumerate(settings.cors_origins):
+        problem = _production_origin_problem(origin)
+        if problem is not None:
+            raise ValueError(
+                f"APP_CORS_ORIGINS[{index}] is invalid when APP_ENVIRONMENT=prod: {problem}."
+            )

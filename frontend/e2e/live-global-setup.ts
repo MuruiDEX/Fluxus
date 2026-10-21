@@ -54,6 +54,11 @@ export default async function globalSetup(): Promise<void> {
   });
   await execFileAsync("python", ["scripts/e2e_live_setup.py"], {
     cwd: BACKEND_DIR,
-    env: { ...process.env, APP_DATABASE_URL: DEV_ASYNC_URL },
+    env: {
+      ...process.env,
+      APP_DATABASE_URL: DEV_ASYNC_URL,
+      APP_ENVIRONMENT: "test",
+      APP_ALLOW_E2E_SETUP: "1",
+    },
   });
 }

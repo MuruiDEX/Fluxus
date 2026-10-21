@@ -3,6 +3,9 @@
 Idempotent: skips when the demo business already exists. Mirrors the ids in
 `frontend/lib/data/seed-northstar.ts` so API trials line up with the UI demo.
 Never run against production data.
+
+Requires APP_ALLOW_DEMO_SEED=1. A non-loopback database also requires
+APP_ALLOW_REMOTE_DEMO_SEED=1 and is intended only for an isolated dev/test DB.
 """
 
 import asyncio
@@ -14,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select  # noqa: E402
 
+from app.core.script_safety import UnsafeScriptError, guard_development_script  # noqa: E402
 from app.persistence.engine import create_engine_from_url, session_factory  # noqa: E402
 from app.persistence.models.agent import Agent  # noqa: E402
 from app.persistence.models.approval import Approval  # noqa: E402
@@ -147,6 +151,15 @@ CATALOG: list[dict] = [
 
 
 async def main() -> None:
+    try:
+        guard_development_script(
+            "seed_demo",
+            DEV_URL,
+            opt_in_env="APP_ALLOW_DEMO_SEED",
+            allow_remote_env="APP_ALLOW_REMOTE_DEMO_SEED",
+        )
+    except UnsafeScriptError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     engine = create_engine_from_url(DEV_URL)
     factory = session_factory(engine)
     async with factory() as session:

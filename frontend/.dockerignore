@@ -1,0 +1,16 @@
+# frontend/.dockerignore — keep the build context small and secret-free (Stage 17).
+node_modules
+.next
+out
+coverage
+test-results
+playwright-report
+.playwright
+e2e/.auth-state.json
+*.log
+.env*
+!.env.example
+.git
+.gitignore
+Dockerfile
+.dockerignore

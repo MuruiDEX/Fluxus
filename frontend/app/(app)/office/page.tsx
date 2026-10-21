@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import { AgentStatusBadge, Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, PageHeader } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
+import { LiveOffice } from "@/components/live/LiveOffice";
 import { startLoop } from "@/lib/sim/engine";
 import { useActivity, useAgents, useApprovals, useBusiness, useProjects } from "@/lib/store/app";
+import { useSession } from "@/lib/store/auth";
+import { isLiveContext } from "@/lib/store/live";
 import { cn } from "@/lib/cn";
 
 const views = ["Office", "Live", "Timeline", "Whiteboard"] as const;
 
-export default function OfficePage() {
+function DemoOfficePage() {
   const agents = useAgents((s) => s.agents);
   const events = useActivity((s) => s.events);
   const allApprovals = useApprovals((s) => s.approvals);
@@ -188,4 +191,12 @@ export default function OfficePage() {
       </div>
     </>
   );
+}
+
+export default function OfficePage() {
+  const { status, currentBusinessId } = useSession();
+  if (isLiveContext(status, currentBusinessId)) {
+    return <LiveOffice businessId={currentBusinessId} />;
+  }
+  return <DemoOfficePage />;
 }

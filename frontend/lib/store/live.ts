@@ -18,6 +18,7 @@ import { create } from "zustand";
 import {
   ApiError,
   apiGetAgent,
+  apiGetBusiness,
   apiGetListing,
   apiGetProject,
   apiListAgents,
@@ -39,6 +40,7 @@ import {
   toDomainAgent,
   toDomainApproval,
   toDomainBrainEntry,
+  toDomainBusiness,
   toDomainMarketplaceEntry,
   toDomainPack,
   toDomainPackPreview,
@@ -46,7 +48,7 @@ import {
   toDomainTask,
   toDomainUsage,
 } from "@/lib/live/mappers";
-import type { ActivityEvent, Agent, Approval, BrainEntry, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageView } from "@/lib/domain/types";
+import type { ActivityEvent, Agent, Approval, BrainEntry, Business, MarketplaceAgent, Pack, PackPreview, Project, Task, UsageView } from "@/lib/domain/types";
 
 export type LiveLoadStatus = "idle" | "loading" | "ready" | "error";
 
@@ -102,6 +104,48 @@ async function runLoad<T extends object>(
     if (ctl.controller === controller) ctl.controller = null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Business profile and metrics
+// ---------------------------------------------------------------------------
+
+interface LiveBusinessState {
+  status: LiveLoadStatus;
+  businessId: string | null;
+  business: Business | null;
+  error: string | null;
+  load: (businessId: string) => Promise<void>;
+  reset: () => void;
+}
+
+const businessCtl = createCtl();
+
+const idleBusiness = {
+  status: "idle" as const,
+  businessId: null,
+  business: null,
+  error: null,
+};
+
+export const useLiveBusiness = create<LiveBusinessState>((set) => ({
+  ...idleBusiness,
+  load: (businessId) =>
+    runLoad(
+      businessCtl,
+      set,
+      { status: "loading", businessId, business: null, error: null },
+      async (signal) => {
+        const raw = await apiGetBusiness(businessId, { signal });
+        return { status: "ready" as const, business: toDomainBusiness(raw), error: null };
+      },
+      (message) => ({ status: "error" as const, error: message }),
+    ),
+  reset: () => {
+    businessCtl.controller?.abort();
+    businessCtl.seq += 1;
+    set({ ...idleBusiness });
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Projects list
