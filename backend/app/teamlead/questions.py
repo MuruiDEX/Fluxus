@@ -112,7 +112,9 @@ async def generate_questions(
                 ),
             ],
             model=getattr(provider, "_default_model", "mock"),
-            max_tokens=None,
+            # An explicit output cap: it is sent to the provider AND is the
+            # bound the budget reservation is priced from (Stage 18 S1).
+            max_tokens=settings.team_lead_max_tokens,
             temperature=None,
             structured=StructuredOutput(mode="json_schema", schema=dict(QUESTIONS_SCHEMA)),
             timeout_s=settings.llm_timeout_s,

@@ -14,6 +14,11 @@ budget to reserve against: they append a bare ledger row. Provider failures are
 classified exactly like the executor, with Stage 16.1's post-send policy: a
 malformed response is priced `estimated` from a defensible tariff bound, or the
 hold is kept `ambiguous`; it is NEVER released and NEVER recorded as zero.
+
+Stage 18 (S1): the reserved amount is derived from the output limit the
+provider request ACTUALLY carries (`request.max_tokens`). No cap is ever
+assumed, so an uncapped request yields no provable upper bound and therefore
+no `guaranteed` reservation.
 """
 
 import asyncio
@@ -103,11 +108,12 @@ class TeamLeadMeter:
         model_name = getattr(provider, "_default_model", None) or request.model or "mock"
         attempt_key = f"tl:{self.brief_id}:{self.call_kind}:g{generation}"
         input_bound = _input_bound(request)
-        max_output = (
-            request.max_tokens
-            if request.max_tokens is not None
-            else self.settings.llm_max_tokens
-        )
+        # The reservation may only price a limit the provider request ACTUALLY
+        # enforces. Never assume a cap: an uncapped request has no provable
+        # upper bound, so it must not produce a `guaranteed` reservation
+        # (Stage 18 S1). `None` -> `upper_bound_cost` returns None -> the
+        # fail-closed branches below apply (budget_unpriced / best_effort).
+        max_output = request.max_tokens
         reservation_id: str | None = None
         reservation_key: str | None = None
         if self.project_id is not None:
@@ -171,16 +177,21 @@ class TeamLeadMeter:
                     return None, None
                 ai_budget = project.ai_budget if project.ai_budget is not None else 0
                 if bound is not None:
+                    # A tariff AND a real output cap: the bound is proven.
                     amount = bound.cost or Decimal("0")
                     mode = "guaranteed"
                 elif ai_budget > 0 and not project.allow_unpriced_ai:
+                    # Budgeted project without a provable bound -> fail closed
+                    # BEFORE the provider is contacted (Stage 18 S1).
                     raise BudgetUnpricedError()
                 elif project.allow_unpriced_ai and ai_budget > 0:
                     amount = quantize_money(self.settings.usage_unpriced_reserve_amount)
                     mode = "best_effort"
                 else:
+                    # No budget to protect and no provable bound: nothing is
+                    # guaranteed, so nothing may be labelled `guaranteed`.
                     amount = Decimal("0")
-                    mode = "guaranteed"
+                    mode = "best_effort"
                 reservation = await _reservations.reserve(
                     session,
                     self.business_id,

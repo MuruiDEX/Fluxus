@@ -88,6 +88,46 @@ async def test_json_schema_mode_and_validation() -> None:
     assert res.data == {"name": "a", "age": 3}
 
 
+# ------------------------------------------------- output cap (Stage 18 S1) ---
+
+
+async def test_output_cap_is_sent_when_set() -> None:
+    """A request with an explicit output limit must carry it on the wire.
+
+    `max_tokens` is the single output-limit parameter this adapter speaks;
+    it is the same parameter the task-execution path has always sent, so
+    requiring it from Team Lead calls introduces no new provider
+    requirement.
+    """
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler)
+    await provider.complete(_req(max_tokens=2048))
+
+    assert seen[0]["max_tokens"] == 2048
+    # No second, alternative spelling is sent: the limit must be unambiguous.
+    assert "max_completion_tokens" not in seen[0]
+
+
+async def test_output_cap_is_omitted_when_absent() -> None:
+    """An explicitly uncapped request must NOT invent a limit."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler)
+    await provider.complete(_req(max_tokens=None))
+
+    assert "max_tokens" not in seen[0]
+    assert "max_completion_tokens" not in seen[0]
+
+
 async def test_usage_details_and_provider_request_id_extracted() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
