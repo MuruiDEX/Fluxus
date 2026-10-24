@@ -1,13 +1,14 @@
 """Management writes (Stage 7.1) — manual Brain entries + metadata patches.
 
-Three additive endpoints, no schema changes, no new wire shapes (responses
-reuse the frozen §1 models):
+Additive endpoints; responses reuse the frozen §1 models:
 
 - POST .../brain — manual knowledge entry (category/title/body, server id).
 - PATCH .../projects/{project_id} — project metadata (title/goal/status/
   budget/ai_budget/deadline/team_ids/milestones).
 - PATCH .../projects/{project_id}/tasks/{task_id} — task metadata
   (title/summary/eta_minutes/owner_agent_id/gate_at).
+- PATCH .../businesses/{business_id} — business-scoped AI budget policy
+  (ai_budget/allow_unpriced_ai, Stage 18 S2).
 
 What is deliberately NOT writable here (422 via extra="forbid" schemas):
 
@@ -27,24 +28,31 @@ pattern. Cross-entity references resolve in-scope or 422 dangling_reference.
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.v1.executions import _factory, _settings, _task_responses
-from app.api.v1.reads import _brain_response, _project_response
+from app.api.v1.reads import _brain_response, _business_response, _project_response
 from app.api.v1.schemas import (
     BrainCreate,
     BrainResponse,
+    BusinessPatch,
+    BusinessResponse,
     ProjectPatch,
     ProjectResponse,
     TaskPatch,
     TaskResponse,
 )
 from app.core.auth import check_client_contract
-from app.core.identity import Identity, require_business
+from app.core.identity import Identity, require_business, require_business_owner
 from app.persistence.enums import BrainCategory, ProjectStatus
 from app.persistence.exceptions import AgentDisabledError, DanglingReferenceError, new_id
-from app.persistence.repositories.base import clamp_progress, quantize_money
+from app.persistence.repositories.base import (
+    clamp_progress,
+    quantize_ai_budget,
+    quantize_money,
+)
 from app.persistence.repositories.concrete import (
     ActivityRepository,
     AgentRepository,
     BrainRepository,
+    BusinessRepository,
     ProjectRepository,
     TaskRepository,
     UserRepository,
@@ -52,6 +60,7 @@ from app.persistence.repositories.concrete import (
 
 router = APIRouter()
 _brain = BrainRepository()
+_businesses = BusinessRepository()
 _projects = ProjectRepository()
 _tasks = TaskRepository()
 _agents = AgentRepository()
@@ -95,6 +104,48 @@ def _invalid_value(exc: ValueError) -> HTTPException:
 async def _actor_email(session, identity: Identity) -> str:
     user = await _users.get(session, identity.user_id)
     return user.email if user is not None else identity.user_id
+
+
+@router.patch(
+    "/businesses/{business_id}",
+    response_model=BusinessResponse,
+    dependencies=_GUARD,
+)
+async def patch_business(
+    business_id: str,
+    body: BusinessPatch,
+    request: Request,
+    identity: Identity = Depends(require_business_owner),  # noqa: B008 - FastAPI idiom
+):
+    settings = _settings(request)
+    factory = _factory(request)
+    patch: dict = {}
+    if body.ai_budget is not None:
+        try:
+            patch["ai_budget"] = quantize_ai_budget(body.ai_budget)
+        except ValueError as exc:
+            raise _invalid_value(exc) from exc
+    if body.allow_unpriced_ai is not None:
+        patch["allow_unpriced_ai"] = body.allow_unpriced_ai
+    async with factory() as session:
+        async with session.begin():
+            business = await _businesses.get(session, business_id, business_id)
+            if business is None:
+                raise HTTPException(status_code=404, detail="Business not found in scope.")
+            for key, value in patch.items():
+                setattr(business, key, value)
+            await session.flush()
+            actor = await _actor_email(session, identity)
+            await _activity.append(
+                session,
+                business_id,
+                {
+                    "agent_name": actor,
+                    "kind": "system",
+                    "text": f"Business {business_id} updated by {actor}.",
+                },
+            )
+            return _business_response(business, settings.contract_version)
 
 
 @router.post(
@@ -156,6 +207,10 @@ async def patch_project(
 ):
     settings = _settings(request)
     factory = _factory(request)
+    # Project metadata remains member-editable, but changes that affect AI
+    # budget enforcement require the established business-owner guard.
+    if body.ai_budget is not None or body.allow_unpriced_ai is not None:
+        await require_business_owner(request, identity)
     if body.status is not None and body.status not in {s.value for s in ProjectStatus}:
         raise _invalid_enum(f"Unknown project status: {body.status!r}.")
     patch: dict = {}

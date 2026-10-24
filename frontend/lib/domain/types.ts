@@ -48,6 +48,10 @@ export interface Business {
     leads: number;
   };
   revenueSeries: { label: string; value: number }[];
+  /** Stage 18 S2 (v1.19): business-scoped Team Lead AI budget. */
+  aiBudget?: number;
+  /** Stage 18 S2 (v1.19): opt in to best-effort business-scoped AI calls. */
+  allowUnpricedAi?: boolean;
 }
 
 export interface AgentPermissions {

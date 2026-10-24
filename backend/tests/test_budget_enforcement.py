@@ -56,6 +56,7 @@ def _bound() -> Decimal:
         build_system_prompt("Tester", []),
         build_user_prompt("Test Business", "P", "", "T", ""),
         json.dumps(dict(RESULT_SCHEMA)),
+        message_count=2,
     )
     quote = pricing.upper_bound_cost(
         provider="mock", model=MODEL, input_token_bound=input_bound, max_output_tokens=MAX_OUT

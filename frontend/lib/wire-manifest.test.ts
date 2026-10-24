@@ -85,9 +85,10 @@ const CASES: ClientCase[] = [
     schema: "BusinessResponse",
     fields: [
       "id", "name", "tagline", "industry", "location", "ownerName",
-      "healthScore", "healthBreakdown", "metrics", "revenueSeries", "contract",
+      "healthScore", "healthBreakdown", "metrics", "revenueSeries",
+      "aiBudget", "allowUnpricedAi", "contract",
     ],
-    money: [],
+    money: ["aiBudget"],
   },
   {
     name: "apiListProjects",

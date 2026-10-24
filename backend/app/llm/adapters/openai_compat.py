@@ -1,8 +1,9 @@
 """OpenAI-compatible chat provider over raw httpx (no vendor SDK).
 
-Works against api.openai.com and any OpenAI-compatible endpoint (Azure,
-OpenRouter, Ollama via a different base_url — local inference itself is a
-later stage, but no code change is needed to point at one).
+Works against api.openai.com and OpenAI-compatible `/chat/completions`
+endpoints that accept Bearer auth (e.g. OpenRouter, Ollama, compatible
+gateways). Azure OpenAI's native `api-key`/deployment/`api-version` shape is
+not handled here; point this adapter at an OpenAI-compatible gateway instead.
 
 Hard rules enforced here:
 - `asyncio.CancelledError` is re-raised unwrapped, never retried; HTTP/SSE
@@ -21,7 +22,7 @@ import asyncio
 import json
 import random
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -148,7 +149,12 @@ def _error_for_status(status: int) -> LlmError:
     if status == 429:
         return RateLimitedError(f"Provider rate limit (HTTP {status}).")
     if 500 <= status <= 599:
-        return TransientProviderError(f"Provider server error (HTTP {status}).")
+        # A server error can be returned after the provider has accepted or
+        # billed the request. Treat the outcome as ambiguous and do not resend.
+        error = TransientProviderError(f"Provider server error (HTTP {status}).")
+        error.ambiguous = True
+        error.retryable = False
+        return error
     return ProviderError(f"Provider returned HTTP {status}.")
 
 
@@ -163,15 +169,21 @@ class OpenAICompatProvider:
         default_model: str = "gpt-4o-mini",
         timeout_s: float = 30.0,
         max_retries: int = 2,
+        max_tokens_param: Literal["max_tokens", "max_completion_tokens"] = "max_tokens",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key:
             raise LlmConfigurationError("OpenAICompatProvider requires a non-empty api_key.")
+        if max_tokens_param not in ("max_tokens", "max_completion_tokens"):
+            raise LlmConfigurationError(
+                f"Unsupported max_tokens_param: {max_tokens_param!r}."
+            )
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
         self._timeout_s = timeout_s
         self._max_retries = max(0, max_retries)
+        self._max_tokens_param = max_tokens_param
         self._transport = transport
         # Idempotency-Key is only documented for the official OpenAI endpoint.
         # Sending it to arbitrary compatible gateways is avoided unless opted in.
@@ -195,7 +207,9 @@ class OpenAICompatProvider:
             "stream": stream,
         }
         if request.max_tokens is not None:
-            body["max_tokens"] = request.max_tokens
+            # Exactly one spelling: sending both can be rejected by strict
+            # servers and would make the wire cap ambiguous.
+            body[self._max_tokens_param] = request.max_tokens
         if request.temperature is not None:
             body["temperature"] = request.temperature
         if request.structured is not None:

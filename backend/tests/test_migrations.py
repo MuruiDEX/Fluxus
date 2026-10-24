@@ -393,3 +393,58 @@ async def test_stage5_data_survives_0002_upgrade(
         ).scalar_one()
     await engine.dispose()
     assert row == "Old Biz"
+
+
+@pytest.mark.asyncio()
+async def test_0009_business_budget_round_trip(
+    mig_db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0009 is additive and backfills existing businesses to no limit/fail-closed."""
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+    monkeypatch.setenv(
+        "APP_DATABASE_URL", mig_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    )
+    cfg = _alembic_config(mig_db_url)
+
+    command.upgrade(cfg, "b4e8f1a2c3d4")  # 0008, before business budget
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO businesses (id, name, tagline, industry, location,"
+                " owner_name, health_score, health_breakdown, metrics,"
+                " revenue_series, notes)"
+                " VALUES ('biz_old', 'Old', '', '', '', '', 0, '[]', '{}', '[]', '')"
+            )
+        )
+    await engine.dispose()
+
+    command.upgrade(cfg, "head")
+    assert {"ai_budget", "allow_unpriced_ai"} <= await _column_names(
+        mig_db_url, "businesses"
+    )
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT ai_budget, allow_unpriced_ai FROM businesses"
+                    " WHERE id = 'biz_old'"
+                )
+            )
+        ).one()
+    await engine.dispose()
+    assert row == (0, False)
+
+    command.downgrade(cfg, "b4e8f1a2c3d4")
+    assert "ai_budget" not in await _column_names(mig_db_url, "businesses")
+    assert "allow_unpriced_ai" not in await _column_names(mig_db_url, "businesses")
+
+    command.upgrade(cfg, "head")
+    assert "ai_budget" in await _column_names(mig_db_url, "businesses")

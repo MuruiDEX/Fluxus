@@ -43,8 +43,8 @@ class LlmRequest(BaseModel):
     temperature: float | None = None
     structured: StructuredOutput | None = None
     timeout_s: float = 30.0
-    # Stable per-send key. Adapters that document idempotency send it so a
-    # post-send retry cannot double-bill; ignored elsewhere.
+    # Stable logical-call key. Some adapters send it to selected endpoints;
+    # its presence does not establish provider-side exactly-once billing.
     idempotency_key: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -71,8 +71,8 @@ class LlmResponse(BaseModel):
     model: str = ""
     # Provider-side call id when reported; used for reconciliation/audit.
     provider_request_id: str | None = None
-    # Attempts actually performed (1 + retries). Retried generations may be
-    # metered twice provider-side after a network failure of unknown outcome.
+    # Attempts actually performed (1 + retries). The adapter retries only
+    # failures classified as safe to resend.
     attempts: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -86,11 +86,11 @@ class LlmError(Exception):
     """Base for all provider errors. Carries a contract-safe code."""
 
     code: str = "provider_error"
-    # Whether the operation may be retried (429/5xx/network only).
+    # Whether the operation may be retried (only when safe to resend).
     retryable: bool = False
     # True when the request may have reached the provider and the outcome is
-    # unknown (post-send network failure). Such errors are NOT retried (an
-    # unsafe retry could double-bill) and trigger an `ambiguous` reservation.
+    # unknown (for example, a 5xx response or post-send transport failure).
+    # Such errors are NOT retried and trigger an `ambiguous` reservation.
     ambiguous: bool = False
 
     def __init__(self, message: str, *, details: dict[str, Any] | None = None):
@@ -106,11 +106,10 @@ class ProviderError(LlmError):
 
 
 class TransientProviderError(ProviderError):
-    """Network failure, timeout-class transport error, or 5xx.
+    """Network failure or 5xx.
 
-    Safe to retry, with one caveat surfaced via response metadata: after a
-    network failure of unknown outcome the generation may already have
-    executed (and been metered) provider-side.
+    Retryability and ambiguity are refined per instance by the adapter. A
+    5xx response or post-send transport failure is ambiguous and not retried.
     """
 
     retryable: bool = True

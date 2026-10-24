@@ -154,8 +154,21 @@ def test_upper_bound_requires_tariff_and_output_cap() -> None:
     assert quote.cost == Decimal("2.00")
 
 
-def test_estimate_input_bound_is_char_count() -> None:
+def test_estimate_input_bound_is_utf8_byte_count() -> None:
     assert pricing.estimate_input_token_bound("abc", "de", "") == 5
+    assert pricing.estimate_input_token_bound("Привет") == len("Привет".encode())
+    assert pricing.estimate_input_token_bound("你好") == len("你好".encode())
+    assert pricing.estimate_input_token_bound("") == 0
+    assert pricing.estimate_input_token_bound("a" * 10_000) == 10_000
+
+
+def test_estimate_input_bound_adds_conservative_chat_framing() -> None:
+    assert pricing.estimate_input_token_bound("hi", message_count=2) == (
+        2
+        + pricing.CHAT_FRAMING_TOKENS_BASE
+        + 2 * pricing.CHAT_FRAMING_TOKENS_PER_MESSAGE
+    )
+    assert pricing.estimate_input_token_bound("", message_count=1) > 0
 
 
 def test_tariff_override_keeps_version_stamp() -> None:

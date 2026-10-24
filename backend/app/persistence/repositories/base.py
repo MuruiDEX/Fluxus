@@ -8,7 +8,7 @@ Rules enforced here for every aggregate:
 - Progress is clamped to 0..100 (contract: clamp, never wrap).
 """
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import func, select
@@ -17,16 +17,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.persistence.exceptions import ImmutableFieldError, validate_id
 
 CENT = Decimal("0.01")
+# NUMERIC(12, 2): ten digits before the decimal point, two after.
+MAX_MONEY = Decimal("9999999999.99")
 
 
-def quantize_money(value: float | str | Decimal) -> Decimal:
-    if isinstance(value, Decimal):
-        amount = value
-    else:
-        amount = Decimal(str(value))
-    if amount < 0:
-        raise ValueError("money must be >= 0")
-    return amount.quantize(CENT, rounding=ROUND_HALF_UP)
+def quantize_money(
+    value: float | str | Decimal,
+    *,
+    max_value: Decimal | None = None,
+    reject_positive_zero: bool = False,
+) -> Decimal:
+    try:
+        amount = value if isinstance(value, Decimal) else Decimal(str(value))
+        if not amount.is_finite():
+            raise ValueError("money must be finite")
+        if amount < 0:
+            raise ValueError("money must be >= 0")
+        quantized = amount.quantize(CENT, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValueError("money is outside the supported range") from exc
+    if reject_positive_zero and amount > 0 and quantized == 0:
+        raise ValueError("money must be 0 or at least 0.01")
+    if max_value is not None and quantized > max_value:
+        raise ValueError(f"money must be <= {max_value}")
+    return quantized
+
+
+def quantize_ai_budget(value: float | str | Decimal) -> Decimal:
+    """Validate the business AI budget's documented domain.
+
+    Zero means "no limit"; any other configured ceiling is at least one cent
+    and fits the NUMERIC(12, 2) column.
+    """
+    return quantize_money(
+        value,
+        max_value=MAX_MONEY,
+        reject_positive_zero=True,
+    )
 
 
 def clamp_progress(value: int) -> int:

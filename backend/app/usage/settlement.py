@@ -116,8 +116,8 @@ async def record_success(
     """Append the canonical ledger row and settle the reservation to consumed.
 
     `reservation_id` is optional (Stage 16.1): business-scoped Team Lead calls
-    have no project to reserve against and append a bare ledger row. `task_id`
-    is optional; task-less rows skip the task-cost recompute (the caller
+    with no configured business budget append a bare ledger row. `task_id` is
+    optional; task-less rows skip the task-cost recompute (the caller
     recomputes project spend when the row is project-scoped).
     """
     quote = price_response(provider, model, response)
@@ -182,7 +182,8 @@ async def record_estimated_failure(
       known — never `confirmed`;
     - otherwise the hold is kept `ambiguous` when a reservation exists (the
       financial outcome cannot be established), or an `unknown` row is appended
-      for a reservation-less (business-scoped) call so the attempt is not lost.
+      for a reservation-less call (no configured business budget) so the
+      attempt is not lost.
 
     Returns `(record_or_None, reservation_settled, status)`.
     """

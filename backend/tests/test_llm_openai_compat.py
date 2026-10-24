@@ -12,9 +12,12 @@ import json
 import httpx
 import pytest
 
+from app.core.config import Settings
 from app.llm.adapters.openai_compat import OpenAICompatProvider, SseParser
+from app.llm.base import create_provider
 from app.llm.types import (
     BadResponseError,
+    LlmConfigurationError,
     LlmMessage,
     LlmRequest,
     LlmResponse,
@@ -86,6 +89,66 @@ async def test_json_schema_mode_and_validation() -> None:
     assert seen[0]["response_format"]["type"] == "json_schema"
     assert seen[0]["response_format"]["json_schema"]["schema"] == schema
     assert res.data == {"name": "a", "age": 3}
+
+
+# ------------------------------------------------- output cap (Stage 18 S1) ---
+
+
+@pytest.mark.parametrize("param", ["max_tokens", "max_completion_tokens"])
+async def test_output_cap_uses_the_configured_wire_field(param: str) -> None:
+    """Classic and reasoning-model parameter names are both supported.
+
+    Only the configured spelling is sent: strict servers can reject the
+    unknown alternative, and two limits would make the wire cap ambiguous.
+    """
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler, max_tokens_param=param)
+    await provider.complete(_req(max_tokens=2048))
+
+    assert seen[0][param] == 2048
+    other = "max_completion_tokens" if param == "max_tokens" else "max_tokens"
+    assert other not in seen[0]
+
+
+@pytest.mark.parametrize("param", ["max_tokens", "max_completion_tokens"])
+async def test_output_cap_is_omitted_when_absent(param: str) -> None:
+    """An explicitly uncapped request must NOT invent a limit."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler, max_tokens_param=param)
+    await provider.complete(_req(max_tokens=None))
+
+    assert "max_tokens" not in seen[0]
+    assert "max_completion_tokens" not in seen[0]
+
+
+def test_unknown_output_cap_field_is_rejected() -> None:
+    with pytest.raises(LlmConfigurationError, match="Unsupported max_tokens_param"):
+        OpenAICompatProvider(api_key=SECRET, max_tokens_param="max_output_tokens")  # type: ignore[arg-type]
+
+
+def test_factory_forwards_the_configured_output_cap_field() -> None:
+    provider = create_provider(
+        Settings(
+            environment="test",
+            llm_provider="openai_compat",
+            llm_api_key=SECRET,
+            llm_max_tokens_param="max_completion_tokens",
+        )
+    )
+    assert isinstance(provider, OpenAICompatProvider)
+    body = provider._body(_req(max_tokens=77), stream=False)
+    assert body["max_completion_tokens"] == 77
+    assert "max_tokens" not in body
 
 
 async def test_usage_details_and_provider_request_id_extracted() -> None:
@@ -256,7 +319,7 @@ async def test_429_retries_then_succeeds() -> None:
     assert res.text == "hello" and res.attempts == 2 and calls == 2
 
 
-async def test_500_exhausts_bounded_retries() -> None:
+async def test_500_response_is_ambiguous_and_not_retried() -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -265,16 +328,39 @@ async def test_500_exhausts_bounded_retries() -> None:
         return httpx.Response(500, json={"error": {"message": "boom"}})
 
     provider = _provider(handler, max_retries=2)
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         await provider.complete(_req())
-    assert calls == 3  # 1 initial + 2 retries, never more
+    assert calls == 1
+    assert caught.value.ambiguous is True
+    assert caught.value.retryable is False
+
+
+async def test_pre_send_connect_failure_is_safely_retried() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json=_ok_payload())
+
+    provider = _provider(handler, max_retries=1)
+    response = await provider.complete(_req())
+
+    assert calls == 2
+    assert response.attempts == 2
 
 
 async def test_timeout_classified() -> None:
     # MockTransport performs no real I/O, so client timeouts never fire
     # there. What is ours to verify: a transport-level timeout maps to
     # ProviderTimeoutError (the timer itself belongs to httpx).
+    calls = 0
+
     async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
         raise httpx.ReadTimeout("simulated stall")
 
     provider = _provider(handler)
@@ -284,6 +370,7 @@ async def test_timeout_classified() -> None:
     provider2 = _provider(handler, max_retries=1)
     with pytest.raises(ProviderTimeoutError):
         await provider2.complete(_req())
+    assert calls == 2  # one submission per provider instance; no post-send retry
     # Transport mapping unit checks (all timeout flavors, no network).
     assert isinstance(
         provider2._classify_transport_error(httpx.ConnectTimeout("x")), ProviderTimeoutError

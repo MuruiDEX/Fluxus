@@ -41,5 +41,6 @@ def create_provider(settings: Settings) -> LlmProvider:
             default_model=settings.llm_model,
             timeout_s=settings.llm_timeout_s,
             max_retries=settings.llm_max_retries,
+            max_tokens_param=settings.llm_max_tokens_param,
         )
     raise LlmConfigurationError(f"Unknown llm_provider: {settings.llm_provider!r}.")

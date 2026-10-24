@@ -19,6 +19,11 @@ from app.usage.tariffs import Tariff, TariffError, parse_tariffs_json
 
 CENT = Decimal("0.01")
 _PER_1K = Decimal(1000)
+# Conservative chat-envelope allowance. OpenAI-compatible chat formats add a
+# few tokens per message plus a fixed reply primer; these are deliberately
+# generous so the bound stays on the safe side.
+CHAT_FRAMING_TOKENS_BASE = 16
+CHAT_FRAMING_TOKENS_PER_MESSAGE = 8
 
 
 def _q(value: Decimal) -> Decimal:
@@ -132,11 +137,11 @@ def upper_bound_cost(
     input_token_bound: int,
     max_output_tokens: int | None,
 ) -> CostQuote | None:
-    """Proven maximum cost for a call, or None when it cannot be guaranteed.
+    """Conservative maximum cost for a call, or None when no bound is available.
 
     Requires a known tariff AND a capped output (max_output_tokens set). The
-    input bound must be a genuine upper bound on prompt tokens (caller's
-    responsibility — the executor uses character counts, which over-count).
+    input bound must be a conservative upper bound on prompt tokens for the
+    configured provider's tokenizer.
     """
     tariff = resolve_tariff(provider, model)
     if tariff is None or max_output_tokens is None:
@@ -148,13 +153,29 @@ def upper_bound_cost(
     return CostQuote("confirmed", _q(total / _PER_1K), "tariff", tariff.version, tariff.currency)
 
 
-def estimate_input_token_bound(*parts: str) -> int:
-    """Safe over-estimate of prompt tokens: token count never exceeds characters."""
-    return sum(len(part) for part in parts if part)
+def estimate_input_token_bound(*parts: str, message_count: int = 0) -> int:
+    """Conservative prompt-token estimate based on UTF-8 bytes.
+
+    Character counts are not an upper bound for Unicode input: one code point
+    can become several UTF-8 bytes and several byte-level BPE tokens. For
+    byte-level BPE tokenizers a token cannot span fewer than one input byte,
+    so the UTF-8 byte length is the corresponding conservative bound. Chat
+    framing tokens are added explicitly when `message_count` is supplied.
+
+    This is not a tokenizer-independent proof. A gateway that uses a different
+    tokenizer can still violate it; callers must keep treating the result as a
+    conservative estimate, not a universal guarantee.
+    """
+    tokens = sum(len(part.encode("utf-8")) for part in parts if part)
+    if message_count > 0:
+        tokens += CHAT_FRAMING_TOKENS_BASE + CHAT_FRAMING_TOKENS_PER_MESSAGE * message_count
+    return tokens
 
 
 __all__ = [
     "CENT",
+    "CHAT_FRAMING_TOKENS_BASE",
+    "CHAT_FRAMING_TOKENS_PER_MESSAGE",
     "CostQuote",
     "Tariff",
     "TariffError",

@@ -9,7 +9,7 @@ Any deviation requires a contract amendment (new section below + minor version b
 
 | Entity | TS type | Key fields (all required unless marked `?`) |
 |---|---|---|
-| Business | `Business` | `id, name, tagline, industry, location, ownerName, healthScore, healthBreakdown[{label, score}], metrics{revenue, revenueDelta, customers, customersDelta, conversion, conversionDelta, leads}, revenueSeries[{label, value}]` |
+| Business | `Business` | `id, name, tagline, industry, location, ownerName, healthScore, healthBreakdown[{label, score}], metrics{revenue, revenueDelta, customers, customersDelta, conversion, conversionDelta, leads}, revenueSeries[{label, value}], aiBudget?, allowUnpricedAi?` |
 | Agent | `Agent` | `id, businessId, name, role, responsibilities[], tools[], permissions{read[], write[], actions[], denied[]}, status: AgentStatus, currentTask?, costPerMonth, performance{completionRate, avgMinutes, approvalRate, rating}, hired, avatarHue` |
 | Task | `Task` | `id, businessId, projectId, title, ownerAgentId, status: TaskStatus, progress, dependsOn: ID[], costAccrued, etaMinutes, summary, attempts?, approvalGateId?, gateAt?, costRate?` |
 | Project | `Project` | `id, businessId, title, goal, status: ProjectStatus, progress, budget, aiBudget, aiSpent, deadline, teamIds: ID[], milestones[{label, done}], allowUnpricedAi?` |
@@ -133,14 +133,28 @@ Rules:
   The ceiling counts `aiSpent` + task-less `estimated` exposure + `active`/
   `ambiguous` reservations; there is no transaction held across the network
   call.
+- **Business budget (v1.19):** business-scoped calls (questions/summary/plan,
+  `project_id IS NULL`) reserve against `Business.aiBudget` when it is `> 0`.
+  The ceiling counts ALL business usage (`confirmed` + `estimated`, project-
+  linked and business-scoped) plus every `active`/`ambiguous` business hold, so
+  the business budget is an umbrella over all AI attempts. Only business-scoped
+  calls are refused by it: project-scoped calls keep their existing project
+  ceiling and may still run after the business ceiling would refuse a
+  business-scoped call. `Business.aiBudget` of `0` means no limit and preserves
+  the bare-ledger behavior (no reservation). A budgeted business with no
+  provable upper bound is refused `budget_unpriced` unless
+  `Business.allowUnpricedAi` opts into a `best_effort` reserve. Additive
+  `PATCH /api/v1/businesses/{business_id}` accepts `aiBudget` and
+  `allowUnpricedAi` (all other fields 422) and writes one `system` audit event;
+  `BusinessResponse` carries both fields additively.
 - **Post-send malformed response:** the provider answered, so the attempt may
   already be billed. It is recorded `estimated` from the versioned tariff
   bound when that bound is known, otherwise its hold stays `ambiguous`; it is
   NEVER released as free and NEVER recorded as zero cost.
 - **Fail-closed budget:** a provable upper bound requires a known tariff AND a
-  capped output (`llm_max_tokens`); otherwise a budgeted project is refused
-  with `budget_unpriced` (409) and no provider call — unless the project opts
-  in via `allowUnpricedAi: true`, which downgrades to a `best_effort`
+  capped output (`llm_max_tokens`); otherwise a budgeted project or business is
+  refused with `budget_unpriced` (409) and no provider call — unless that scope
+  opts in via `allowUnpricedAi: true`, which downgrades to a `best_effort`
   internal reserve.
 - **Ambiguity is never auto-released:** a post-send failure of unknown outcome
   yields a permanently held `ambiguous` reservation (never retried). Recovery
@@ -259,3 +273,5 @@ SaaS without reshaping `businessId` scoping:
 | 2026-10-19 | v1.17 | Stage 16 usage & billing foundation: §5.2 defines the append-only `usage_records` ledger (one canonical row per provider attempt, UNIQUE `idempotency_key`, no update/delete; unknown cost is `null`, never `0`; `cost_source` provider\|tariff\|unknown), the `budget_reservations` state machine (`active\|consumed\|ambiguous\|released\|written_off`, migration 0007), ledger-derived `task.costAccrued = SUM(confirmed cost)` feeding the unchanged §5.1 `aiSpent` recompute, and concurrency-safe budget enforcement committed in the SAME txn as the task claim (no txn held across the network call; a lost race rolls the claim back). Fail-closed: a budgeted project with no provable upper bound (needs a tariff AND capped output) is refused `budget_unpriced` (409) with no provider call unless `Project.allowUnpricedAi` opts into a `best_effort` reserve. Ambiguous (post-send unknown-outcome) holds are never auto-released or retried; recovery converts a stale `active` hold to `ambiguous` and releases `ambiguous` only when `usage_ambiguous_release_minutes > 0` (default 0). Additive `GET .../usage` (ledger rows + derived summary; `?project_id`/`?task_id`, `limit`/`offset`), additive `Project.allowUnpricedAi` (+ `ProjectPatch.allowUnpricedAi`), and new `Usage*Response` shapes only; existing shapes, codes and wire `v1` unchanged |
 | 2026-10-19 | v1.18 | Stage 16.1 Team Lead & all-provider coverage: every billable provider call (task execution + `brief_questions`/`brief_summary`/`plan_generation`/`brief_finalize`) now writes the same append-only ledger through a new validated `call_kind` (migration 0008; legacy rows backfilled to `task_execution`, nullable for compatibility). Business-scoped Team Lead calls run before a project exists (`project_id`/`task_id` NULL) and never enter project spend; finalization is project-scoped, task-less and budget-enforced. §5.1/§5.2 `aiSpent` is the disjoint sum of task `costAccrued` plus confirmed task-less project-scoped usage, counted once; the reserve ceiling also counts task-less `estimated` exposure. Post-send malformed responses are never released or zeroed: priced `estimated` from the tariff bound when known, otherwise held `ambiguous`. `UsageItemResponse.callKind` and `UsageSummary.byCallKind` are additive; `FinalizeResponse.costs` now snapshots confirmed spend including this finalization and reports `ai_estimated` separately. Existing shapes, codes and wire `v1` unchanged |
 | 2026-10-14 | v1.15 | Stage 14 agent lifecycle: `Agent.hired` is the active flag (hire → true; disable → false; rows, links and history are never deleted). Additive `POST .../agents/{id}/activate|disable` (idempotent 200 `AgentResponse` + `system` audit event in one txn; uniform 404 for foreign/missing). Staffing compatibility is scope + active only (no skill model exists): task owner / project `team_ids` / plan save with a disabled or foreign agent → 422 `agent_disabled` (new additive code) / `dangling_reference`; executor refuses new claims for disabled owners (`refused` + `agent_disabled`, 409) while in-flight runs and terminal/idempotent answers are untouched — new endpoints + one code only; existing shapes and wire `v1` unchanged |
+| 2026-10-23 | v1.19 | Stage 18 S2 business AI budgets: additive `Business.aiBudget` + `Business.allowUnpricedAi` (migration 0009, defaults `0`/false) and owner-only `PATCH /businesses/{business_id}` (`aiBudget` must be `0` or at least `0.01` and fit `NUMERIC(12,2)`; invalid/overflowing values are `422 validation_error`; members are `403`, foreign businesses `404`). Business-scoped Team Lead calls (`questions`/`summary`/`planning`, `project_id IS NULL`) reserve against the business ceiling when `aiBudget > 0`; it counts all business confirmed/estimated usage plus all active/ambiguous holds, but only business-scoped calls are refused — project-scoped calls keep their project-only cap. `aiBudget = 0` preserves bare-ledger behavior; a budgeted business without a provable upper bound is refused `budget_unpriced` unless `allowUnpricedAi` opts into `best_effort`. `BusinessResponse` gains both fields additively; existing shapes, codes and wire `v1` unchanged |
+| 2026-10-24 | v1.20 | Stage 18 S2.2 authorization: `PATCH .../projects/{id}` still permits members to edit non-budget metadata, but `aiBudget` or `allowUnpricedAi` requires business-owner membership; a mixed patch containing either budget-policy field is owner-only. Foreign business access remains uniform 404; no request/response shape or database change |

@@ -450,6 +450,7 @@ async def _execute_inner(
             task.summary or "",
         ),
         json.dumps(dict(RESULT_SCHEMA)),
+        message_count=2,
     )
     bound = pricing.upper_bound_cost(
         provider=provider_name,

@@ -148,19 +148,23 @@ frontend can tell which one is underneath. No decision by code yet.
 - `app/llm/`: `types.py` (requests, structured output, usage, error taxonomy),
   `base.py` (Protocol + `create_provider` factory), `mock.py` (scripted,
   fully offline — the default), `adapters/openai_compat.py` (raw httpx, no
-  vendor SDK; same adapter later covers Azure/OpenRouter/Ollama via base_url),
+  vendor SDK; covers OpenRouter/Ollama-style OpenAI-compatible endpoints via
+  base_url — Azure's native api-key/deployment/query shape needs a gateway or
+  a dedicated adapter),
   `validate.py` (JSON-Schema subset validator — compliance never claimed
   without local validation).
 - Rules: `asyncio.CancelledError` propagates unwrapped and is never retried
   (streams/clients close in `finally`); `json_schema` first with `json_object`
-  fallback; max 2 retries with backoff+jitter for 429/5xx/network only
+  fallback; max 2 retries with backoff+jitter only for safe 429/pre-send
+  network failures; 5xx and post-send transport failures are held ambiguous
   (attempts counted in metadata); provider auth failures use the distinct
   `provider_auth_error` code (contract v1.2), never user `unauthorized`.
 - Secrets: `APP_LLM_API_KEY` → Settings → Authorization header, one use site;
   enforced absent from logs/exceptions by `tests/test_llm_secrets.py`.
 - Configure: `APP_LLM_PROVIDER=mock|openai_compat`, `APP_LLM_API_KEY`,
   `APP_LLM_BASE_URL`, `APP_LLM_MODEL`, `APP_LLM_TIMEOUT_S`,
-  `APP_LLM_MAX_RETRIES`, `APP_LLM_MAX_TOKENS`. No endpoints, no orchestration,
+  `APP_LLM_MAX_RETRIES`, `APP_LLM_MAX_TOKENS`, `APP_LLM_MAX_TOKENS_PARAM`.
+  No endpoints, no orchestration,
   no billing tables, no frontend changes in this stage.
 - Details: `docs/contracts/llm-notes.md`.
 

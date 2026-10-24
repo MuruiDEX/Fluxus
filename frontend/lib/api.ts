@@ -215,6 +215,10 @@ export interface ApiBusiness {
   healthBreakdown: { label: string; score: number }[];
   metrics: Record<string, number>;
   revenueSeries: { label: string; value: number }[];
+  /** Stage 18 S2 (v1.19): business-scoped Team Lead AI budget (0 = no limit). */
+  aiBudget?: Money;
+  /** Stage 18 S2 (v1.19): opt in to best-effort business-scoped AI calls. */
+  allowUnpricedAi?: boolean;
   contract: string;
 }
 

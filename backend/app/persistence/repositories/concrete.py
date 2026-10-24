@@ -32,7 +32,12 @@ from app.persistence.models.pack import PackInstallation, PackInstallationItem
 from app.persistence.models.project import Project
 from app.persistence.models.task import Task, TaskDependency
 from app.persistence.models.user import User
-from app.persistence.repositories.base import BaseRepository, clamp_progress, quantize_money
+from app.persistence.repositories.base import (
+    BaseRepository,
+    clamp_progress,
+    quantize_ai_budget,
+    quantize_money,
+)
 
 
 class BusinessRepository(BaseRepository[Business]):
@@ -52,6 +57,8 @@ class BusinessRepository(BaseRepository[Business]):
         payload["id"] = raw_id if raw_id is not None else business_id or new_id()
         validate_id(payload["id"])
         payload.pop("business_id", None)
+        if payload.get("ai_budget") is not None:
+            payload["ai_budget"] = quantize_ai_budget(payload["ai_budget"])
         obj = self.model(**payload)
         session.add(obj)
         await session.flush()

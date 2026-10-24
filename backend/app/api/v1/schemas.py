@@ -93,6 +93,10 @@ class BusinessResponse(Contracted):
     health_breakdown: list = Field(default_factory=list, alias="healthBreakdown")
     metrics: dict = Field(default_factory=dict)
     revenue_series: list = Field(default_factory=list, alias="revenueSeries")
+    # Stage 18 S2: business-scoped Team Lead budget policy. Additive fields;
+    # wire stays v1.
+    ai_budget: Decimal = Field(default=Decimal("0"), alias="aiBudget")
+    allow_unpriced_ai: bool = Field(default=False, alias="allowUnpricedAi")
 
 
 class ProjectResponse(Contracted):
@@ -295,6 +299,19 @@ class BrainCreate(BaseModel):
     category: str
     title: str = Field(min_length=1, max_length=300)
     body: str = ""
+
+
+class BusinessPatch(BaseModel):
+    """Stage 18 S2: business-scoped AI budget policy.
+
+    Only the fields the business-scoped Team Lead meter consults are writable;
+    all other business columns stay server-owned.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    ai_budget: Decimal | None = Field(default=None, alias="aiBudget")
+    allow_unpriced_ai: bool | None = Field(default=None, alias="allowUnpricedAi")
 
 
 class ProjectPatch(BaseModel):

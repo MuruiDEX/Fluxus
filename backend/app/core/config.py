@@ -39,6 +39,25 @@ class Settings(BaseSettings):
     # Hard cap on completion tokens for every call. Stage 16 turns this into a
     # real request field AND the output bound for guaranteed budget reservations.
     llm_max_tokens: int | None = 1024
+    # Wire field that carries `llm_max_tokens` / `team_lead_max_tokens`.
+    # Most OpenAI-compatible endpoints (gpt-4o-mini, Ollama, typical gateways)
+    # accept `max_tokens`; some newer OpenAI reasoning models reject it and
+    # require `max_completion_tokens`. Only the selected field is sent, and the
+    # value is unchanged, so the budget reservation still prices the same limit.
+    llm_max_tokens_param: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    # Output-token cap for the Team Lead calls (questions / summary / plan /
+    # finalization). It is BOTH the limit sent to the provider AND the output
+    # bound the budget reservation is priced from, so a Team Lead reservation
+    # stays a provable upper bound instead of an assumption.
+    #
+    # Budget impact: one Team Lead call reserves at most
+    #   input_bound*input_rate + team_lead_max_tokens*output_rate
+    # and that hold is released to the settled cost on success. A project whose
+    # remaining `ai_budget` is smaller than that bound is refused with
+    # `budget_exceeded` BEFORE the provider is called (fail closed).
+    # `None` disables the cap entirely: no provable bound exists, so budgeted
+    # projects fail closed with `budget_unpriced` (Stage 18 S1).
+    team_lead_max_tokens: int | None = 2048
 
     # --- Usage accounting & budget enforcement (Stage 16). ---
     # Operator-supplied tariff catalog (JSON array). Empty = no verified prices,
@@ -92,6 +111,15 @@ class Settings(BaseSettings):
         # let any site read authenticated responses if it ever worked.
         if "*" in value:
             raise ValueError('cors_origins must list exact origins, never "*"')
+        return value
+
+    @field_validator("team_lead_max_tokens")
+    @classmethod
+    def _positive_team_lead_cap(cls, value: int | None) -> int | None:
+        # A cap of zero (or negative) would make every Team Lead call
+        # unprovable and silently break the budget reservation bound.
+        if value is not None and value <= 0:
+            raise ValueError("team_lead_max_tokens must be a positive token count or None")
         return value
 
 

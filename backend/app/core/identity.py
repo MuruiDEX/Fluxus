@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class Identity:
     user_id: str
     business_ids: frozenset[str]
+    owner_business_ids: frozenset[str] = frozenset()
 
 
 def _unauthorized() -> HTTPException:
@@ -54,7 +55,11 @@ async def resolve_identity(request: Request) -> Identity:
     assert factory is not None  # checked inside _valid_session_row
     async with factory() as session:
         links = await members.businesses_of(session, row.user_id)
-    return Identity(user_id=row.user_id, business_ids=frozenset(m.business_id for m in links))
+    return Identity(
+        user_id=row.user_id,
+        business_ids=frozenset(m.business_id for m in links),
+        owner_business_ids=frozenset(m.business_id for m in links if m.role == "owner"),
+    )
 
 
 async def _valid_session_row(request: Request):
@@ -103,6 +108,7 @@ async def require_session(request: Request) -> Identity:
     return Identity(
         user_id=row.user_id,
         business_ids=frozenset(m.business_id for m in links),
+        owner_business_ids=frozenset(m.business_id for m in links if m.role == "owner"),
     )
 
 
@@ -134,4 +140,26 @@ async def require_business(request: Request) -> Identity:
     business_id = str(request.path_params.get("business_id", ""))
     if not business_id or business_id not in business_ids:
         raise HTTPException(status_code=404, detail="Business not found in scope.")
-    return Identity(user_id=row.user_id, business_ids=business_ids)
+    return Identity(
+        user_id=row.user_id,
+        business_ids=business_ids,
+        owner_business_ids=frozenset(m.business_id for m in links if m.role == "owner"),
+    )
+
+
+async def require_business_owner(
+    request: Request,
+    identity: Identity = Depends(require_business),  # noqa: B008 - FastAPI idiom
+) -> Identity:
+    """Dependency: membership PLUS the `owner` role in the path business.
+
+    Ordinary members keep access to business-scoped domain operations; only
+    owner-only policy (business AI budget) uses this stricter dependency.
+    Foreign/unknown businesses still produce the uniform 404 from
+    `require_business`; a known business where the caller is only a member
+    produces 403.
+    """
+    business_id = str(request.path_params.get("business_id", ""))
+    if business_id not in identity.owner_business_ids:
+        raise HTTPException(status_code=403, detail="Business owner role required.")
+    return identity

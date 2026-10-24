@@ -22,6 +22,11 @@
       "response": "BusinessResponse"
     },
     {
+      "method": "PATCH",
+      "path": "/api/v1/businesses/{business_id}",
+      "response": "BusinessResponse"
+    },
+    {
       "method": "GET",
       "path": "/api/v1/businesses/{business_id}/activity",
       "response": "ActivityListResponse"
@@ -604,8 +609,31 @@
       },
       "required": []
     },
+    "BusinessPatch": {
+      "properties": {
+        "aiBudget": {
+          "default": null,
+          "nullable": true,
+          "type": "decimal-as-string"
+        },
+        "allowUnpricedAi": {
+          "default": null,
+          "nullable": true,
+          "type": "boolean"
+        }
+      },
+      "required": []
+    },
     "BusinessResponse": {
       "properties": {
+        "aiBudget": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "allowUnpricedAi": {
+          "default": false,
+          "type": "boolean"
+        },
         "contract": {
           "default": "v1",
           "type": "string"

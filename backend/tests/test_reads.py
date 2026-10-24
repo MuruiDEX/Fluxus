@@ -81,10 +81,13 @@ async def test_read_business_ok(session: AsyncSession, api_client: httpx.AsyncCl
             "healthBreakdown",
             "metrics",
             "revenueSeries",
+            "aiBudget",
+            "allowUnpricedAi",
             "contract",
         ]
     )
     assert body["id"] == BIZ and body["contract"] == "v1"
+    assert body["aiBudget"] == "0.00" and body["allowUnpricedAi"] is False
     assert "notes" not in body  # internal-only column never leaves the process
 
 

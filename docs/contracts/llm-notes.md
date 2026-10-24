@@ -17,9 +17,9 @@ properties, items, enum — compliance is never claimed beyond validation).
 | Code | HTTP* | Retry | Meaning |
 |---|---|---|---|
 | `provider_auth_error` | 401/403 from provider | never | OUR server-side credentials rejected — distinct from user `unauthorized` (contract amendment v1.2) |
-| `rate_limited` | 429 | yes | backoff + jitter |
-| `provider_timeout` | — (timer) | yes | full per-attempt timeout |
-| `provider_error` | 5xx / network / other 4xx | 5xx + network only | 4xx (except 429) never retried |
+| `rate_limited` | 429 | yes | provider rejection; backoff + jitter |
+| `provider_timeout` | — (timer) | connect/pool only | post-send timeout is ambiguous and held |
+| `provider_error` | 5xx / network / other 4xx | pre-send network only | 5xx is ambiguous; other 4xx are final |
 | `bad_response` | 200 with bad body | never | non-JSON, missing choices, invalid JSON output, schema violation, malformed/truncated SSE |
 | `configuration_error` | — | never | unknown provider name, missing key for `openai_compat` |
 
@@ -31,11 +31,25 @@ in `finally` blocks.
 
 ## Limits (defaults, all configurable via `APP_LLM_*`)
 
-- max 2 retries (3 attempts max), backoff `min(8, 0.5·2ⁿ)s + U[0, 0.25)s`;
-- per-attempt timeout (default 30s); `attempts` reported in response metadata
-  (a retried generation may have executed provider-side with unknown outcome);
-- `max_tokens` / `temperature` pass-through; usage tokens echoed when the
-  provider reports them; cost only when provider data exists (no billing tables).
+- max 2 retries (3 attempts max) for safe 429 and pre-send network failures,
+  backoff `min(8, 0.5·2ⁿ)s + U[0, 0.25)s`; 5xx and post-send transport
+  failures are not retried because processing or billing may have occurred;
+- per-attempt timeout (default 30s); `attempts` reported in response metadata;
+  ambiguous outcomes retain their budget reservation for reconciliation;
+- output cap / `temperature` pass-through. The cap field is selected by
+  `APP_LLM_MAX_TOKENS_PARAM`: `max_tokens` (default; gpt-4o-mini, Ollama, most
+  compatible gateways) or `max_completion_tokens` (newer OpenAI reasoning
+  models). Exactly one field is sent, with the same value used for the budget
+  reservation. Usage tokens are echoed when the provider reports them; cost
+  only when provider data exists (no billing tables).
+- input-token reservation bound: for supported OpenAI-compatible byte-level
+  BPE tokenizers the estimate uses UTF-8 byte length plus a conservative
+  chat-framing allowance. This is not a tokenizer-independent proof; a gateway
+  with a different tokenizer may still exceed it. Output remains capped by the
+  selected `APP_LLM_MAX_TOKENS_PARAM` field.
+- the adapter sends `Idempotency-Key` only to its configured official OpenAI
+  endpoint. This header is not treated as proof of exactly-once billing and
+  does not permit retrying an ambiguous outcome.
 
 ## Secrets
 

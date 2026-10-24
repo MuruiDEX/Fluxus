@@ -30,6 +30,8 @@ export function toDomainBusiness(b: ApiBusiness): Business {
       leads: b.metrics.leads ?? 0,
     },
     revenueSeries: b.revenueSeries.map((point) => ({ ...point })),
+    aiBudget: parseMoney(b.aiBudget ?? "0"),
+    allowUnpricedAi: b.allowUnpricedAi ?? false,
   };
 }
 

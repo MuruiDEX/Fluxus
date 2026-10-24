@@ -60,8 +60,10 @@ $env:APP_SESSION_COOKIE_SECURE = "true"
 $env:APP_CORS_ORIGINS = '["https://app.example.com"]'
 $env:APP_LLM_PROVIDER = "openai_compat"
 $env:APP_LLM_API_KEY = "<provider key, never committed>"
-$env:APP_LLM_BASE_URL = "https://api.openai.com/v1"   # or Azure/OpenRouter/Ollama
+$env:APP_LLM_BASE_URL = "https://api.openai.com/v1"   # or OpenRouter/Ollama gateway
 $env:APP_LLM_MODEL = "gpt-4o-mini"
+# max_tokens (default) or max_completion_tokens (newer reasoning models)
+$env:APP_LLM_MAX_TOKENS_PARAM = "max_tokens"
 ```
 
 With `APP_ENVIRONMENT=prod` the process refuses to serve unless

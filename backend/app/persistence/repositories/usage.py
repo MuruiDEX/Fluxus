@@ -3,10 +3,11 @@
 Discipline:
 - `UsageRepository.append` is idempotent on `idempotency_key` and exposes NO
   update/delete — the ledger is append-only by construction.
-- `BudgetReservationRepository.reserve` takes the project row lock
-  (`SELECT … FOR UPDATE`) so two workers sharing a project serialize on the
-  budget instead of racing a read-then-write. The caller MUST keep the
-  network call OUTSIDE this transaction.
+- `BudgetReservationRepository.reserve` takes the project row lock, and
+  `reserve_business` takes the business row lock (`SELECT … FOR UPDATE`), so
+  workers sharing a scope serialize on its budget instead of racing a
+  read-then-write. The caller MUST keep the network call OUTSIDE this
+  transaction.
 - `set_status` uses conditional UPDATEs (active → target) so settlement is a
   compare-and-set: exactly one caller settles a reservation.
 """
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.persistence.enums import ReservationStatus
 from app.persistence.exceptions import new_id, validate_id
+from app.persistence.models.business import Business
 from app.persistence.models.project import Project
 from app.persistence.models.usage import BudgetReservation, UsageRecord
 from app.persistence.repositories.base import quantize_money
@@ -221,6 +223,30 @@ class UsageRepository:
         total = (await session.execute(stmt)).scalar_one()
         return quantize_money(total)
 
+    async def business_usage_totals(
+        self, session: AsyncSession, business_id: str
+    ) -> tuple[Decimal, Decimal]:
+        """`(confirmed, estimated)` spend for ALL usage in the business.
+
+        Business-scoped Team Lead calls must see project-linked spend too: the
+        business ceiling is an umbrella over every AI attempt, while project
+        calls keep their existing project-only enforcement.
+        """
+        stmt = (
+            select(
+                UsageRecord.usage_status,
+                func.coalesce(func.sum(UsageRecord.cost_amount), 0),
+            )
+            .where(
+                UsageRecord.business_id == business_id,
+                UsageRecord.usage_status.in_(("confirmed", "estimated")),
+            )
+            .group_by(UsageRecord.usage_status)
+        )
+        rows = (await session.execute(stmt)).all()
+        totals = {str(status): quantize_money(total) for status, total in rows}
+        return totals.get("confirmed", Decimal("0")), totals.get("estimated", Decimal("0"))
+
 
 class BudgetReservationRepository:
     model = BudgetReservation
@@ -247,6 +273,55 @@ class BudgetReservationRepository:
         )
         total = (await session.execute(stmt)).scalar_one()
         return Decimal(str(total))
+
+    async def business_pending_total(
+        self, session: AsyncSession, business_id: str
+    ) -> Decimal:
+        """Active + ambiguous exposure across the whole business.
+
+        This includes project-scoped reservations: the business ceiling is an
+        umbrella over all AI attempts, not just business-scoped ones.
+        """
+        stmt = select(func.coalesce(func.sum(BudgetReservation.amount), 0)).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.status.in_(_PENDING),
+        )
+        total = (await session.execute(stmt)).scalar_one()
+        return Decimal(str(total))
+
+    async def _supersede_attempt(
+        self, session: AsyncSession, business_id: str, attempt_key: str
+    ) -> None:
+        # A prior run of the SAME attempt that never settled (e.g. the process
+        # crashed mid-call) may have reached the provider. Converting its
+        # `active` reservation to `ambiguous` is fail-closed: the exposure
+        # keeps counting, and it is never auto-released. (Different attempt
+        # keys - i.e. genuine retries - keep their own reservations.)
+        await session.execute(
+            update(BudgetReservation)
+            .where(
+                BudgetReservation.business_id == business_id,
+                BudgetReservation.attempt_key == attempt_key,
+                BudgetReservation.status == ReservationStatus.ACTIVE.value,
+            )
+            .values(
+                status=ReservationStatus.AMBIGUOUS.value,
+                reason="superseded_attempt",
+            )
+        )
+
+    async def _next_run_seq(
+        self, session: AsyncSession, business_id: str, attempt_key: str
+    ) -> int:
+        last_seq = (
+            await session.execute(
+                select(func.coalesce(func.max(BudgetReservation.run_seq), 0)).where(
+                    BudgetReservation.business_id == business_id,
+                    BudgetReservation.attempt_key == attempt_key,
+                )
+            )
+        ).scalar_one()
+        return int(last_seq) + 1
 
     async def reserve(
         self,
@@ -280,27 +355,12 @@ class BudgetReservationRepository:
             select(Project)
             .where(Project.business_id == business_id, Project.id == project_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         project = (await session.execute(lock)).scalar_one_or_none()
         if project is None:
             return None
-        # A prior run of the SAME attempt that never settled (e.g. the process
-        # crashed mid-call) may have reached the provider. Converting its
-        # `active` reservation to `ambiguous` is fail-closed: the exposure
-        # keeps counting, and it is never auto-released. (Different attempt
-        # keys — i.e. genuine retries — keep their own reservations.)
-        await session.execute(
-            update(BudgetReservation)
-            .where(
-                BudgetReservation.business_id == business_id,
-                BudgetReservation.attempt_key == attempt_key,
-                BudgetReservation.status == ReservationStatus.ACTIVE.value,
-            )
-            .values(
-                status=ReservationStatus.AMBIGUOUS.value,
-                reason="superseded_attempt",
-            )
-        )
+        await self._supersede_attempt(session, business_id, attempt_key)
         budget = project.ai_budget if project.ai_budget is not None else Decimal("0")
         if budget > 0:
             pending = await self.pending_total(session, business_id, project_id)
@@ -314,20 +374,73 @@ class BudgetReservationRepository:
             )
             if committed + amount > budget:
                 return None
-        last_seq = (
-            await session.execute(
-                select(func.coalesce(func.max(BudgetReservation.run_seq), 0)).where(
-                    BudgetReservation.business_id == business_id,
-                    BudgetReservation.attempt_key == attempt_key,
-                )
-            )
-        ).scalar_one()
-        run_seq = int(last_seq) + 1
+        run_seq = await self._next_run_seq(session, business_id, attempt_key)
         reservation = BudgetReservation(
             id=new_id(),
             business_id=business_id,
             project_id=project_id,
             task_id=task_id,
+            attempt=attempt,
+            attempt_key=attempt_key,
+            run_seq=run_seq,
+            amount=amount,
+            currency=currency,
+            status=ReservationStatus.ACTIVE.value,
+            mode=mode,
+            idempotency_key=f"reserve:{attempt_key}:{run_seq}",
+        )
+        session.add(reservation)
+        await session.flush()
+        return reservation
+
+    async def reserve_business(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        attempt: int = 0,
+        attempt_key: str,
+        amount: Decimal,
+        currency: str = "USD",
+        mode: str = "guaranteed",
+    ) -> BudgetReservation | None:
+        """Reserve against the business ceiling for a business-scoped call.
+
+        Locks the business row so two business-scoped Team Lead calls
+        serialize. The ceiling counts ALL business usage (project-linked and
+        business-scoped confirmed + estimated rows) plus every active/ambiguous
+        reservation, because the business budget is an umbrella over all AI
+        attempts. Project-scoped calls are not refused by this method.
+
+        A NULL/zero business budget means "no limit": the caller chooses not to
+        reserve at all, so this method is only called for a configured budget.
+        """
+        amount = quantize_money(amount)
+        lock = (
+            select(Business)
+            .where(Business.id == business_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        business = (await session.execute(lock)).scalar_one_or_none()
+        if business is None:
+            return None
+        await self._supersede_attempt(session, business_id, attempt_key)
+        budget = business.ai_budget if business.ai_budget is not None else Decimal("0")
+        if budget > 0:
+            confirmed, estimated = await UsageRepository().business_usage_totals(
+                session, business_id
+            )
+            pending = await self.business_pending_total(session, business_id)
+            committed = confirmed + estimated + pending
+            if committed + amount > budget:
+                return None
+        run_seq = await self._next_run_seq(session, business_id, attempt_key)
+        reservation = BudgetReservation(
+            id=new_id(),
+            business_id=business_id,
+            project_id=None,
+            task_id=None,
             attempt=attempt,
             attempt_key=attempt_key,
             run_seq=run_seq,

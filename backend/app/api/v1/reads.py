@@ -78,6 +78,8 @@ def _business_response(business, contract: str) -> BusinessResponse:
         healthBreakdown=business.health_breakdown,
         metrics=business.metrics,
         revenueSeries=business.revenue_series,
+        aiBudget=business.ai_budget,
+        allowUnpricedAi=business.allow_unpriced_ai,
         contract=contract,
     )
 
