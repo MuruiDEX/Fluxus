@@ -238,7 +238,7 @@ async def patch_project(
         if body.budget is not None:
             patch["budget"] = quantize_money(body.budget)
         if body.ai_budget is not None:
-            patch["ai_budget"] = quantize_money(body.ai_budget)
+            patch["ai_budget"] = quantize_ai_budget(body.ai_budget)
     except ValueError as exc:
         raise _invalid_value(exc) from exc
     try:

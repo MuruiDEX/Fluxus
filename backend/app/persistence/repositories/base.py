@@ -44,7 +44,7 @@ def quantize_money(
 
 
 def quantize_ai_budget(value: float | str | Decimal) -> Decimal:
-    """Validate the business AI budget's documented domain.
+    """Validate an AI budget's documented domain (business or project).
 
     Zero means "no limit"; any other configured ceiling is at least one cent
     and fits the NUMERIC(12, 2) column.

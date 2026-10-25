@@ -173,6 +173,100 @@ async def test_usage_details_and_provider_request_id_extracted() -> None:
     assert res.usage.reasoning_tokens == 8
 
 
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {},
+        {"total_tokens": 100},
+        {"prompt_tokens": 10},
+        {"completion_tokens": 5},
+        {"prompt_tokens": -1, "completion_tokens": 2, "total_tokens": 1},
+        {"prompt_tokens": "not-a-number", "completion_tokens": 2, "total_tokens": 2},
+        {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 99},
+    ],
+    ids=[
+        "empty",
+        "total-only",
+        "prompt-only",
+        "completion-only",
+        "negative",
+        "malformed-number",
+        "inconsistent-total",
+    ],
+)
+async def test_unusable_usage_is_not_reported(usage: dict) -> None:
+    """Insufficient usage evidence must not become a confirmed zero-token call."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ok_payload(usage=usage))
+
+    res = await _provider(handler).complete(_req())
+    assert res.usage.reported is False
+    assert (res.usage.prompt_tokens, res.usage.completion_tokens, res.usage.total_tokens) == (
+        0,
+        0,
+        0,
+    )
+
+
+async def test_usage_missing_total_is_computed_and_reported() -> None:
+    """Omission of the optional total remains supported via the sum fallback."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_ok_payload(usage={"prompt_tokens": 3, "completion_tokens": 2}),
+        )
+
+    res = await _provider(handler).complete(_req())
+    assert res.usage.reported is True
+    assert (res.usage.prompt_tokens, res.usage.completion_tokens, res.usage.total_tokens) == (
+        3,
+        2,
+        5,
+    )
+
+
+async def test_numeric_string_usage_is_reported() -> None:
+    """Preserve the numeric-string format accepted by the prior adapter."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_ok_payload(
+                usage={"prompt_tokens": "3", "completion_tokens": "2", "total_tokens": "5"}
+            ),
+        )
+
+    res = await _provider(handler).complete(_req())
+    assert res.usage.reported is True
+    assert (res.usage.prompt_tokens, res.usage.completion_tokens, res.usage.total_tokens) == (
+        3,
+        2,
+        5,
+    )
+
+
+async def test_all_zero_usage_is_reported() -> None:
+    """A genuinely reported all-zero result is valid and remains distinguishable."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_ok_payload(
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            ),
+        )
+
+    res = await _provider(handler).complete(_req())
+    assert res.usage.reported is True
+    assert (res.usage.prompt_tokens, res.usage.completion_tokens, res.usage.total_tokens) == (
+        0,
+        0,
+        0,
+    )
+
+
 async def test_missing_usage_is_reported_false() -> None:
     body = _ok_payload()
     body.pop("usage")

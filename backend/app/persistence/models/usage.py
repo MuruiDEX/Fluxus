@@ -129,7 +129,9 @@ class BudgetReservation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     status: Mapped[str] = mapped_column(String(16), default=ReservationStatus.ACTIVE.value)
     reason: Mapped[str] = mapped_column(String(200), default="")
-    # `guaranteed` (upper bound proven) or `best_effort` (allow_unpriced_ai).
+    # `guaranteed` means a tariff+cap conservative bound existed; it is not a
+    # tokenizer-independent proof. `best_effort` covers allow_unpriced_ai and
+    # zero-budget/unbounded calls.
     mode: Mapped[str] = mapped_column(String(16), default="guaranteed")
     usage_record_id: Mapped[str | None] = mapped_column(String(ID_LEN), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(256))

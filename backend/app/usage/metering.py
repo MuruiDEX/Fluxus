@@ -19,8 +19,8 @@ is NEVER released and NEVER recorded as zero.
 
 Stage 18 (S1): the reserved amount is derived from the output limit the
 provider request ACTUALLY carries (`request.max_tokens`). No cap is ever
-assumed, so an uncapped request yields no provable upper bound and therefore
-no `guaranteed` reservation.
+assumed, so an uncapped request yields no conservative budget bound and
+therefore no `guaranteed` reservation.
 """
 
 import asyncio
@@ -72,6 +72,16 @@ class BudgetExhaustedError(MeteringRefused):
         super().__init__(
             "budget_exceeded",
             "Concurrent calls exhausted the project AI budget; reservation refused.",
+        )
+
+
+class TargetMissingError(MeteringRefused):
+    """The scoped project/business disappeared before reservation."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__(
+            "target_missing",
+            f"{target.capitalize()} target is missing; refusing before the provider call.",
         )
 
 
@@ -131,10 +141,10 @@ class TeamLeadMeter:
         attempt_key = f"tl:{self.brief_id}:{self.call_kind}:g{generation}"
         input_bound = _input_bound(request)
         # The reservation may only price a limit the provider request ACTUALLY
-        # enforces. Never assume a cap: an uncapped request has no provable
-        # upper bound, so it must not produce a `guaranteed` reservation
-        # (Stage 18 S1). `None` -> `upper_bound_cost` returns None -> the
-        # fail-closed branches below apply (budget_unpriced / best_effort).
+        # enforces. Never assume a cap: an uncapped request has no conservative
+        # bound, so it must not produce a `guaranteed` reservation (Stage 18
+        # S1). `None` -> `upper_bound_cost` returns None -> the fail-closed
+        # branches below apply (budget_unpriced / best_effort).
         max_output = request.max_tokens
         reservation_id, reservation_key = await self._reserve(
             provider_name, model_name, input_bound, max_output, attempt_key
@@ -170,6 +180,8 @@ class TeamLeadMeter:
             attempt_key,
             provider_name,
             model_name,
+            input_bound,
+            max_output,
             response,
             generation,
         )
@@ -197,26 +209,26 @@ class TeamLeadMeter:
                     )
                 project = await _projects.get(session, self.business_id, self.project_id)
                 if project is None:
-                    return None, None
+                    raise TargetMissingError("project")
                 # Lock and refresh before choosing a reservation branch: a
                 # concurrent PATCH must not leave us deciding from the
                 # identity-map copy loaded before the lock.
                 await session.refresh(project, with_for_update=True)
                 ai_budget = project.ai_budget if project.ai_budget is not None else 0
                 if bound is not None:
-                    # A tariff AND a real output cap: the bound is proven.
+                    # Tariff + real output cap: a conservative bound exists.
                     amount = bound.cost or Decimal("0")
                     mode = "guaranteed"
                 elif ai_budget > 0 and not project.allow_unpriced_ai:
-                    # Budgeted project without a provable bound -> fail closed
-                    # BEFORE the provider is contacted (Stage 18 S1).
+                    # Budgeted project without a conservative bound -> fail
+                    # closed BEFORE the provider (Stage 18 S1).
                     raise BudgetUnpricedError()
                 elif project.allow_unpriced_ai and ai_budget > 0:
                     amount = quantize_money(self.settings.usage_unpriced_reserve_amount)
                     mode = "best_effort"
                 else:
-                    # No budget to protect and no provable bound: nothing is
-                    # guaranteed, so nothing may be labelled `guaranteed`.
+                    # No budget to protect and no conservative bound: nothing
+                    # is guaranteed, so nothing may be labelled `guaranteed`.
                     amount = Decimal("0")
                     mode = "best_effort"
                 reservation = await _reservations.reserve(
@@ -240,7 +252,7 @@ class TeamLeadMeter:
     ) -> tuple[str | None, str | None]:
         business = await _businesses.get(session, self.business_id, self.business_id)
         if business is None:
-            return None, None
+            raise TargetMissingError("business")
         # The unlocked get above may race a concurrent budget PATCH. Refresh
         # under the row lock so the branch below uses the committed value.
         await session.refresh(business, with_for_update=True)
@@ -274,6 +286,8 @@ class TeamLeadMeter:
         attempt_key: str,
         provider_name: str,
         model_name: str,
+        input_bound: int,
+        max_output: int | None,
         response: LlmResponse,
         generation: int,
     ) -> None:
@@ -293,6 +307,8 @@ class TeamLeadMeter:
                     provider=provider_name,
                     model=model_name,
                     response=response,
+                    input_bound_tokens=input_bound,
+                    max_output_tokens=max_output,
                 )
                 if self.project_id is not None:
                     await recalculate_project_spend(

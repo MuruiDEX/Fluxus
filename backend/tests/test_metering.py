@@ -16,6 +16,7 @@ from app.llm.types import (
     LlmMessage,
     LlmRequest,
     ProviderError,
+    ProviderTimeoutError,
     TransientProviderError,
 )
 from app.persistence.engine import session_factory
@@ -26,6 +27,7 @@ from app.usage import pricing
 from app.usage.metering import (
     BudgetExhaustedError,
     BudgetUnpricedError,
+    TargetMissingError,
     TeamLeadMeter,
 )
 from app.usage.tariffs import Tariff
@@ -94,6 +96,45 @@ async def test_business_scoped_call_appends_bare_confirmed_row(
     assert row.cost_amount == Decimal("0.10")
 
 
+async def test_missing_project_target_fails_before_provider(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+    provider = MockProvider(texts=["should not run"])
+
+    with pytest.raises(TargetMissingError):
+        await _meter(factory, project_id="proj_missing").complete(
+            provider, _request(), generation=0
+        )
+
+    assert provider.calls == []
+    usages, holds = await _rows(session)
+    assert usages == [] and holds == []
+
+
+async def test_missing_business_target_fails_before_provider(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    factory = session_factory(test_engine)
+    provider = MockProvider(texts=["should not run"])
+    meter = TeamLeadMeter(
+        factory,
+        SETTINGS,
+        business_id="biz_missing",
+        brief_id="b1",
+        call_kind="brief_questions",
+    )
+
+    with pytest.raises(TargetMissingError):
+        await meter.complete(provider, _request(), generation=0)
+
+    assert provider.calls == []
+    usages, holds = await _rows(session)
+    assert usages == [] and holds == []
+
+
 async def test_project_scoped_call_reserves_then_settles(
     session: AsyncSession, test_engine: AsyncEngine
 ) -> None:
@@ -143,6 +184,35 @@ async def test_post_send_bad_response_is_estimated_not_released(
     assert holds[0].status == "consumed"
     project = await ProjectRepository().get(session, BIZ, "proj_1")
     assert project is not None and project.ai_spent == Decimal("0")
+
+
+async def test_post_send_bad_response_without_cap_keeps_hold_ambiguous(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await ProjectRepository().update(
+        session,
+        BIZ,
+        "proj_1",
+        {"ai_budget": Decimal("5.00"), "allow_unpriced_ai": True},
+    )
+    await session.commit()
+    factory = session_factory(test_engine)
+
+    with pytest.raises(BadResponseError):
+        await _meter(factory, call_kind="brief_finalize", project_id="proj_1").complete(
+            MockProvider(errors=[BadResponseError("malformed")]),
+            _request(max_tokens=None),
+            generation=0,
+        )
+
+    usages, holds = await _rows(session)
+    # Input-only pricing would silently drop the uncapped output exposure.
+    assert usages == []
+    assert len(holds) == 1
+    assert holds[0].status == "ambiguous"
+    assert holds[0].reason == "post_send_unpriced"
 
 
 async def test_post_send_unpriced_keeps_hold_ambiguous(
@@ -579,7 +649,8 @@ async def test_ambiguous_provider_failure_keeps_hold_without_ledger_row(
         transport=httpx.MockTransport(handler),
     )
 
-    with pytest.raises(ProviderError):
+    expected_error = ProviderError if failure == "server_error" else ProviderTimeoutError
+    with pytest.raises(expected_error):
         await _meter(factory, call_kind="brief_finalize", project_id="proj_1").complete(
             provider, _request(), generation=0
         )
@@ -591,3 +662,71 @@ async def test_ambiguous_provider_failure_keeps_hold_without_ledger_row(
     assert holds[0].status == "ambiguous"
     expected_reason = "provider_error" if failure == "server_error" else "provider_timeout"
     assert holds[0].reason == expected_reason
+
+
+async def test_unusable_usage_is_estimated_and_blocks_next_teamlead_reservation(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """The Team Lead path shares the adapter/settlement bypass and must close it."""
+
+    pricing.register_tariff(
+        Tariff(
+            provider="openai_compat",
+            model="mock",
+            input_per_1k=Decimal("5.00"),
+            output_per_1k=Decimal("10.00"),
+        )
+    )
+    await make_world(session)
+    input_bound = pricing.estimate_input_token_bound("hello", message_count=1)
+    quote = pricing.upper_bound_cost(
+        provider="openai_compat",
+        model="mock",
+        input_token_bound=input_bound,
+        max_output_tokens=64,
+    )
+    assert quote is not None and quote.cost is not None
+    await ProjectRepository().update(session, BIZ, "proj_1", {"ai_budget": quote.cost})
+    await session.commit()
+    factory = session_factory(test_engine)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "id": "empty-usage-1",
+                "model": "mock",
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {},
+            },
+        )
+
+    provider = OpenAICompatProvider(
+        api_key="test-only",
+        default_model="mock",
+        transport=httpx.MockTransport(handler),
+    )
+    await _meter(factory, call_kind="brief_finalize", project_id="proj_1").complete(
+        provider, _request(max_tokens=64), generation=0
+    )
+
+    usages, holds = await _rows(session)
+    assert len(usages) == 1 and len(holds) == 1
+    assert usages[0].usage_status == "estimated"
+    assert usages[0].cost_amount == quote.cost
+    assert holds[0].status == "consumed"
+    assert holds[0].usage_record_id == usages[0].id
+    project = await ProjectRepository().get(session, BIZ, "proj_1")
+    assert project is not None and project.ai_spent == Decimal("0")
+
+    with pytest.raises(BudgetExhaustedError):
+        await _meter(factory, call_kind="brief_finalize", project_id="proj_1").complete(
+            provider, _request(max_tokens=64), generation=1
+        )
+
+    assert calls == 1
+    usages, holds = await _rows(session)
+    assert len(usages) == 1 and len(holds) == 1

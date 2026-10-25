@@ -353,6 +353,46 @@ async def test_project_patch_negative_budget(
     assert res.status_code == 422, res.text
 
 
+async def test_project_patch_ai_budget_boundaries(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    headers = await _authed(session, api_client)
+
+    zero = await api_client.patch(_project_url(), json={"aiBudget": "0"}, headers=headers)
+    assert zero.status_code == 200, zero.text
+    assert Decimal(zero.json()["aiBudget"]) == 0
+
+    sub_cent = await api_client.patch(
+        _project_url(), json={"aiBudget": "0.004"}, headers=headers
+    )
+    assert sub_cent.status_code == 422, sub_cent.text
+    assert sub_cent.json()["error"]["code"] == "validation_error"
+
+    rounded_up = await api_client.patch(
+        _project_url(), json={"aiBudget": "0.005"}, headers=headers
+    )
+    assert rounded_up.status_code == 200, rounded_up.text
+    assert Decimal(rounded_up.json()["aiBudget"]) == Decimal("0.01")
+
+    maximum = await api_client.patch(
+        _project_url(), json={"aiBudget": "9999999999.99"}, headers=headers
+    )
+    assert maximum.status_code == 200, maximum.text
+    assert Decimal(maximum.json()["aiBudget"]) == Decimal("9999999999.99")
+
+    above = await api_client.patch(
+        _project_url(), json={"aiBudget": "10000000000.00"}, headers=headers
+    )
+    assert above.status_code == 422, above.text
+    assert above.json()["error"]["code"] == "validation_error"
+
+    extreme = await api_client.patch(
+        _project_url(), json={"aiBudget": "1e1000000"}, headers=headers
+    )
+    assert extreme.status_code == 422, extreme.text
+    assert extreme.json()["error"]["code"] == "validation_error"
+
+
 async def test_project_patch_missing_and_foreign(
     session: AsyncSession, api_client: httpx.AsyncClient
 ) -> None:

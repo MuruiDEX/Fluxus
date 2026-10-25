@@ -12,8 +12,9 @@ Hard rules enforced here:
   It is never logged, never interpolated into messages, and never echoed
   in error details.
 - Retries: at most `max_retries` (default 2 → 3 attempts total), exponential
-  backoff with jitter, only for 429 / 5xx / network failures. Never for
-  401/403/other 4xx. Each attempt carries the full timeout.
+  backoff with jitter, only for 429 and pre-send network failures. A 5xx or
+  post-send transport failure is ambiguous/possibly billed and is NOT retried.
+  Never for 401/403/other 4xx. Each attempt carries the full timeout.
 - Structured output: `json_schema` mode first (when a schema is provided),
   `json_object` fallback + mandatory local parse-and-validate in both cases.
 """
@@ -109,16 +110,27 @@ def _extract_text(payload: Any) -> str:
         raise BadResponseError(f"Response has no usable message content: {exc}") from exc
 
 
+def _nonnegative_count(value: Any) -> int | None:
+    """Parse a provider token count, or None when it is not usable evidence."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # A JSON float such as 3.5 is not a token count; integer-valued floats are
+    # accepted because some compatible gateways serialise counts that way.
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    if count < 0:
+        return None
+    return count
+
+
 def _details_count(node: Any, key: str) -> int | None:
     if not isinstance(node, dict):
         return None
-    value = node.get(key)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    return _nonnegative_count(node.get(key))
 
 
 def _extract_usage(payload: dict[str, Any]) -> LlmUsage:
@@ -127,12 +139,28 @@ def _extract_usage(payload: dict[str, Any]) -> LlmUsage:
         # No usage object at all: reported stays False so the cost path can
         # classify the call as `estimated`/`unknown` rather than pretend 0.
         return LlmUsage()
-    try:
-        prompt = int(usage.get("prompt_tokens", 0))
-        completion = int(usage.get("completion_tokens", 0))
-        total = int(usage.get("total_tokens", prompt + completion))
-    except (TypeError, ValueError):
+
+    # An OpenAI-compatible usage object must carry both token counts. Missing
+    # keys are not zero evidence: an empty or total-only object must fall back
+    # to the conservative reservation path instead of becoming a confirmed $0.
+    if "prompt_tokens" not in usage or "completion_tokens" not in usage:
         return LlmUsage()
+    prompt = _nonnegative_count(usage.get("prompt_tokens"))
+    completion = _nonnegative_count(usage.get("completion_tokens"))
+    if prompt is None or completion is None:
+        return LlmUsage()
+
+    expected_total = prompt + completion
+    if "total_tokens" in usage:
+        total = _nonnegative_count(usage.get("total_tokens"))
+        # The OpenAI-compatible contract makes total_tokens the sum of the
+        # two counts. A contradictory total is not trustworthy usage evidence;
+        # an omitted total remains supported via the computed fallback.
+        if total is None or total != expected_total:
+            return LlmUsage()
+    else:
+        total = expected_total
+
     return LlmUsage(
         prompt_tokens=prompt,
         completion_tokens=completion,
@@ -296,7 +324,8 @@ class OpenAICompatProvider:
             raise self._classify_transport_error(exc) from exc
         if 200 <= response.status_code < 300:
             return response
-        # Auth + other 4xx are final; 429/5xx are retryable (flag on the error).
+        # Auth + other 4xx are final. 429 is retryable; 5xx is ambiguous and
+        # explicitly marked non-retryable by `_error_for_status`.
         raise _error_for_status(response.status_code)
 
     async def _with_retries(

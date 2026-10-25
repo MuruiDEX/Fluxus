@@ -3,17 +3,20 @@
 Rules (contract amendment v1.17):
 - Provider-reported cost is authoritative and always `confirmed`.
 - Locally computed cost is `confirmed` only when the provider actually
-  reported usage; when usage is missing it is `estimated` (never confirmed).
+  reported usage. Missing usage is `estimated` only when the caller supplies
+  real token evidence; with no evidence it is `unknown` (never zero).
 - With no tariff the cost is `unknown` with `cost` = None — never 0.
-- The guaranteed budget upper bound exists only with a known tariff AND a
-  capped output; otherwise callers must fall back to fail-closed/opt-in.
+- A conservative budget bound exists only with a known tariff AND a capped
+  output; otherwise callers must fall back to fail-closed/opt-in. It is an
+  estimate under the configured provider/tokenizer assumptions, not a
+  tokenizer-independent mathematical guarantee.
 
 The catalog is process-global (see tariffs.py) and empty by default. Tests and
 operators register entries explicitly, so no price is ever fabricated.
 """
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from app.usage.tariffs import Tariff, TariffError, parse_tariffs_json
 
@@ -28,6 +31,12 @@ CHAT_FRAMING_TOKENS_PER_MESSAGE = 8
 
 def _q(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _ceil(value: Decimal) -> Decimal:
+    # Reservations must never round DOWN below the computed bound at cent
+    # granularity. Actual ledger costs still use half-up (`_q`).
+    return value.quantize(CENT, rounding=ROUND_CEILING)
 
 
 class TariffRegistry:
@@ -108,7 +117,13 @@ def price_usage(
     usage_reported: bool,
     provider_cost: Decimal | None = None,
 ) -> CostQuote:
-    """Price one accounted call. Provider cost wins; otherwise the tariff."""
+    """Price one accounted call. Provider cost wins; otherwise the tariff.
+
+    An unreported usage object with no token evidence (both counts zero) is
+    `unknown`, not an estimated zero: the adapter's zero defaults do not prove
+    that the provider charged nothing. Callers that have a real token bound
+    must price that bound explicitly instead.
+    """
     if provider_cost is not None:
         return CostQuote(
             status="confirmed",
@@ -117,6 +132,12 @@ def price_usage(
             tariff_version=None,
             currency="USD",
         )
+    if (
+        not usage_reported
+        and max(0, int(prompt_tokens or 0)) == 0
+        and max(0, int(completion_tokens or 0)) == 0
+    ):
+        return CostQuote("unknown", None, "unknown", None, "USD")
     tariff = resolve_tariff(provider, model)
     if tariff is None:
         return CostQuote("unknown", None, "unknown", None, "USD")
@@ -137,20 +158,29 @@ def upper_bound_cost(
     input_token_bound: int,
     max_output_tokens: int | None,
 ) -> CostQuote | None:
-    """Conservative maximum cost for a call, or None when no bound is available.
+    """Conservative cost estimate for a call, or None when no bound exists.
 
-    Requires a known tariff AND a capped output (max_output_tokens set). The
-    input bound must be a conservative upper bound on prompt tokens for the
-    configured provider's tokenizer.
+    Requires a known tariff AND a positive capped output. The input bound must
+    be a conservative upper bound on prompt tokens for the configured
+    provider's tokenizer. The highest applicable input tariff is used, because
+    a cached-input tariff can be more expensive than the normal input tariff.
+    The result is an `estimated` quote rounded UP to cents; this is a
+    conservative bound under the configured assumptions, not a proof that the
+    provider's tokenizer or billing rules can never exceed it.
     """
     tariff = resolve_tariff(provider, model)
-    if tariff is None or max_output_tokens is None:
+    if tariff is None or max_output_tokens is None or int(max_output_tokens) <= 0:
         return None
+    input_rate = tariff.input_per_1k
+    if tariff.cached_input_per_1k is not None:
+        input_rate = max(input_rate, tariff.cached_input_per_1k)
     total = (
-        max(0, int(input_token_bound)) * tariff.input_per_1k
+        max(0, int(input_token_bound)) * input_rate
         + max(0, int(max_output_tokens)) * tariff.output_per_1k
     )
-    return CostQuote("confirmed", _q(total / _PER_1K), "tariff", tariff.version, tariff.currency)
+    return CostQuote(
+        "estimated", _ceil(total / _PER_1K), "tariff", tariff.version, tariff.currency
+    )
 
 
 def estimate_input_token_bound(*parts: str, message_count: int = 0) -> int:

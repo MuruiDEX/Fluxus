@@ -34,10 +34,12 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     llm_timeout_s: float = 30.0
-    # Retries of idempotent-safe failures (429/5xx/network). Attempts total = 1 + max.
+    # Retries of idempotent-safe failures (429 and pre-send network failures).
+    # 5xx responses are treated as ambiguous/possibly billed and are NOT
+    # retried. Attempts total = 1 + max.
     llm_max_retries: int = 2
     # Hard cap on completion tokens for every call. Stage 16 turns this into a
-    # real request field AND the output bound for guaranteed budget reservations.
+    # real request field AND the output bound for conservative budget holds.
     llm_max_tokens: int | None = 1024
     # Wire field that carries `llm_max_tokens` / `team_lead_max_tokens`.
     # Most OpenAI-compatible endpoints (gpt-4o-mini, Ollama, typical gateways)
@@ -48,15 +50,16 @@ class Settings(BaseSettings):
     # Output-token cap for the Team Lead calls (questions / summary / plan /
     # finalization). It is BOTH the limit sent to the provider AND the output
     # bound the budget reservation is priced from, so a Team Lead reservation
-    # stays a provable upper bound instead of an assumption.
+    # uses a conservative bound (under provider/tokenizer assumptions) rather
+    # than an unstated assumption.
     #
     # Budget impact: one Team Lead call reserves at most
     #   input_bound*input_rate + team_lead_max_tokens*output_rate
     # and that hold is released to the settled cost on success. A project whose
     # remaining `ai_budget` is smaller than that bound is refused with
     # `budget_exceeded` BEFORE the provider is called (fail closed).
-    # `None` disables the cap entirely: no provable bound exists, so budgeted
-    # projects fail closed with `budget_unpriced` (Stage 18 S1).
+    # `None` disables the cap entirely: no conservative bound exists, so
+    # budgeted projects fail closed with `budget_unpriced` (Stage 18 S1).
     team_lead_max_tokens: int | None = 2048
 
     # --- Usage accounting & budget enforcement (Stage 16). ---
@@ -111,6 +114,15 @@ class Settings(BaseSettings):
         # let any site read authenticated responses if it ever worked.
         if "*" in value:
             raise ValueError('cors_origins must list exact origins, never "*"')
+        return value
+
+    @field_validator("llm_max_tokens")
+    @classmethod
+    def _positive_executor_cap(cls, value: int | None) -> int | None:
+        # Zero/negative would be sent on the wire while the pricing bound
+        # clamped output to zero, silently under-reserving the call.
+        if value is not None and value <= 0:
+            raise ValueError("llm_max_tokens must be a positive token count or None")
         return value
 
     @field_validator("team_lead_max_tokens")

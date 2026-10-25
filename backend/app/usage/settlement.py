@@ -36,8 +36,35 @@ _usage = UsageRepository()
 _reservations = BudgetReservationRepository()
 
 
+def _has_usable_reported_usage(usage: LlmUsage) -> bool:
+    """Return whether `reported=True` carries trustworthy token evidence.
+
+    The adapter validates malformed usage, but this second check protects the
+    settlement boundary from other providers or future adapter regressions.
+    A genuine all-zero report stays valid: zero tokens are a legitimate report,
+    unlike an empty/partial object that the adapter has already marked
+    unreported. Provider cost, when present, remains authoritative.
+    """
+    if not usage.reported:
+        return False
+    if usage.cost_estimate is not None:
+        return True
+    if (
+        usage.prompt_tokens < 0
+        or usage.completion_tokens < 0
+        or usage.total_tokens < 0
+    ):
+        return False
+    return usage.total_tokens == usage.prompt_tokens + usage.completion_tokens
+
+
 def price_response(provider: str, model: str, response: LlmResponse) -> pricing.CostQuote:
     usage = response.usage
+    if usage.reported and not _has_usable_reported_usage(usage):
+        # Do not turn a contradictory reported usage object into confirmed
+        # spend. settlement re-prices this as a conservative estimate when a
+        # bound is available, or keeps the hold ambiguous otherwise.
+        return pricing.CostQuote("unknown", None, "unknown", None, "USD")
     return pricing.price_usage(
         provider=provider,
         model=model,
@@ -47,6 +74,52 @@ def price_response(provider: str, model: str, response: LlmResponse) -> pricing.
         usage_reported=usage.reported,
         provider_cost=usage.cost_estimate,
     )
+
+
+def _conservative_success_usage(
+    provider: str,
+    model: str,
+    response: LlmResponse,
+    *,
+    input_bound_tokens: int | None,
+    max_output_tokens: int | None,
+) -> tuple[LlmUsage, pricing.CostQuote] | None:
+    """Price a successful call whose usage evidence is missing/unusable.
+
+    The adapter's zero defaults are NOT evidence that the call was free. When
+    the caller supplied the same token bound used for the reservation, record
+    that bound as `estimated` and settle the hold. Without a usable tariff and
+    positive output cap, return None so the caller keeps the hold ambiguous.
+    """
+    if _has_usable_reported_usage(response.usage):
+        return None
+    if input_bound_tokens is None or max_output_tokens is None:
+        return None
+    prompt_tokens = max(
+        0,
+        int(input_bound_tokens),
+        int(response.usage.prompt_tokens or 0),
+    )
+    completion_tokens = max(
+        0,
+        int(max_output_tokens),
+        int(response.usage.completion_tokens or 0),
+    )
+    quote = pricing.upper_bound_cost(
+        provider=provider,
+        model=model,
+        input_token_bound=prompt_tokens,
+        max_output_tokens=completion_tokens,
+    )
+    if quote is None:
+        return None
+    usage = LlmUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        reported=False,
+    )
+    return usage, quote
 
 
 async def _append_row(
@@ -111,9 +184,17 @@ async def record_success(
     provider: str,
     model: str,
     response: LlmResponse,
+    input_bound_tokens: int | None = None,
+    max_output_tokens: int | None = None,
     occurred_at: datetime | None = None,
 ) -> tuple[Any, bool]:
-    """Append the canonical ledger row and settle the reservation to consumed.
+    """Append the canonical ledger row and settle the reservation.
+
+    Missing/malformed provider usage is never recorded as a confirmed or
+    estimated zero. When the caller supplied the same bound used to reserve,
+    the row is `estimated` from that conservative bound and the hold settles.
+    When no usable bound exists, the row is `unknown` and any active hold is
+    kept `ambiguous` (the provider answered and may have billed).
 
     `reservation_id` is optional (Stage 16.1): business-scoped Team Lead calls
     with no configured business budget append a bare ledger row. `task_id` is
@@ -121,6 +202,28 @@ async def record_success(
     recomputes project spend when the row is project-scoped).
     """
     quote = price_response(provider, model, response)
+    usage = response.usage
+    keep_hold = False
+    if usage.cost_estimate is None and not _has_usable_reported_usage(usage):
+        conservative = _conservative_success_usage(
+            provider,
+            model,
+            response,
+            input_bound_tokens=input_bound_tokens,
+            max_output_tokens=max_output_tokens,
+        )
+        if conservative is None:
+            quote = pricing.CostQuote("unknown", None, "unknown", None, "USD")
+            keep_hold = reservation_id is not None
+        else:
+            usage, quote = conservative
+            # A zero estimate must not consume a nonzero hold: keep the hold
+            # counted as unresolved exposure instead.
+            keep_hold = (
+                reservation_id is not None
+                and quote.cost is not None
+                and quote.cost == 0
+            )
     key = reservation_key or attempt_key
     record = await _append_row(
         session,
@@ -135,20 +238,25 @@ async def record_success(
         provider=provider,
         model=model,
         provider_request_id=response.provider_request_id,
-        usage=response.usage,
+        usage=usage,
         quote=quote,
         occurred_at=occurred_at,
     )
     won = False
     if reservation_id is not None:
-        won = await _reservations.set_status(
-            session,
-            business_id,
-            reservation_id,
-            from_statuses=("active",),
-            to_status="consumed",
-            usage_record_id=record.id,
-        )
+        if keep_hold:
+            won = await mark_ambiguous(
+                session, business_id, reservation_id, "post_send_unpriced"
+            )
+        else:
+            won = await _reservations.set_status(
+                session,
+                business_id,
+                reservation_id,
+                from_statuses=("active",),
+                to_status="consumed",
+                usage_record_id=record.id,
+            )
     # Ledger-derived task cost; idempotent (SUM, never increment).
     if task_id is not None:
         await recalculate_task_cost(session, business_id, task_id)
@@ -179,7 +287,7 @@ async def record_estimated_failure(
     released as if free. Cost is:
     - `estimated` from the versioned tariff applied to a defensible token bound
       (the caller's input-token upper bound + capped output), when a tariff is
-      known — never `confirmed`;
+      known AND a positive output cap exists - never `confirmed`;
     - otherwise the hold is kept `ambiguous` when a reservation exists (the
       financial outcome cannot be established), or an `unknown` row is appended
       for a reservation-less call (no configured business budget) so the
@@ -187,21 +295,24 @@ async def record_estimated_failure(
 
     Returns `(record_or_None, reservation_settled, status)`.
     """
+    prompt_tokens = max(0, int(input_bound_tokens))
+    completion_tokens = max(0, int(max_output_tokens or 0))
     usage = LlmUsage(
-        prompt_tokens=max(0, int(input_bound_tokens)),
-        completion_tokens=max(0, int(max_output_tokens or 0)),
-        total_tokens=max(0, int(input_bound_tokens)) + max(0, int(max_output_tokens or 0)),
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
         reported=False,
     )
-    quote = pricing.price_usage(
+    # Only a tariff PLUS a positive output cap yields a defensible post-send
+    # estimate. Estimating input alone would silently drop the output exposure.
+    quote = pricing.upper_bound_cost(
         provider=provider,
         model=model,
-        prompt_tokens=usage.prompt_tokens,
-        completion_tokens=usage.completion_tokens,
-        cached_tokens=None,
-        usage_reported=False,
-        provider_cost=None,
+        input_token_bound=prompt_tokens,
+        max_output_tokens=completion_tokens,
     )
+    if quote is None:
+        quote = pricing.CostQuote("unknown", None, "unknown", None, "USD")
     key = reservation_key or attempt_key
     if quote.status == "unknown" and reservation_id is not None:
         # Cannot price it and a hold exists: fail closed, keep exposure counted.

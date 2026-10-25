@@ -144,6 +144,15 @@ def test_config_allows_none_cap_but_rejects_non_positive_values() -> None:
         Settings(team_lead_max_tokens=-1)
 
 
+def test_config_validates_executor_output_cap() -> None:
+    assert Settings(llm_max_tokens=1024).llm_max_tokens == 1024
+    assert Settings(llm_max_tokens=None).llm_max_tokens is None
+    with pytest.raises(ValidationError):
+        Settings(llm_max_tokens=0)
+    with pytest.raises(ValidationError):
+        Settings(llm_max_tokens=-1)
+
+
 def test_config_selects_supported_output_limit_field() -> None:
     assert Settings().llm_max_tokens_param == "max_tokens"
     assert (

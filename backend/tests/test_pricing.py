@@ -61,7 +61,7 @@ def test_tariff_reported_usage_is_confirmed_with_exact_cost() -> None:
     assert quote.tariff_version == "test-1"
 
 
-def test_tariff_missing_usage_is_estimated_not_confirmed() -> None:
+def test_tariff_missing_usage_without_token_evidence_is_unknown_not_zero() -> None:
     pricing.register_tariff(T)
     quote = pricing.price_usage(
         provider="acme",
@@ -70,8 +70,22 @@ def test_tariff_missing_usage_is_estimated_not_confirmed() -> None:
         completion_tokens=0,
         usage_reported=False,
     )
+    # The adapter's zero defaults are missing data, not proof of a free call.
+    assert quote.status == "unknown"
+    assert quote.cost is None
+
+
+def test_tariff_estimated_token_bound_is_estimated_not_confirmed() -> None:
+    pricing.register_tariff(T)
+    quote = pricing.price_usage(
+        provider="acme",
+        model="acme-1",
+        prompt_tokens=1000,
+        completion_tokens=500,
+        usage_reported=False,
+    )
     assert quote.status == "estimated"
-    assert quote.cost == Decimal("0.00")
+    assert quote.cost == Decimal("2.00")
 
 
 def test_cached_tokens_bill_at_cached_rate() -> None:
@@ -146,12 +160,42 @@ def test_upper_bound_requires_tariff_and_output_cap() -> None:
         )
         is None
     )
+    assert (
+        pricing.upper_bound_cost(
+            provider="acme", model="acme-1", input_token_bound=1000, max_output_tokens=0
+        )
+        is None
+    )
     quote = pricing.upper_bound_cost(
         provider="acme", model="acme-1", input_token_bound=1000, max_output_tokens=500
     )
     assert quote is not None
     # 1000/1000*1 + 500/1000*2 = 2.00
+    assert quote.status == "estimated"
     assert quote.cost == Decimal("2.00")
+
+
+def test_upper_bound_uses_highest_input_tariff_and_rounds_up() -> None:
+    pricing.register_tariff(
+        Tariff(
+            provider="acme",
+            model="cached-expensive",
+            input_per_1k=Decimal("1.00"),
+            output_per_1k=Decimal("1.00"),
+            cached_input_per_1k=Decimal("3.00"),
+            version="cached-high",
+        )
+    )
+    quote = pricing.upper_bound_cost(
+        provider="acme",
+        model="cached-expensive",
+        input_token_bound=1,
+        max_output_tokens=1,
+    )
+    # Highest input rate 3.00 + output 1.00 = 0.004 -> ceil to 0.01.
+    assert quote is not None
+    assert quote.status == "estimated"
+    assert quote.cost == Decimal("0.01")
 
 
 def test_estimate_input_bound_is_utf8_byte_count() -> None:

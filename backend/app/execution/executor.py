@@ -131,6 +131,41 @@ class _BudgetRaceLost(Exception):
     """Reservation lost the budget race; the surrounding txn must roll back."""
 
 
+class _BudgetPolicyRefused(Exception):
+    """Current (locked) project policy refuses the call before the provider."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _project_reservation_policy(
+    project: Project,
+    bound: pricing.CostQuote | None,
+    settings: Settings,
+) -> tuple[Decimal, str]:
+    """Choose amount/mode from the CURRENT project row, under its lock.
+
+    A stale context snapshot must never decide that an unbudgeted project gets
+    a zero-sized `guaranteed` hold after a concurrent PATCH activates a budget.
+    """
+    ai_budget = project.ai_budget if project.ai_budget is not None else Decimal("0")
+    if bound is not None and bound.cost is not None:
+        return bound.cost, "guaranteed"
+    if ai_budget > 0 and not project.allow_unpriced_ai:
+        raise _BudgetPolicyRefused(
+            "budget_unpriced",
+            "Project has an AI budget but this model has no priceable tariff; "
+            "set a tariff or enable allow_unpriced_ai.",
+        )
+    if project.allow_unpriced_ai and ai_budget > 0:
+        # best_effort: internal reserve only, NOT a proven maximum.
+        return quantize_money(settings.usage_unpriced_reserve_amount), "best_effort"
+    # No budget to protect and no bound: nothing is guaranteed.
+    return Decimal("0"), "best_effort"
+
+
 _tasks = TaskRepository()
 _agents = AgentRepository()
 _projects = ProjectRepository()
@@ -431,15 +466,16 @@ async def _execute_inner(
                 "approval_required",
                 f"Approval gate '{gate.title}' is {gate.status}; human approval required.",
             )
+    # Fast-path refusal for an already-exhausted snapshot. The authoritative
+    # budget/opt-in decision is still made later under the project row lock;
+    # this snapshot must not decide reservation size or mode (Stage 18 C3).
     ai_budget = project.ai_budget if project.ai_budget is not None else 0
     if ai_budget > 0 and (project.ai_spent or 0) >= ai_budget:
         return await _refuse(
             "budget_exceeded",
             f"Project AI budget exhausted ({project.ai_spent}/{ai_budget}).",
         )
-    # Guaranteed mode requires a PROVABLE cost upper bound: a known tariff AND a
-    # capped output. Without one, strict projects fail closed (`budget_unpriced`
-    # at the API); an explicit per-project opt-in downgrades to best-effort.
+    # A conservative bound requires a known tariff AND a capped output.
     input_bound = pricing.estimate_input_token_bound(
         build_system_prompt(agent.role, list(agent.responsibilities or [])),
         build_user_prompt(
@@ -458,22 +494,6 @@ async def _execute_inner(
         input_token_bound=input_bound,
         max_output_tokens=settings.llm_max_tokens,
     )
-    if bound is not None:
-        reserve_amount = bound.cost
-        reserve_mode = "guaranteed"
-    elif ai_budget > 0 and not project.allow_unpriced_ai:
-        return await _refuse(
-            "budget_unpriced",
-            "Project has an AI budget but this model has no priceable tariff; "
-            "set a tariff or enable allow_unpriced_ai.",
-        )
-    elif project.allow_unpriced_ai and ai_budget > 0:
-        # best_effort: internal reserve only, NOT a proven maximum.
-        reserve_amount = quantize_money(settings.usage_unpriced_reserve_amount)
-        reserve_mode = "best_effort"
-    else:
-        reserve_amount = None
-        reserve_mode = "guaranteed"
 
     # ---- Phase 2: atomic claim, committed BEFORE any network call ----
     # Snapshot every value later phases need (plain data, no ORM state):
@@ -511,6 +531,26 @@ async def _execute_inner(
                 to_status=TaskStatus.WORKING.value,
             )
             if claimed:
+                # Re-read under the same project lock used by `reserve`.
+                # A PATCH that landed after Phase 0 must be reflected in the
+                # amount/mode decision, otherwise a zero hold could bypass a
+                # newly activated budget (Stage 18 C3).
+                locked_project = (
+                    await session.execute(
+                        select(Project)
+                        .where(
+                            Project.business_id == business_id,
+                            Project.id == project_id,
+                        )
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
+                if locked_project is None:
+                    raise _BudgetRaceLost()
+                reserve_amount, reserve_mode = _project_reservation_policy(
+                    locked_project, bound, settings
+                )
                 reservation = await _budget_reservations.reserve(
                     session,
                     business_id,
@@ -518,13 +558,22 @@ async def _execute_inner(
                     task_id=task_id,
                     attempt=pre_attempts,
                     attempt_key=attempt_key,
-                    amount=reserve_amount if reserve_amount is not None else Decimal("0"),
+                    amount=reserve_amount,
                     mode=reserve_mode,
                 )
                 if reservation is None:
                     raise _BudgetRaceLost()
                 reservation_id = reservation.id
                 reservation_key = reservation.idempotency_key
+    except _BudgetPolicyRefused as exc:
+        return ExecutionResult(
+            outcome="refused",
+            task_id=task_id,
+            status=pre_status,
+            attempts=pre_attempts,
+            error_code=exc.code,
+            error_message=exc.message,
+        )
     except _BudgetRaceLost:
         return ExecutionResult(
             outcome="refused",
@@ -709,6 +758,8 @@ async def _execute_inner(
                     provider=provider_name,
                     model=model_name,
                     response=response,
+                    input_bound_tokens=input_bound,
+                    max_output_tokens=settings.llm_max_tokens,
                 )
             await recalculate_project_spend(session, business_id, project_id)
     except asyncio.CancelledError:

@@ -212,6 +212,53 @@ class UsageRepository:
         total = (await session.execute(stmt)).scalar_one()
         return quantize_money(total)
 
+    async def estimated_total(
+        self, session: AsyncSession, business_id: str, project_id: str
+    ) -> Decimal:
+        """All estimated project-scoped exposure, task-linked or task-less.
+
+        Confirmed task-linked cost lives in `Task.cost_accrued`/`ai_spent`, but
+        an estimated task-linked row is deliberately excluded from those
+        confirmed-only aggregates. It must still consume budget headroom.
+        """
+        stmt = select(func.coalesce(func.sum(UsageRecord.cost_amount), 0)).where(
+            UsageRecord.business_id == business_id,
+            UsageRecord.project_id == project_id,
+            UsageRecord.usage_status == "estimated",
+        )
+        total = (await session.execute(stmt)).scalar_one()
+        return quantize_money(total)
+
+    async def unknown_consumed_reservation_total(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        project_id: str | None = None,
+    ) -> Decimal:
+        """Consumed holds linked to an `unknown` usage row.
+
+        An unknown row has no dollar cost, but the reservation amount is the
+        only auditable exposure left after the provider answered without a
+        usable price. It is disjoint from:
+        - `estimated` rows (counted by their ledger cost, not their hold), and
+        - active/ambiguous holds (counted by `pending_total`).
+        """
+        stmt = (
+            select(func.coalesce(func.sum(BudgetReservation.amount), 0))
+            .join(UsageRecord, UsageRecord.id == BudgetReservation.usage_record_id)
+            .where(
+                BudgetReservation.business_id == business_id,
+                BudgetReservation.status == "consumed",
+                UsageRecord.business_id == business_id,
+                UsageRecord.usage_status == "unknown",
+            )
+        )
+        if project_id is not None:
+            stmt = stmt.where(BudgetReservation.project_id == project_id)
+        total = (await session.execute(stmt)).scalar_one()
+        return quantize_money(total)
+
     async def confirmed_cost_for_task(
         self, session: AsyncSession, business_id: str, task_id: str
     ) -> Decimal:
@@ -338,9 +385,10 @@ class BudgetReservationRepository:
     ) -> BudgetReservation | None:
         """Reserve against the project's `ai_budget`, atomically.
 
-        Locks the project row, sums confirmed spend + task-less estimated
-        exposure + pending reservations, and inserts an `active` reservation
-        iff the budget ceiling still holds. Returns None when the reservation
+        Locks the project row, sums confirmed spend + estimated exposure +
+        consumed unknown-price holds + pending reservations, and inserts an
+        `active` reservation iff the budget ceiling still holds. Returns None
+        when the reservation
         would breach the ceiling (caller aborts the whole surrounding
         transaction, including any task claim). A `budget`/`ai_budget` of 0 or
         NULL means "no limit": still reserve, so exposure stays visible, but
@@ -364,13 +412,22 @@ class BudgetReservationRepository:
         budget = project.ai_budget if project.ai_budget is not None else Decimal("0")
         if budget > 0:
             pending = await self.pending_total(session, business_id, project_id)
-            # Task-less estimated usage is real exposure not captured by
-            # ai_spent (which counts confirmed only): count it fail-closed.
-            taskless_estimated = await UsageRepository().taskless_estimated_total(
+            usage_repo = UsageRepository()
+            # Estimated task-linked and task-less rows are real exposure not
+            # captured by ai_spent (which counts confirmed only). A consumed
+            # hold linked to an `unknown` row also remains counted: otherwise
+            # the provider's unpriced call would vanish from the ceiling.
+            estimated = await usage_repo.estimated_total(
                 session, business_id, project_id
             )
+            unknown_holds = await usage_repo.unknown_consumed_reservation_total(
+                session, business_id, project_id=project_id
+            )
             committed = (
-                Decimal(str(project.ai_spent or 0)) + taskless_estimated + pending
+                Decimal(str(project.ai_spent or 0))
+                + estimated
+                + unknown_holds
+                + pending
             )
             if committed + amount > budget:
                 return None
@@ -408,9 +465,10 @@ class BudgetReservationRepository:
 
         Locks the business row so two business-scoped Team Lead calls
         serialize. The ceiling counts ALL business usage (project-linked and
-        business-scoped confirmed + estimated rows) plus every active/ambiguous
-        reservation, because the business budget is an umbrella over all AI
-        attempts. Project-scoped calls are not refused by this method.
+        business-scoped confirmed + estimated rows), consumed holds linked to
+        unknown-price rows, plus every active/ambiguous reservation, because
+        the business budget is an umbrella over all AI attempts. Project-scoped
+        calls are not refused by this method.
 
         A NULL/zero business budget means "no limit": the caller chooses not to
         reserve at all, so this method is only called for a configured budget.
@@ -428,11 +486,15 @@ class BudgetReservationRepository:
         await self._supersede_attempt(session, business_id, attempt_key)
         budget = business.ai_budget if business.ai_budget is not None else Decimal("0")
         if budget > 0:
-            confirmed, estimated = await UsageRepository().business_usage_totals(
+            usage_repo = UsageRepository()
+            confirmed, estimated = await usage_repo.business_usage_totals(
+                session, business_id
+            )
+            unknown_holds = await usage_repo.unknown_consumed_reservation_total(
                 session, business_id
             )
             pending = await self.business_pending_total(session, business_id)
-            committed = confirmed + estimated + pending
+            committed = confirmed + estimated + unknown_holds + pending
             if committed + amount > budget:
                 return None
         run_seq = await self._next_run_seq(session, business_id, attempt_key)
