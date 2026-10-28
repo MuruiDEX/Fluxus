@@ -81,11 +81,23 @@ async def make_approval(
     return await approvals.create(session, biz_id, data)
 
 
-async def make_world(session: AsyncSession, biz_id: str = BIZ) -> None:
-    """Minimal coherent graph: business + agent + project."""
+async def make_world(
+    session: AsyncSession,
+    biz_id: str = BIZ,
+    *,
+    agent_id: str | None = None,
+    project_id: str | None = None,
+) -> None:
+    """Minimal coherent graph: business + agent + project.
+
+    The default IDs are canonical for the primary test business. IDs are
+    global primary keys, so a second world must not reuse them.
+    """
+    agent_id = agent_id or ("ag_1" if biz_id == BIZ else f"ag_{biz_id}")
+    project_id = project_id or ("proj_1" if biz_id == BIZ else f"proj_{biz_id}")
     await make_business(session, biz_id)
-    await make_agent(session, "ag_1", biz_id)
-    await make_project(session, "proj_1", biz_id)
+    await make_agent(session, agent_id, biz_id)
+    await make_project(session, project_id, biz_id)
 
 
 async def spend_of_project(session: AsyncSession, biz_id: str, project_id: str) -> Decimal:
