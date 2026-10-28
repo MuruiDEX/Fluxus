@@ -24,19 +24,68 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\pip install -e ".[dev]"
 
-# databases: Docker Compose (primary) or embedded fallback (see below)
-docker compose up -d postgres-test
-# --- or, without Docker: pytest auto-starts embedded PostgreSQL 16 ---
+# dev database only (:5432); start it separately before migrating/running.
+# Tests use the isolated service below, never this database.
+docker compose up -d postgres
+# local dev credentials only (from backend/docker-compose.yml); never production
+$env:APP_DATABASE_URL = "postgresql+asyncpg://muse:muse@127.0.0.1:5432/muse"
 
 .\.venv\Scripts\alembic upgrade head      # dev DB schema
 .\.venv\Scripts\python scripts\seed_demo.py  # demo data (dev only)
 
-.\.venv\Scripts\python -m pytest -q        # unit/API tests
+# pure URL/configuration tests: no PostgreSQL required
+.\.venv\Scripts\python -m pytest tests\test_pg_fixture_config.py -q
+
+# DB-backed tests require an explicit, verified isolated server
+$env:TEST_PG_PASSWORD = "<test-only password>"
+docker compose --profile test-isolated up -d postgres-test-isolated
+$PgBaseUrl = "postgresql://muse_test:<url-encoded-test-password>@127.0.0.1:55434"
+.\.venv\Scripts\python -m pytest -q --pg-base-url $PgBaseUrl
+
 .\.venv\Scripts\ruff check app tests alembic scripts   # lint
 .\.venv\Scripts\ruff format --check app tests alembic scripts
 
-# run locally (loopback only — see Security)
+# run locally (loopback only; needs APP_DATABASE_URL above — see Security)
 .\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+## Isolated PostgreSQL test server
+
+Tests never start PostgreSQL and never discover a local server. DB-backed
+tests require an explicit `--pg-base-url` for a numeric loopback host
+(`127.0.0.1` or `::1`) on an explicit non-protected port; without it, test
+database selection fails closed. Ports `5432`, `5433` and `55433` are
+protected and rejected. `55434` is not in the protected set, but that alone
+does not make it safe: every other URL rule still applies (numeric loopback
+host, explicit port, no path/query/fragment, fixed `muse_test`/`muse_mig`
+database names).
+
+The opt-in Compose service publishes only `127.0.0.1:55434`, uses a dedicated
+volume, creates `muse_test` on first start, and the init script creates
+`muse_mig` only while that empty volume is being initialized for the first
+time — it does not re-run on later container restarts. Set
+`TEST_PG_PASSWORD` to a test-only value before starting it; never use
+production credentials.
+
+```powershell
+$env:TEST_PG_PASSWORD = "<test-only password>"
+docker compose --profile test-isolated up -d postgres-test-isolated
+docker compose --profile test-isolated ps postgres-test-isolated
+```
+
+DB-backed tests are destructive: the test engine drops/recreates all tables in
+`muse_test`, and migration tests drop the `public` schema in `muse_mig`.
+Before running them, verify that `55434` is the dedicated isolated service
+(container, volume and port mapping), not `backend/.pgdata-5433` or the
+protected `postgres`/`postgres-test` services. The port number alone is not
+proof; confirm the container and volume identity with `docker inspect`. If
+that cannot be proven, stop.
+
+`scripts/pg_start.py` no longer starts embedded PostgreSQL. To create the two
+test databases on an already verified isolated server, use:
+
+```powershell
+.\.venv\Scripts\python scripts\pg_ensure_dbs.py --base-url $PgBaseUrl
 ```
 
 ## Persistence (Stage 2)
@@ -54,14 +103,13 @@ docker compose up -d postgres-test
   autogenerate; `use_alter` cycle tasks↔approvals split into explicit
   create/drop constraint). `alembic upgrade head` / `downgrade -1` covered
   by tests on an isolated schema.
-- Databases: `docker-compose.yml` — `postgres` (:5432, dev) and
-  `postgres-test` (:5433, `muse_test` + `muse_mig` via init script).
-  Without Docker, pytest auto-starts embedded PostgreSQL 16 binaries
-  (`postgresql-binaries==16.15.0`, dev-only) on :5433 — same engine,
-  zero system install. PG 18.x binaries are broken in this Windows
-  environment (shared-memory reservation failures) and are pinned out.
-  Helpers: `scripts/pg_start.py` (start embedded server),
-  `scripts/pg_ensure_dbs.py` (create test databases).
+- Databases: `docker-compose.yml` — `postgres` (:5432, dev) and the legacy
+  `postgres-test` (:5433, protected). Tests use the opt-in
+  `postgres-test-isolated` service on `127.0.0.1:55434` with its own volume
+  (`muse_test` + `muse_mig`). Automatic embedded PostgreSQL startup is
+  disabled; `scripts/pg_start.py` is a fail-closed stub. Use
+  `scripts/pg_ensure_dbs.py --base-url ...` only against a verified isolated
+  server.
 - SQLite is a portability subset only (`test_portability_sqlite.py`:
   CHECK/FK/rollback/round-trips); PostgreSQL semantics are never weakened
   for it (row-locks, concurrency, migrations are PG-only tests).

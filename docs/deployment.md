@@ -14,9 +14,18 @@ must terminate TLS at Caddy or another proxy (see §9 and §14).
 
 - Python 3.12+ (`python --version`).
 - Node.js 20+, npm 10+ (`node --version`, `npm --version`).
-- PostgreSQL 16 — either Docker (compose file in `backend/`) or a managed
-  instance reachable over the network.
+- PostgreSQL 16 — Docker (compose file in `backend/`) or a managed instance
+  reachable over the network. DB-backed tests require an explicit isolated
+  `--pg-base-url`; protected ports `5432`, `5433` and `55433` are rejected,
+  and omitting the flag fails closed.
 - Docker 29+ with the daemon running, only if using the bundled databases.
+- Local backend tests use the opt-in `postgres-test-isolated` Compose service
+  on `127.0.0.1:55434`; DB-backed tests are destructive and require an
+  explicit `--pg-base-url`. Never use the dev/protected ports `5432`,
+  `5433` or `55433` for test overrides. `55434` is not in the protected set,
+  but that alone does not make it safe: it is accepted only if the numeric
+  loopback host, the explicit port and the fixed test database names all
+  validate.
 - No external AI provider required: `APP_LLM_PROVIDER=mock` (default) runs
   fully offline. Real work needs an OpenAI-compatible endpoint + key.
 
@@ -30,7 +39,7 @@ python -m venv .venv
 # editable install registers the package (setuptools finds app/ only —
 # see pyproject [tool.setuptools.packages.find])
 .\.venv\Scripts\pip install -e . --no-deps
-# dev/test extras (pytest, ruff, embedded PG fallback)
+# dev/test extras: pytest, ruff, plus the legacy postgresql-binaries pin
 .\.venv\Scripts\pip install -r requirements-dev.txt
 ```
 
@@ -147,12 +156,18 @@ is missing; use `npm run build:live` or `npm run build:demo`.
   `APP_ENVIRONMENT=prod`); keep `false` for local plain HTTP.
 - `APP_ENVIRONMENT=prod` turns on the startup guard; `local`/`dev`/`test`
   are unaffected. Typos such as `production` are rejected at startup.
-- Fixture scripts refuse `APP_ENVIRONMENT=prod`. `scripts/seed_demo.py`
-  additionally requires `APP_ALLOW_DEMO_SEED=1`, and
-  `scripts/e2e_live_setup.py` requires `APP_ALLOW_E2E_SETUP=1`, and the
-  scratch-table diagnostic `scripts/repro_flush_anomaly.py` requires
-  `APP_ALLOW_REPRO=1`; remote databases require the corresponding
-  `APP_ALLOW_REMOTE_*` override.
+- Fixture scripts refuse `APP_ENVIRONMENT=prod` and require an explicit
+  opt-in: `scripts/seed_demo.py` needs `APP_ALLOW_DEMO_SEED=1`,
+  `scripts/e2e_live_setup.py` needs `APP_ALLOW_E2E_SETUP=1`, and the
+  scratch-table diagnostic `scripts/repro_flush_anomaly.py` needs
+  `APP_ALLOW_REPRO=1`.
+- Remote databases are a separate question. `seed_demo.py` and
+  `e2e_live_setup.py` accept a non-loopback host only with the matching
+  `APP_ALLOW_REMOTE_DEMO_SEED=1` / `APP_ALLOW_REMOTE_E2E_SETUP=1`;
+  `repro_flush_anomaly.py` is loopback-only: `REPRO_DATABASE_URL` must use
+  a numeric loopback host and the `/muse_test` database, and a non-loopback
+  URL is rejected before the guard runs — `APP_ALLOW_REMOTE_REPRO` cannot
+  override that.
 
 ## 9. TLS termination (recommended scheme)
 

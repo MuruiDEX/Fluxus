@@ -42,9 +42,9 @@ business-os/                  # repo root — orchestration + docs only
 │   ├── app/llm/              # mock (default) + openai_compat adapter, validate
 │   ├── app/execution/        # single-task executor (claim → LLM → validate → persist)
 │   ├── app/teamlead/         # brief questions/summary/planning/finalize
-│   ├── alembic/              # 0001 initial → 0004 brief_final_report
+│   ├── alembic/              # 0001 initial → 0009 business_ai_budget
 │   ├── scripts/              # seed_demo, bootstrap_owner, pg_*, gen_wire_manifest
-│   ├── tests/                # pytest (embedded PG fallback on :5433)
+│   ├── tests/                # pytest (explicit isolated PG; --pg-base-url)
 │   ├── requirements.txt      # pip mirror of pyproject.toml runtime deps
 │   ├── requirements-dev.txt  # pip mirror of pyproject.toml dev extras
 │   └── pyproject.toml        # source of truth for dependencies

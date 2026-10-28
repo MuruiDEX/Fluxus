@@ -24,7 +24,10 @@ FK violation.
 
 ## Minimal reproduction
 
-`backend/scripts/repro_flush_anomaly.py` (diagnostic only, not product code):
+`backend/scripts/repro_flush_anomaly.py` (diagnostic only, not product code).
+It requires `APP_ALLOW_REPRO=1` and an explicit `REPRO_DATABASE_URL` that uses
+a numeric loopback host (`127.0.0.1` or `::1`) and the `/muse_test` database —
+there is no default, and a non-loopback host is rejected.
 
 ```python
 s.add(P(id="p1"))
