@@ -2,9 +2,12 @@
 
 Isolation strategy: one truncate-all (CASCADE) before each test on the
 dedicated `muse_test` database. The migration suite uses its own `muse_mig`
-database and never touches test data. If nothing listens on 5433 (Docker
-`postgres-test`), an embedded PostgreSQL is started automatically
-(tests/_pg_embedded.py) — same engine, zero system install.
+database and never touches test data. Tests must select an isolated numeric
+loopback server with `--pg-base-url`; there is no automatic embedded or
+127.0.0.1:5433 fallback, and a missing URL fails closed. Protected ports
+5432, 5433 and 55433 are rejected. 55434 is not itself protected: it is
+accepted only when every other rule holds (numeric loopback host, explicit
+port, no path/query/fragment, fixed test database names).
 """
 
 import pytest
@@ -17,7 +20,7 @@ from app.core.config import Settings
 from app.main import create_app
 from app.persistence.base import Base
 from app.persistence.engine import create_engine_from_url, session_factory
-from tests._pg_embedded import ensure_postgres
+from tests._pg_test_urls import database_url, select_pg_base_url
 
 TABLES = (
     "usage_records",
@@ -40,6 +43,20 @@ TABLES = (
 )
 
 
+def pytest_addoption(parser) -> None:
+    group = parser.getgroup("postgres")
+    group.addoption(
+        "--pg-base-url",
+        action="store",
+        default=None,
+        metavar="URL",
+        help=(
+            "Test-only PostgreSQL base URL: numeric loopback host, explicit "
+            "non-protected port, no database path/query/fragment."
+        ),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _clean_tariff_catalog() -> object:
     """Isolate the process-global tariff catalog between tests."""
@@ -51,18 +68,21 @@ def _clean_tariff_catalog() -> object:
 
 
 @pytest.fixture(scope="session")
-def pg_base_url() -> str:
-    return ensure_postgres()
+def pg_base_url(request: pytest.FixtureRequest) -> str:
+    try:
+        return select_pg_base_url(request.config.getoption("--pg-base-url"))
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 @pytest.fixture(scope="session")
 def test_db_url(pg_base_url: str) -> str:
-    return pg_base_url.replace("postgresql://", "postgresql+asyncpg://") + "/muse_test"
+    return database_url(pg_base_url, "muse_test")
 
 
 @pytest.fixture(scope="session")
 def mig_db_url(pg_base_url: str) -> str:
-    return pg_base_url.replace("postgresql://", "postgresql+asyncpg://") + "/muse_mig"
+    return database_url(pg_base_url, "muse_mig")
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

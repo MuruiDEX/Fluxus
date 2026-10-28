@@ -1,19 +1,33 @@
-"""Start the embedded test postgres and exit immediately (no waiting)."""
+"""Embedded PostgreSQL startup is retired.
 
-import subprocess
+The old script targeted the protected ``backend/.pgdata-5433`` cluster.  It is
+kept only as a fail-closed compatibility stub so existing references explain
+the replacement instead of failing with a missing internal helper.
+
+Use the opt-in isolated Compose service instead::
+
+    docker compose --profile test-isolated up -d postgres-test-isolated
+
+Then pass an explicit ``--pg-base-url`` for ``127.0.0.1:55434`` to pytest.
+Ports 5432, 5433 and 55433 are protected.
+"""
+
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from tests._pg_embedded import PGDATA, _bin  # noqa: E402
-
-log = PGDATA / "server.log"
-proc = subprocess.Popen(
-    [_bin("pg_ctl"), "-D", str(PGDATA), "-l", str(log), "-w", "-t", "60", "start"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
+_MESSAGE = (
+    "error: automatic embedded PostgreSQL startup is disabled. "
+    "Use the opt-in isolated service: "
+    "docker compose --profile test-isolated up -d postgres-test-isolated. "
+    "Then run pytest with --pg-base-url for 127.0.0.1:55434. "
+    "Protected ports 5432, 5433 and 55433 are rejected.\n"
 )
-out, _ = proc.communicate(timeout=90)
-sys.stdout.write(out.decode("utf-8", "replace"))
-sys.stdout.write(f"rc={proc.returncode}\n")
+
+
+def main() -> int:
+    """Refuse to start or attach to the old protected cluster."""
+    sys.stderr.write(_MESSAGE)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

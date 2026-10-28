@@ -20,6 +20,7 @@ _GUARD_ENV = (
     "APP_ALLOW_REMOTE_E2E_SETUP",
     "APP_ALLOW_REPRO",
     "APP_ALLOW_REMOTE_REPRO",
+    "REPRO_DATABASE_URL",
 )
 
 
@@ -115,6 +116,11 @@ def test_fixture_scripts_refuse_prod_before_connecting(
     module = importlib.import_module(module_name)
     monkeypatch.setenv("APP_ENVIRONMENT", "prod")
     monkeypatch.setenv(opt_in_env, "1")
+    if module_name == "scripts.repro_flush_anomaly":
+        monkeypatch.setenv(
+            "REPRO_DATABASE_URL",
+            "postgresql+asyncpg://testuser:testpass@127.0.0.1:55434/muse_test",
+        )
 
     def _must_not_connect(*args: object, **kwargs: object) -> None:
         pytest.fail("fixture script tried to connect before its production guard")
@@ -122,3 +128,97 @@ def test_fixture_scripts_refuse_prod_before_connecting(
     monkeypatch.setattr(module, engine_factory, _must_not_connect)
     with pytest.raises(SystemExit, match="APP_ENVIRONMENT=prod"):
         asyncio.run(module.main())
+
+
+def test_pg_start_is_retired(capsys: pytest.CaptureFixture[str]) -> None:
+    module = importlib.import_module("scripts.pg_start")
+    assert module.main() == 2
+    output = capsys.readouterr().err
+    assert "embedded PostgreSQL startup is disabled" in output
+    assert "55434" in output
+
+
+def test_pg_ensure_dbs_requires_explicit_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("scripts.pg_ensure_dbs")
+
+    def _must_not_connect(*args: object, **kwargs: object) -> None:
+        pytest.fail("pg_ensure_dbs tried to connect without an explicit URL")
+
+    monkeypatch.setattr(module, "create_async_engine", _must_not_connect)
+    with pytest.raises(SystemExit):
+        module.main([])
+
+
+def test_pg_ensure_dbs_rejects_protected_port_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("scripts.pg_ensure_dbs")
+
+    def _must_not_connect(*args: object, **kwargs: object) -> None:
+        pytest.fail("pg_ensure_dbs tried to connect before URL validation")
+
+    monkeypatch.setattr(module, "create_async_engine", _must_not_connect)
+    with pytest.raises(SystemExit, match="protected port"):
+        module.main(["--base-url", "postgresql://testuser:testpass@127.0.0.1:5433"])
+
+
+def test_repro_requires_explicit_url_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("scripts.repro_flush_anomaly")
+
+    def _must_not_connect(*args: object, **kwargs: object) -> None:
+        pytest.fail("repro script tried to connect without REPRO_DATABASE_URL")
+
+    monkeypatch.setattr(module, "create_async_engine", _must_not_connect)
+    monkeypatch.delenv("REPRO_DATABASE_URL", raising=False)
+    with pytest.raises(SystemExit, match="REPRO_DATABASE_URL is required"):
+        asyncio.run(module.main())
+
+
+def test_repro_rejects_protected_port_before_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("scripts.repro_flush_anomaly")
+
+    def _must_not_connect(*args: object, **kwargs: object) -> None:
+        pytest.fail("repro script tried to connect before URL validation")
+
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("APP_ALLOW_REPRO", "1")
+    monkeypatch.setenv(
+        "REPRO_DATABASE_URL",
+        "postgresql+asyncpg://testuser:testpass@127.0.0.1:5433/muse_test",
+    )
+    monkeypatch.setattr(module, "create_async_engine", _must_not_connect)
+    with pytest.raises(SystemExit, match="protected port"):
+        asyncio.run(module.main())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "postgresql://testuser:testpass@127.0.0.1:55434?",
+        "postgresql://testuser:testpass@127.0.0.1:55434#",
+        "postgresql://testuser:testpass@127.0.0.1:55434/muse_test?",
+    ],
+)
+def test_repro_rejects_bare_query_or_fragment_before_connecting(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """A bare `?`/`#` parses as an empty query/fragment but still changes
+    what the driver sees, so it must be rejected before any engine exists."""
+    module = importlib.import_module("scripts.repro_flush_anomaly")
+
+    def _must_not_connect(*args: object, **kwargs: object) -> None:
+        pytest.fail("repro script tried to connect before URL validation")
+
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("APP_ALLOW_REPRO", "1")
+    monkeypatch.setenv("REPRO_DATABASE_URL", value)
+    monkeypatch.setattr(module, "create_async_engine", _must_not_connect)
+    with pytest.raises(SystemExit, match="query or fragment") as caught:
+        asyncio.run(module.main())
+    assert "testpass" not in str(caught.value)

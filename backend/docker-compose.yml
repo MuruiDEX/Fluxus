@@ -22,6 +22,21 @@ services:
       - ./scripts/init-test-dbs.sh:/docker-entrypoint-initdb.d/init-test-dbs.sh:ro
       - pgtestdata:/var/lib/postgresql/data
 
+  # Explicit opt-in only: plain `docker compose up` must not start this service.
+  postgres-test-isolated:
+    image: postgres:16-alpine
+    profiles: ["test-isolated"]
+    environment:
+      POSTGRES_USER: muse_test
+      POSTGRES_PASSWORD: ${TEST_PG_PASSWORD:?TEST_PG_PASSWORD must be set}
+      POSTGRES_DB: muse_test
+    ports:
+      - "127.0.0.1:55434:5432"
+    volumes:
+      - ./scripts/init-test-dbs.sh:/docker-entrypoint-initdb.d/init-test-dbs.sh:ro
+      - test_pgdata_isolated:/var/lib/postgresql/data
+
 volumes:
   pgdata:
   pgtestdata:
+  test_pgdata_isolated:
