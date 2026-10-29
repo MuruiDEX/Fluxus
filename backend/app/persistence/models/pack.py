@@ -18,9 +18,7 @@ from app.persistence.enums import PackItemKind, literal_check
 class PackInstallation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     __tablename__ = "pack_installations"
     __table_args__ = (
-        UniqueConstraint(
-            "business_id", "pack_slug", name="uq_pack_installations_business_pack"
-        ),
+        UniqueConstraint("business_id", "pack_slug", name="uq_pack_installations_business_pack"),
     )
 
     business_id: Mapped[str] = mapped_column(

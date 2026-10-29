@@ -99,9 +99,7 @@ async def read_outcome(
         elif item.kind == "workflow":
             project = await ProjectRepository().get(session, business_id, item.entity_id)
             if project is not None:
-                tasks = await TaskRepository().list_for_project(
-                    session, business_id, project.id
-                )
+                tasks = await TaskRepository().list_for_project(session, business_id, project.id)
     return InstallOutcome(
         installation=installation, agents=agents, project=project, tasks=tasks, created=False
     )
@@ -129,9 +127,7 @@ async def agents_by_source(
     if not slugs:
         return {}
     res = await session.execute(
-        select(Agent).where(
-            Agent.business_id == business_id, Agent.source_slug.in_(tuple(slugs))
-        )
+        select(Agent).where(Agent.business_id == business_id, Agent.source_slug.in_(tuple(slugs)))
     )
     return {agent.source_slug: agent for agent in res.scalars().all() if agent.source_slug}
 
@@ -171,8 +167,7 @@ async def install_pack(
     if existing is not None:
         if existing.version != spec.version:
             raise PackVersionConflictError(
-                f"Pack {spec.slug!r} is installed at {existing.version!r}, "
-                f"not {spec.version!r}."
+                f"Pack {spec.slug!r} is installed at {existing.version!r}, not {spec.version!r}."
             )
         return await read_outcome(session, business_id, existing)
 

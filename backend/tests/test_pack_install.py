@@ -77,7 +77,7 @@ PACK_LISTING = {
 
 
 async def _seed_catalog(session: AsyncSession, *, with_agents: bool = True) -> None:
-    rows = ([PACK_LISTING] + (AGENT_LISTINGS if with_agents else []))
+    rows = [PACK_LISTING] + (AGENT_LISTINGS if with_agents else [])
     for row in rows:
         if await _catalog.get(session, BIZ, row["id"]) is None:
             await _catalog.create(session, BIZ, dict(row))
@@ -118,9 +118,7 @@ async def _agent_count(session: AsyncSession, biz: str, slug: str) -> int:
 
 
 async def _installations(session: AsyncSession, biz: str) -> list[PackInstallation]:
-    res = await session.execute(
-        select(PackInstallation).where(PackInstallation.business_id == biz)
-    )
+    res = await session.execute(select(PackInstallation).where(PackInstallation.business_id == biz))
     return list(res.scalars().all())
 
 
@@ -333,9 +331,7 @@ async def test_missing_agent_listing_is_pack_unavailable(
     assert await _installations(session, BIZ) == []
 
 
-async def test_unknown_pack_is_404(
-    session: AsyncSession, api_client: httpx.AsyncClient
-) -> None:
+async def test_unknown_pack_is_404(session: AsyncSession, api_client: httpx.AsyncClient) -> None:
     headers = await _authed(session, api_client)
     assert (await api_client.get(_pack_url("ghost"), headers=headers)).status_code == 404
     assert (await api_client.get(_preview_url("ghost"), headers=headers)).status_code == 404

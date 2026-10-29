@@ -80,15 +80,11 @@ def _disabled(exc: Exception) -> HTTPException:
     )
 
 
-async def _catalog_listing(
-    session, slug: str
-) -> MarketplaceListing | None:
+async def _catalog_listing(session, slug: str) -> MarketplaceListing | None:
     return await _catalog.get(session, "", slug)
 
 
-async def _catalog_map(
-    session, spec: PackSpec
-) -> dict[str, MarketplaceListing]:
+async def _catalog_map(session, spec: PackSpec) -> dict[str, MarketplaceListing]:
     rows: dict[str, MarketplaceListing] = {}
     for slug in spec.agent_slugs:
         listing = await _catalog_listing(session, slug)
@@ -133,11 +129,7 @@ async def _pack_response(
             action = "blocked"
         agent_listing = listings.get(slug)
         name = agent.name if agent is not None else (agent_listing.name if agent_listing else slug)
-        role = (
-            agent.role
-            if agent is not None
-            else (agent_listing.role if agent_listing else "")
-        )
+        role = agent.role if agent is not None else (agent_listing.role if agent_listing else "")
         agents.append(
             PackAgentResponse(
                 slug=slug,
@@ -199,9 +191,7 @@ async def _install_response(
     listing = await _catalog_listing(session, spec.slug)
     listings = await _catalog_map(session, spec)
     installation = outcome.installation
-    pack = await _pack_response(
-        session, business_id, spec, listing, installation, contract
-    )
+    pack = await _pack_response(session, business_id, spec, listing, installation, contract)
     project = outcome.project
     tasks = await _task_responses(session, business_id, outcome.tasks, contract)
     return PackInstallResponse(
@@ -215,9 +205,7 @@ async def _install_response(
                 name=agent.name,
                 role=agent.role,
                 capabilities=(
-                    list(listings[agent.slug].capabilities or [])
-                    if agent.slug in listings
-                    else []
+                    list(listings[agent.slug].capabilities or []) if agent.slug in listings else []
                 ),
                 agentId=agent.agent_id,
                 action="create" if agent.created else "reuse",
@@ -230,9 +218,7 @@ async def _install_response(
     )
 
 
-async def _existing_installation(
-    session, business_id: str, slug: str
-) -> PackInstallation | None:
+async def _existing_installation(session, business_id: str, slug: str) -> PackInstallation | None:
     return await _packs.get_by_slug(session, business_id, slug)
 
 
@@ -256,8 +242,7 @@ async def list_packs(
             if row.category == "pack"
         ]
         installations = {
-            row.pack_slug: row
-            for row in await _packs.list_for_business(session, business_id)
+            row.pack_slug: row for row in await _packs.list_for_business(session, business_id)
         }
         items = []
         for listing in listings:
@@ -350,9 +335,7 @@ async def preview_pack(
             blockers.append(
                 PackBlockerResponse(
                     code="pack_version_conflict",
-                    message=(
-                        f"Pack is installed at {installation.version}, not {spec.version}."
-                    ),
+                    message=(f"Pack is installed at {installation.version}, not {spec.version}."),
                 )
             )
         found = await agents_by_source(session, business_id, spec.agent_slugs)
@@ -430,8 +413,7 @@ async def install(
             if existing.version != spec.version:
                 raise _version_conflict(
                     PackVersionConflictError(
-                        f"Pack {slug!r} is installed at {existing.version!r}, "
-                        f"not {spec.version!r}."
+                        f"Pack {slug!r} is installed at {existing.version!r}, not {spec.version!r}."
                     )
                 ) from exc
             outcome = await read_outcome(session, business_id, existing)

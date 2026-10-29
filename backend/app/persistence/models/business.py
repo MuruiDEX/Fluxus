@@ -16,9 +16,7 @@ MONEY = Numeric(12, 2)
 
 class Business(IdMixin, TimestampMixin, Base):
     __tablename__ = "businesses"
-    __table_args__ = (
-        CheckConstraint("ai_budget >= 0", name="ck_businesses_ai_budget_nonneg"),
-    )
+    __table_args__ = (CheckConstraint("ai_budget >= 0", name="ck_businesses_ai_budget_nonneg"),)
 
     name: Mapped[str] = mapped_column(String(200))
     tagline: Mapped[str] = mapped_column(String(300), default="")

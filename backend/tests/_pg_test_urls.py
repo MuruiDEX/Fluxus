@@ -42,8 +42,7 @@ def validate_pg_base_url(value: str) -> str:
         raise ValueError("PostgreSQL test URL has an invalid port")
     if port in _PROTECTED_PORTS:
         raise ValueError(
-            "PostgreSQL test URL must not target protected port(s) "
-            f"{_protected_ports_label()}"
+            f"PostgreSQL test URL must not target protected port(s) {_protected_ports_label()}"
         )
 
     if parsed.path not in {"", "/"}:

@@ -219,9 +219,7 @@ async def test_task_execution_already_sends_the_same_output_parameter(
             json={
                 "id": "c1",
                 "model": "m",
-                "choices": [
-                    {"message": {"role": "assistant", "content": '{"summary": "done"}'}}
-                ],
+                "choices": [{"message": {"role": "assistant", "content": '{"summary": "done"}'}}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
             },
         )

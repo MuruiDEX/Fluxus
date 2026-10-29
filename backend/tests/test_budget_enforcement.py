@@ -261,9 +261,7 @@ async def test_estimated_hold_is_not_double_counted_after_settlement(
     await make_task(session, task_id="t_1", status="not_started")
     await make_task(session, task_id="t_2", status="not_started")
     bound = _bound()
-    await ProjectRepository().update(
-        session, BIZ, "proj_1", {"ai_budget": bound * 2}
-    )
+    await ProjectRepository().update(session, BIZ, "proj_1", {"ai_budget": bound * 2})
 
     first = await _run(
         session,
@@ -550,9 +548,7 @@ async def test_unbudgeted_unbounded_executor_hold_is_best_effort(
     provider = MockProvider(texts=['{"summary": "x"}'])
     provider._default_model = "zero-budget-model"
 
-    result = await _run(
-        session, provider, _request(_settings(llm_max_tokens=None))
-    )
+    result = await _run(session, provider, _request(_settings(llm_max_tokens=None)))
 
     assert result.outcome == "completed"
     reservations = await _reservations(session)
@@ -583,9 +579,7 @@ async def test_budget_patch_between_snapshot_and_reserve_cannot_use_stale_zero_h
                 await patch_session.flush()
         return await original_claim(*args, **kwargs)
 
-    monkeypatch.setattr(
-        executor_module._tasks, "claim_task", claim_after_budget_patch
-    )
+    monkeypatch.setattr(executor_module._tasks, "claim_task", claim_after_budget_patch)
     provider = MockProvider(texts=['{"summary": "x"}'])
     provider._default_model = "race-unpriced-model"
 

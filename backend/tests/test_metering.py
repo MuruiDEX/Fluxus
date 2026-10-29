@@ -466,9 +466,7 @@ async def test_business_budget_counts_project_spend(
 
     assert provider.calls == []
     usages, _holds = await _rows(session)
-    assert [(row.project_id, row.call_kind) for row in usages] == [
-        ("proj_1", "brief_finalize")
-    ]
+    assert [(row.project_id, row.call_kind) for row in usages] == [("proj_1", "brief_finalize")]
 
 
 async def test_business_budget_counts_pending_reservations(

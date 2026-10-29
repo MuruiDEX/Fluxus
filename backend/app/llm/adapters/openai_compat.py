@@ -203,9 +203,7 @@ class OpenAICompatProvider:
         if not api_key:
             raise LlmConfigurationError("OpenAICompatProvider requires a non-empty api_key.")
         if max_tokens_param not in ("max_tokens", "max_completion_tokens"):
-            raise LlmConfigurationError(
-                f"Unsupported max_tokens_param: {max_tokens_param!r}."
-            )
+            raise LlmConfigurationError(f"Unsupported max_tokens_param: {max_tokens_param!r}.")
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
@@ -220,11 +218,7 @@ class OpenAICompatProvider:
     def _headers(self, request: LlmRequest | None = None) -> dict[str, str]:
         # The single place the key is ever used. Never log this dict.
         headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
-        if (
-            request is not None
-            and request.idempotency_key
-            and self._supports_idempotency
-        ):
+        if request is not None and request.idempotency_key and self._supports_idempotency:
             headers["Idempotency-Key"] = request.idempotency_key
         return headers
 

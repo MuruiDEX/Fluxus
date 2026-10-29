@@ -157,9 +157,9 @@ def test_backend_image_binds_container_interface_not_loopback() -> None:
 def test_prod_compose_publishes_only_caddy_and_keeps_db_internal() -> None:
     body = COMPOSE.read_text(encoding="utf-8")
     assert re.findall(r"(?m)^\s*ports:\s*$", body) == ["    ports:"], "only Caddy may publish ports"
-    assert 'internal: true' in body
-    assert 'condition: service_completed_successfully' in body
-    assert 'condition: service_healthy' in body
+    assert "internal: true" in body
+    assert "condition: service_completed_successfully" in body
+    assert "condition: service_healthy" in body
     assert "APP_SESSION_COOKIE_SECURE" in body
 
 

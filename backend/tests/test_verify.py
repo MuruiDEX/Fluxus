@@ -104,6 +104,7 @@ class StubHandler(BaseHTTPRequestHandler):
     do_GET = _route
     do_OPTIONS = _route
 
+
 def _make_cert(cert_path: Path, key_path: Path) -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "verify.test.invalid")])

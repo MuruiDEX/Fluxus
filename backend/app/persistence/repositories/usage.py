@@ -140,9 +140,7 @@ class UsageRepository:
         if task_id is not None:
             stmt = stmt.where(UsageRecord.task_id == task_id)
         rows = (await session.execute(stmt)).all()
-        return {
-            str(status): (quantize_money(total), int(count)) for status, total, count in rows
-        }
+        return {str(status): (quantize_money(total), int(count)) for status, total, count in rows}
 
     async def totals_by_call_kind(
         self,
@@ -321,9 +319,7 @@ class BudgetReservationRepository:
         total = (await session.execute(stmt)).scalar_one()
         return Decimal(str(total))
 
-    async def business_pending_total(
-        self, session: AsyncSession, business_id: str
-    ) -> Decimal:
+    async def business_pending_total(self, session: AsyncSession, business_id: str) -> Decimal:
         """Active + ambiguous exposure across the whole business.
 
         This includes project-scoped reservations: the business ceiling is an
@@ -357,9 +353,7 @@ class BudgetReservationRepository:
             )
         )
 
-    async def _next_run_seq(
-        self, session: AsyncSession, business_id: str, attempt_key: str
-    ) -> int:
+    async def _next_run_seq(self, session: AsyncSession, business_id: str, attempt_key: str) -> int:
         last_seq = (
             await session.execute(
                 select(func.coalesce(func.max(BudgetReservation.run_seq), 0)).where(
@@ -417,18 +411,11 @@ class BudgetReservationRepository:
             # captured by ai_spent (which counts confirmed only). A consumed
             # hold linked to an `unknown` row also remains counted: otherwise
             # the provider's unpriced call would vanish from the ceiling.
-            estimated = await usage_repo.estimated_total(
-                session, business_id, project_id
-            )
+            estimated = await usage_repo.estimated_total(session, business_id, project_id)
             unknown_holds = await usage_repo.unknown_consumed_reservation_total(
                 session, business_id, project_id=project_id
             )
-            committed = (
-                Decimal(str(project.ai_spent or 0))
-                + estimated
-                + unknown_holds
-                + pending
-            )
+            committed = Decimal(str(project.ai_spent or 0)) + estimated + unknown_holds + pending
             if committed + amount > budget:
                 return None
         run_seq = await self._next_run_seq(session, business_id, attempt_key)
@@ -487,9 +474,7 @@ class BudgetReservationRepository:
         budget = business.ai_budget if business.ai_budget is not None else Decimal("0")
         if budget > 0:
             usage_repo = UsageRepository()
-            confirmed, estimated = await usage_repo.business_usage_totals(
-                session, business_id
-            )
+            confirmed, estimated = await usage_repo.business_usage_totals(session, business_id)
             unknown_holds = await usage_repo.unknown_consumed_reservation_total(
                 session, business_id
             )

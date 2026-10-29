@@ -42,13 +42,9 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.UniqueConstraint(
-            "business_id", "pack_slug", name="uq_pack_installations_business_pack"
-        ),
+        sa.UniqueConstraint("business_id", "pack_slug", name="uq_pack_installations_business_pack"),
     )
-    op.create_index(
-        "ix_pack_installations_business_id", "pack_installations", ["business_id"]
-    )
+    op.create_index("ix_pack_installations_business_id", "pack_installations", ["business_id"])
     op.create_table(
         "pack_installation_items",
         sa.Column("id", sa.String(128), primary_key=True),
@@ -73,9 +69,7 @@ def upgrade() -> None:
         sa.Column(
             "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
-        sa.CheckConstraint(
-            "kind IN ('agent', 'workflow')", name="ck_pack_installation_items_kind"
-        ),
+        sa.CheckConstraint("kind IN ('agent', 'workflow')", name="ck_pack_installation_items_kind"),
         sa.CheckConstraint("length(ref) > 0", name="ck_pack_installation_items_ref"),
         sa.UniqueConstraint(
             "installation_id", "kind", "ref", name="uq_pack_items_installation_kind_ref"
@@ -95,9 +89,7 @@ def downgrade() -> None:
     op.drop_index(
         "ix_pack_installation_items_installation_id", table_name="pack_installation_items"
     )
-    op.drop_index(
-        "ix_pack_installation_items_business_id", table_name="pack_installation_items"
-    )
+    op.drop_index("ix_pack_installation_items_business_id", table_name="pack_installation_items")
     op.drop_table("pack_installation_items")
     op.drop_index("ix_pack_installations_business_id", table_name="pack_installations")
     op.drop_table("pack_installations")

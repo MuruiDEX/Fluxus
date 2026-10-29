@@ -253,9 +253,7 @@ async def test_all_zero_usage_is_reported() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json=_ok_payload(
-                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            ),
+            json=_ok_payload(usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
         )
 
     res = await _provider(handler).complete(_req())

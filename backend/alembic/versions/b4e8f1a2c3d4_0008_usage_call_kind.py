@@ -45,9 +45,7 @@ def upgrade() -> None:
         "usage_records",
         "call_kind IS NULL OR call_kind IN (" + ", ".join(repr(k) for k in _KINDS) + ")",
     )
-    op.create_index(
-        "ix_usage_records_call_kind", "usage_records", ["business_id", "call_kind"]
-    )
+    op.create_index("ix_usage_records_call_kind", "usage_records", ["business_id", "call_kind"])
 
 
 def downgrade() -> None:

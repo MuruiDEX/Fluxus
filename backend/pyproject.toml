@@ -20,7 +20,7 @@ dependencies = [
 dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
-  "ruff>=0.8",
+  "ruff==0.17.0",
   # Embedded PostgreSQL binaries for local dev/test when Docker is
   # unavailable (postgresql-binaries 16.x; PG 18.x binaries are broken
   # in this Windows environment — see backend README).

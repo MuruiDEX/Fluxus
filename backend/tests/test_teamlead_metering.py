@@ -103,9 +103,7 @@ async def test_all_teamlead_paths_are_metered_with_call_kind(
     assert set(bsummary["byCallKind"]) == set(by_kind)
     for kind, item in bsummary["byCallKind"].items():
         assert item["confirmedCost"] == str(by_kind[kind].cost_amount)
-    assert bsummary["confirmedCost"] == str(
-        sum((row.cost_amount or Decimal("0")) for row in rows)
-    )
+    assert bsummary["confirmedCost"] == str(sum((row.cost_amount or Decimal("0")) for row in rows))
 
 
 async def test_finalize_is_budget_enforced_and_refused_before_send(
@@ -132,9 +130,7 @@ async def test_finalize_opt_in_records_unknown_but_still_runs(
 ) -> None:
     headers = await _authed(session, api_client)
     brief_id, project_id, tasks, _ = await _planned(api_client, session, headers, monkeypatch)
-    await ProjectRepository().update(
-        session, BIZ, project_id, {"allow_unpriced_ai": True}
-    )
+    await ProjectRepository().update(session, BIZ, project_id, {"allow_unpriced_ai": True})
     await session.commit()
     _mocked(monkeypatch, MockProvider(texts=[_final_text(tasks)]))
 

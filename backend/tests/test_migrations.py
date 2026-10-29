@@ -296,9 +296,7 @@ async def test_0007_backfills_allow_unpriced_ai_false(
     engine = create_engine_from_url(mig_db_url)
     async with engine.connect() as conn:
         value = (
-            await conn.execute(
-                text("SELECT allow_unpriced_ai FROM projects WHERE id = 'proj_old'")
-            )
+            await conn.execute(text("SELECT allow_unpriced_ai FROM projects WHERE id = 'proj_old'"))
         ).scalar_one()
     await engine.dispose()
     assert value is False
@@ -345,9 +343,7 @@ async def test_0008_backfills_call_kind_task_execution(
     engine = create_engine_from_url(mig_db_url)
     async with engine.connect() as conn:
         value = (
-            await conn.execute(
-                text("SELECT call_kind FROM usage_records WHERE id = 'u_old'")
-            )
+            await conn.execute(text("SELECT call_kind FROM usage_records WHERE id = 'u_old'"))
         ).scalar_one()
     await engine.dispose()
     assert value == "task_execution"
@@ -426,17 +422,12 @@ async def test_0009_business_budget_round_trip(
     await engine.dispose()
 
     command.upgrade(cfg, "head")
-    assert {"ai_budget", "allow_unpriced_ai"} <= await _column_names(
-        mig_db_url, "businesses"
-    )
+    assert {"ai_budget", "allow_unpriced_ai"} <= await _column_names(mig_db_url, "businesses")
     engine = create_engine_from_url(mig_db_url)
     async with engine.connect() as conn:
         row = (
             await conn.execute(
-                text(
-                    "SELECT ai_budget, allow_unpriced_ai FROM businesses"
-                    " WHERE id = 'biz_old'"
-                )
+                text("SELECT ai_budget, allow_unpriced_ai FROM businesses WHERE id = 'biz_old'")
             )
         ).one()
     await engine.dispose()

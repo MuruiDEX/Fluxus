@@ -71,7 +71,9 @@ async def test_confirmed_cost_recomputes_task_and_project(session: AsyncSession)
         session,
         BIZ,
         _usage_data(
-            project_id="proj_1", task_id="t_1", agent_id="ag_1",
+            project_id="proj_1",
+            task_id="t_1",
+            agent_id="ag_1",
             cost_amount=Decimal("0.03"),
         ),
     )

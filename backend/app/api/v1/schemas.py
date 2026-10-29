@@ -268,9 +268,7 @@ class UsageSummary(BaseModel):
     confirmed_cost: Decimal = Field(default=Decimal("0"), alias="confirmedCost")
     estimated_cost: Decimal = Field(default=Decimal("0"), alias="estimatedCost")
     unknown_count: int = Field(default=0, alias="unknownCount")
-    by_call_kind: dict[str, UsageCallKindSummary] = Field(
-        default_factory=dict, alias="byCallKind"
-    )
+    by_call_kind: dict[str, UsageCallKindSummary] = Field(default_factory=dict, alias="byCallKind")
     reservations: UsageReservationSummary = Field(default_factory=UsageReservationSummary)
 
 

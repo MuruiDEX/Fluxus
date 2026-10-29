@@ -80,9 +80,7 @@ def test_backup_never_prints_secret_values() -> None:
     secret_pw = "s3cr3t-pw-never-logged-9f8e7d6c5b4a"
     fixture = _fixture(
         "backup-test-leak.env",
-        "POSTGRES_USER=muse\n"
-        "POSTGRES_DB=muse\n"
-        f"POSTGRES_PASSWORD={secret_pw}\n",
+        f"POSTGRES_USER=muse\nPOSTGRES_DB=muse\nPOSTGRES_PASSWORD={secret_pw}\n",
     )
     try:
         # No -Yes: the confirmation gate fires first; output must still be clean.

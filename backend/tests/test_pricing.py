@@ -208,9 +208,7 @@ def test_estimate_input_bound_is_utf8_byte_count() -> None:
 
 def test_estimate_input_bound_adds_conservative_chat_framing() -> None:
     assert pricing.estimate_input_token_bound("hi", message_count=2) == (
-        2
-        + pricing.CHAT_FRAMING_TOKENS_BASE
-        + 2 * pricing.CHAT_FRAMING_TOKENS_PER_MESSAGE
+        2 + pricing.CHAT_FRAMING_TOKENS_BASE + 2 * pricing.CHAT_FRAMING_TOKENS_PER_MESSAGE
     )
     assert pricing.estimate_input_token_bound("", message_count=1) > 0
 

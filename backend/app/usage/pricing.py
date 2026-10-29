@@ -178,9 +178,7 @@ def upper_bound_cost(
         max(0, int(input_token_bound)) * input_rate
         + max(0, int(max_output_tokens)) * tariff.output_per_1k
     )
-    return CostQuote(
-        "estimated", _ceil(total / _PER_1K), "tariff", tariff.version, tariff.currency
-    )
+    return CostQuote("estimated", _ceil(total / _PER_1K), "tariff", tariff.version, tariff.currency)
 
 
 def estimate_input_token_bound(*parts: str, message_count: int = 0) -> int:

@@ -582,8 +582,7 @@ async def _execute_inner(
             attempts=pre_attempts,
             error_code="budget_exceeded",
             error_message=(
-                "Concurrent execution exhausted the project AI budget; "
-                "reservation refused."
+                "Concurrent execution exhausted the project AI budget; reservation refused."
             ),
         )
     if not claimed:
@@ -872,9 +871,7 @@ async def _record_failure(
             current = await _tasks.get(session, business_id, task_id)
             if current is None or current.status != TaskStatus.WORKING.value:
                 if reservation_id is not None and (settle == "ambiguous" or estimate is not None):
-                    await mark_ambiguous(
-                        session, business_id, reservation_id, "ownership_lost"
-                    )
+                    await mark_ambiguous(session, business_id, reservation_id, "ownership_lost")
                 elif reservation_id is not None:
                     await release_reservation(
                         session, business_id, reservation_id, "ownership_lost"

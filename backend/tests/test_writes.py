@@ -246,9 +246,7 @@ async def test_business_patch_budget_boundaries(
     assert zero.status_code == 200, zero.text
     assert Decimal(zero.json()["aiBudget"]) == 0
 
-    sub_cent = await api_client.patch(
-        _business_url(), json={"aiBudget": "0.004"}, headers=headers
-    )
+    sub_cent = await api_client.patch(_business_url(), json={"aiBudget": "0.004"}, headers=headers)
     assert sub_cent.status_code == 422, sub_cent.text
     assert sub_cent.json()["error"]["code"] == "validation_error"
 
@@ -362,15 +360,11 @@ async def test_project_patch_ai_budget_boundaries(
     assert zero.status_code == 200, zero.text
     assert Decimal(zero.json()["aiBudget"]) == 0
 
-    sub_cent = await api_client.patch(
-        _project_url(), json={"aiBudget": "0.004"}, headers=headers
-    )
+    sub_cent = await api_client.patch(_project_url(), json={"aiBudget": "0.004"}, headers=headers)
     assert sub_cent.status_code == 422, sub_cent.text
     assert sub_cent.json()["error"]["code"] == "validation_error"
 
-    rounded_up = await api_client.patch(
-        _project_url(), json={"aiBudget": "0.005"}, headers=headers
-    )
+    rounded_up = await api_client.patch(_project_url(), json={"aiBudget": "0.005"}, headers=headers)
     assert rounded_up.status_code == 200, rounded_up.text
     assert Decimal(rounded_up.json()["aiBudget"]) == Decimal("0.01")
 

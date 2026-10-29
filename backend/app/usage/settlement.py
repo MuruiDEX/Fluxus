@@ -49,11 +49,7 @@ def _has_usable_reported_usage(usage: LlmUsage) -> bool:
         return False
     if usage.cost_estimate is not None:
         return True
-    if (
-        usage.prompt_tokens < 0
-        or usage.completion_tokens < 0
-        or usage.total_tokens < 0
-    ):
+    if usage.prompt_tokens < 0 or usage.completion_tokens < 0 or usage.total_tokens < 0:
         return False
     return usage.total_tokens == usage.prompt_tokens + usage.completion_tokens
 
@@ -219,11 +215,7 @@ async def record_success(
             usage, quote = conservative
             # A zero estimate must not consume a nonzero hold: keep the hold
             # counted as unresolved exposure instead.
-            keep_hold = (
-                reservation_id is not None
-                and quote.cost is not None
-                and quote.cost == 0
-            )
+            keep_hold = reservation_id is not None and quote.cost is not None and quote.cost == 0
     key = reservation_key or attempt_key
     record = await _append_row(
         session,
@@ -245,9 +237,7 @@ async def record_success(
     won = False
     if reservation_id is not None:
         if keep_hold:
-            won = await mark_ambiguous(
-                session, business_id, reservation_id, "post_send_unpriced"
-            )
+            won = await mark_ambiguous(session, business_id, reservation_id, "post_send_unpriced")
         else:
             won = await _reservations.set_status(
                 session,

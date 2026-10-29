@@ -30,9 +30,7 @@ def quantize_spend(value: Decimal | float | str | None) -> Decimal:
     return amount.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-async def recalculate_task_cost(
-    session: AsyncSession, business_id: str, task_id: str
-) -> Decimal:
+async def recalculate_task_cost(session: AsyncSession, business_id: str, task_id: str) -> Decimal:
     """Recompute `Task.cost_accrued` = SUM(confirmed ledger cost) for the task.
 
     Ledger-derived by construction (never incremented), so replaying the same

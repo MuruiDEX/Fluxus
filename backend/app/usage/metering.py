@@ -204,9 +204,7 @@ class TeamLeadMeter:
         async with self.factory() as session:
             async with session.begin():
                 if self.project_id is None:
-                    return await self._reserve_business(
-                        session, bound, attempt_key
-                    )
+                    return await self._reserve_business(session, bound, attempt_key)
                 project = await _projects.get(session, self.business_id, self.project_id)
                 if project is None:
                     raise TargetMissingError("project")
@@ -311,9 +309,7 @@ class TeamLeadMeter:
                     max_output_tokens=max_output,
                 )
                 if self.project_id is not None:
-                    await recalculate_project_spend(
-                        session, self.business_id, self.project_id
-                    )
+                    await recalculate_project_spend(session, self.business_id, self.project_id)
 
     async def _settle_post_send(
         self,
@@ -344,14 +340,8 @@ class TeamLeadMeter:
                     input_bound_tokens=input_bound,
                     max_output_tokens=max_output,
                 )
-                if (
-                    self.project_id is not None
-                    and record is not None
-                    and status == "confirmed"
-                ):
-                    await recalculate_project_spend(
-                        session, self.business_id, self.project_id
-                    )
+                if self.project_id is not None and record is not None and status == "confirmed":
+                    await recalculate_project_spend(session, self.business_id, self.project_id)
 
     async def _settle_ambiguous(self, reservation_id: str | None, reason: str) -> None:
         if reservation_id is None:
@@ -365,6 +355,4 @@ class TeamLeadMeter:
             return
         async with self.factory() as session:
             async with session.begin():
-                await release_reservation(
-                    session, self.business_id, reservation_id, reason
-                )
+                await release_reservation(session, self.business_id, reservation_id, reason)
