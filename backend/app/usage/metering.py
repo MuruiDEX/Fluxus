@@ -11,11 +11,13 @@ discipline as the executor:
 
 Project-scoped calls reserve against `Project.ai_budget`. Business-scoped calls
 (questions/summary/plan, which have no project) reserve against
-`Business.ai_budget`; a business with no configured budget keeps the Stage 16.1
-bare-ledger behavior. Provider failures are classified exactly like the
-executor, with Stage 16.1's post-send policy: a malformed response is priced
-`estimated` from a defensible tariff bound, or the hold is kept `ambiguous`; it
-is NEVER released and NEVER recorded as zero.
+`Business.ai_budget`. A business with no configured budget (zero/NULL) has no
+monetary limit, but still creates a zero-amount `best_effort` reservation: it
+gives every attempt a stable identity and a reservation-derived ledger key
+without reserving money or representing financial exposure. Provider failures
+are classified exactly like the executor, with Stage 16.1's post-send policy: a
+malformed response is priced `estimated` from a defensible tariff bound, or the
+hold is kept `ambiguous`; it is NEVER released and NEVER recorded as zero.
 
 Stage 18 (S1): the reserved amount is derived from the output limit the
 provider request ACTUALLY carries (`request.max_tokens`). No cap is ever
@@ -256,9 +258,13 @@ class TeamLeadMeter:
         await session.refresh(business, with_for_update=True)
         ai_budget = business.ai_budget if business.ai_budget is not None else 0
         if ai_budget <= 0:
-            # No business limit: preserve the existing bare-ledger behavior.
-            return None, None
-        if bound is not None:
+            # No business limit: still reserve, so every attempt keeps a stable
+            # identity and a reservation-derived ledger key, but never block.
+            # A zero-amount hold identifies the attempt; it does NOT reserve
+            # money and does not represent financial exposure.
+            amount = Decimal("0")
+            mode = "best_effort"
+        elif bound is not None:
             amount = bound.cost or Decimal("0")
             mode = "guaranteed"
         elif not business.allow_unpriced_ai:

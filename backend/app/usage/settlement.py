@@ -12,8 +12,10 @@ instance): settlement often runs AFTER the originating transaction rolled back,
 which expires ORM state and would trigger a lazy load outside the greenlet.
 
 Stage 16.1 additions:
-- `reservation_id`/`task_id` are optional: business-scoped Team Lead calls have
-  no project to reserve against and append a bare ledger row.
+- `reservation_id`/`task_id` are optional: a caller without a reservation still
+  appends a bare ledger row. Team Lead business-scoped calls now always create
+  a reservation (zero-amount when the business has no configured budget), so
+  their ledger key is reservation-derived.
 - `record_estimated_failure` implements the post-send malformed-response policy:
   estimated from a defensible tariff bound when possible, otherwise the hold is
   kept `ambiguous`; it is NEVER released and NEVER recorded as zero.
@@ -192,10 +194,11 @@ async def record_success(
     When no usable bound exists, the row is `unknown` and any active hold is
     kept `ambiguous` (the provider answered and may have billed).
 
-    `reservation_id` is optional (Stage 16.1): business-scoped Team Lead calls
-    with no configured business budget append a bare ledger row. `task_id` is
-    optional; task-less rows skip the task-cost recompute (the caller
-    recomputes project spend when the row is project-scoped).
+    `reservation_id` is optional: a caller without a reservation appends a bare
+    ledger row. Team Lead business-scoped calls now always reserve (zero amount
+    when the business has no configured budget); `task_id` is optional and
+    task-less rows skip the task-cost recompute (the caller recomputes project
+    spend when the row is project-scoped).
     """
     quote = price_response(provider, model, response)
     usage = response.usage
@@ -280,8 +283,8 @@ async def record_estimated_failure(
       known AND a positive output cap exists - never `confirmed`;
     - otherwise the hold is kept `ambiguous` when a reservation exists (the
       financial outcome cannot be established), or an `unknown` row is appended
-      for a reservation-less call (no configured business budget) so the
-      attempt is not lost.
+      for a reservation-less caller so the attempt is not lost. Team Lead
+      business-scoped calls always reserve, so they take the hold path.
 
     Returns `(record_or_None, reservation_settled, status)`.
     """

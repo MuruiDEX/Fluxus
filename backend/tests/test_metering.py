@@ -15,6 +15,8 @@ from app.llm.types import (
     BadResponseError,
     LlmMessage,
     LlmRequest,
+    LlmResponse,
+    LlmUsage,
     ProviderError,
     ProviderTimeoutError,
     TransientProviderError,
@@ -30,7 +32,9 @@ from app.usage.metering import (
     TargetMissingError,
     TeamLeadMeter,
 )
+from app.usage.settlement import record_success
 from app.usage.tariffs import Tariff
+from tests.conftest import login_as, seed_operator
 from tests.factories import BIZ, make_world
 
 TARIFF = Tariff(
@@ -73,9 +77,10 @@ async def _rows(session: AsyncSession) -> tuple[list[UsageRecord], list[BudgetRe
     return usages, holds
 
 
-async def test_business_scoped_call_appends_bare_confirmed_row(
+async def test_business_scoped_call_without_budget_reserves_zero_amount(
     session: AsyncSession, test_engine: AsyncEngine
 ) -> None:
+    """No business budget: still reserve, but with amount 0 (no money)."""
     pricing.register_tariff(TARIFF)
     await make_world(session)
     await session.commit()
@@ -87,13 +92,176 @@ async def test_business_scoped_call_appends_bare_confirmed_row(
 
     assert response.text == "hello"
     usages, holds = await _rows(session)
-    assert holds == []
     assert len(usages) == 1
     row = usages[0]
     assert row.project_id is None and row.task_id is None
     assert row.call_kind == "brief_questions"
     assert row.usage_status == "confirmed" and row.cost_source == "tariff"
     assert row.cost_amount == Decimal("0.10")
+    assert len(holds) == 1
+    hold = holds[0]
+    assert hold.project_id is None and hold.task_id is None
+    assert hold.amount == Decimal("0")
+    assert hold.mode == "best_effort"
+    assert hold.status == "consumed"
+    assert hold.usage_record_id == row.id
+
+
+async def test_business_scoped_retry_uses_distinct_run_seq_and_usage_key(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """Two real calls with one attempt key keep distinct reservation identities."""
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+
+    await _meter(factory).complete(MockProvider(texts=["first"]), _request(), generation=0)
+    await _meter(factory).complete(MockProvider(texts=["second"]), _request(), generation=0)
+
+    usages, holds = await _rows(session)
+    assert len(usages) == 2 and len(holds) == 2
+    assert sorted(hold.run_seq for hold in holds) == [1, 2]
+    assert len({hold.idempotency_key for hold in holds}) == 2
+    assert len({usage.idempotency_key for usage in usages}) == 2
+    for hold in holds:
+        assert hold.amount == Decimal("0")
+        assert hold.mode == "best_effort"
+        assert hold.status == "consumed"
+
+
+async def test_business_scoped_ambiguous_failure_keeps_zero_hold(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """A post-send 5xx must keep the zero-amount attempt visible, not lose it."""
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503, json={"error": {"message": "temporarily unavailable"}})
+
+    provider = OpenAICompatProvider(
+        api_key="test-only",
+        default_model="mock",
+        max_retries=2,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderError):
+        await _meter(factory).complete(provider, _request(), generation=0)
+
+    assert calls == 1
+    usages, holds = await _rows(session)
+    assert usages == []
+    assert len(holds) == 1
+    hold = holds[0]
+    assert hold.amount == Decimal("0")
+    assert hold.mode == "best_effort"
+    assert hold.status == "ambiguous"
+    assert hold.reason == "provider_error"
+
+
+async def test_business_scoped_cancellation_keeps_zero_hold(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """Cancellation is ambiguous: the zero-amount attempt must stay visible."""
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+    provider = MockProvider(texts=["slow"], latency_s=30.0)
+    entered = asyncio.Event()
+    real_complete = provider.complete
+
+    async def gated(request):  # type: ignore[no-untyped-def]
+        entered.set()
+        return await real_complete(request)
+
+    provider.complete = gated  # type: ignore[method-assign]
+
+    task = asyncio.ensure_future(_meter(factory).complete(provider, _request(), generation=0))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    usages, holds = await _rows(session)
+    assert usages == []
+    assert len(holds) == 1
+    assert holds[0].amount == Decimal("0")
+    assert holds[0].status == "ambiguous"
+    assert holds[0].reason == "cancelled"
+
+
+async def test_business_scoped_repeated_settlement_is_idempotent(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """Re-settling one reservation cannot add a row or consume it twice."""
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+
+    await _meter(factory).complete(MockProvider(texts=["hello"]), _request(), generation=0)
+    usages, holds = await _rows(session)
+    assert len(usages) == 1 and len(holds) == 1
+    original_row, hold = usages[0], holds[0]
+
+    replay = LlmResponse(
+        text="replayed",
+        usage=LlmUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15, reported=True),
+        model="mock",
+        attempts=1,
+    )
+    async with factory() as settle_session:
+        async with settle_session.begin():
+            record, won = await record_success(
+                settle_session,
+                BIZ,
+                reservation_id=hold.id,
+                reservation_key=hold.idempotency_key,
+                task_id=None,
+                project_id=None,
+                call_kind="brief_questions",
+                attempt=0,
+                attempt_key=hold.attempt_key,
+                provider="mock",
+                model="mock",
+                response=replay,
+            )
+
+    assert won is False
+    assert record.id == original_row.id
+    usages_after, holds_after = await _rows(session)
+    assert len(usages_after) == 1 and len(holds_after) == 1
+    assert holds_after[0].status == "consumed"
+
+
+async def test_business_zero_reservation_reports_no_monetary_exposure(
+    session: AsyncSession, test_engine: AsyncEngine, api_client: httpx.AsyncClient
+) -> None:
+    """Usage reporting keeps zero-amount holds out of monetary reservation sums."""
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+    await _meter(factory).complete(MockProvider(texts=["hello"]), _request(), generation=0)
+
+    await seed_operator(session)
+    csrf = await login_as(api_client)
+    headers = {"X-CSRF-Token": csrf}
+    res = await api_client.get(f"/api/v1/businesses/{BIZ}/usage", headers=headers)
+
+    assert res.status_code == 200, res.text
+    summary = res.json()["summary"]
+    assert summary["confirmedCost"] == "0.10"
+    reservations = summary["reservations"]
+    assert Decimal(reservations["active"]) == Decimal("0")
+    assert Decimal(reservations["ambiguous"]) == Decimal("0")
+    assert Decimal(reservations["consumed"]) == Decimal("0")
 
 
 async def test_missing_project_target_fails_before_provider(

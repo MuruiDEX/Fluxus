@@ -457,8 +457,10 @@ class BudgetReservationRepository:
         the business budget is an umbrella over all AI attempts. Project-scoped
         calls are not refused by this method.
 
-        A NULL/zero business budget means "no limit": the caller chooses not to
-        reserve at all, so this method is only called for a configured budget.
+        A NULL/zero business budget means "no limit": callers still create a
+        zero-amount `best_effort` hold so the attempt stays visible, but the
+        ceiling is never checked and nothing is blocked. Such a hold identifies
+        the attempt; it does not reserve money or represent financial exposure.
         """
         amount = quantize_money(amount)
         lock = (
