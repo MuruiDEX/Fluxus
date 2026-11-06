@@ -1,13 +1,14 @@
 """OpenAI-compat adapter: fully offline via httpx MockTransport.
 
 Covers: success + usage, json_schema request shape + validation, fallback,
-status classification (401/429/400/500), bounded retries with attempts count,
+status classification (401/403/408/429/400/500), bounded retries with attempts count,
 timeouts, malformed bodies, SSE fragmentation/multi-event/[DONE]/disconnect,
 and cancellation mid-flight. No real network, no keys.
 """
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -284,9 +285,13 @@ async def test_transport_error_ambiguity_classification() -> None:
     assert pre.ambiguous is False and pre.retryable is True
     pre_to = provider._classify_transport_error(httpx.ConnectTimeout("x"))
     assert pre_to.ambiguous is False and pre_to.retryable is True
+    pre_pool = provider._classify_transport_error(httpx.PoolTimeout("x"))
+    assert pre_pool.ambiguous is False and pre_pool.retryable is True
     # Post-send failures are possibly billed: ambiguous, never retried.
     post = provider._classify_transport_error(httpx.ReadTimeout("stall"))
     assert post.ambiguous is True and post.retryable is False
+    post_write = provider._classify_transport_error(httpx.WriteTimeout("stall"))
+    assert post_write.ambiguous is True and post_write.retryable is False
     post_read = provider._classify_transport_error(httpx.ReadError("dropped"))
     assert post_read.ambiguous is True and post_read.retryable is False
 
@@ -366,13 +371,14 @@ async def test_non_json_body_rejected() -> None:
 # ---------------------------------------------------------------- statuses ---
 
 
-async def test_auth_error_not_retried_and_distinct_code() -> None:
+@pytest.mark.parametrize("status", [401, 403])
+async def test_auth_error_not_retried_and_distinct_code(status: int) -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(401, json={"error": {"message": "bad key"}})
+        return httpx.Response(status, json={"error": {"message": "bad key"}})
 
     provider = _provider(handler)
     with pytest.raises(ProviderAuthError) as exc_info:
@@ -394,6 +400,30 @@ async def test_plain_4xx_not_retried() -> None:
     with pytest.raises(ProviderError):
         await provider.complete(_req())
     assert calls == 1
+
+
+async def test_408_is_ambiguous_and_not_retried() -> None:
+    """An HTTP 408 response may already have been processed and billed.
+
+    It is a provider response, not a client-side pre-send connect timeout, so
+    it is never released as free and never automatically resent.
+    """
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(408, json={"error": {"message": "request timeout"}})
+
+    provider = _provider(handler, max_retries=2)
+    with pytest.raises(ProviderError) as caught:
+        await provider.complete(_req())
+
+    assert calls == 1  # never retried
+    assert type(caught.value) is ProviderError
+    assert caught.value.code == "provider_error"
+    assert caught.value.ambiguous is True
+    assert caught.value.retryable is False
 
 
 async def test_429_retries_then_succeeds() -> None:
@@ -475,6 +505,157 @@ async def test_backoff_is_bounded_and_jittered() -> None:
     assert 0.5 <= d0 <= 0.75
     assert d5 <= 8.25
     assert len({OpenAICompatProvider._backoff_delay(0) for _ in range(20)}) > 1
+
+
+# ------------------------------------------------------ total deadline ---
+
+
+def test_total_deadline_is_derived_from_timeout_and_retries() -> None:
+    """The total budget is explicit and uses the same inputs as the adapter.
+
+    Default: 3 attempts × 30s + worst-case backoff (0.75s + 1.25s) = 92s.
+    The per-request timeout (executor/API cap) takes precedence over the
+    client default, and zero retries leaves exactly one attempt's budget.
+    """
+    provider = _provider(lambda request: httpx.Response(200), timeout_s=30.0, max_retries=2)
+    assert provider._total_deadline_s(_req()) == pytest.approx(3 * 30.0 + 2.0)
+    assert provider._total_deadline_s(_req(timeout_s=0.5)) == pytest.approx(3 * 0.5 + 2.0)
+
+    single = _provider(lambda request: httpx.Response(200), timeout_s=30.0, max_retries=0)
+    assert single._total_deadline_s(_req(timeout_s=0.2)) == pytest.approx(0.2)
+
+
+async def test_total_deadline_stops_never_completing_call() -> None:
+    started = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        started.set()
+        await asyncio.Event().wait()  # never completes, never yields bytes
+
+    provider = _provider(handler, max_retries=0)
+    begun = time.monotonic()
+    with pytest.raises(ProviderTimeoutError) as caught:
+        await provider.complete(_req(timeout_s=0.15))
+    elapsed = time.monotonic() - begun
+
+    assert started.is_set()
+    assert caught.value.ambiguous is True
+    assert caught.value.retryable is False
+    assert elapsed < 1.0
+
+
+async def test_total_deadline_stops_slow_trickle_body() -> None:
+    """Chunks arriving faster than the inactivity timeout cannot evade the cap.
+
+    The body is emitted every 20ms, so httpx's read timeout (120ms of
+    silence) never fires; only the adapter's wall-clock budget can stop it.
+    """
+    body = json.dumps(_ok_payload()).encode()
+    chunks = [body[i : i + 4] for i in range(0, len(body), 4)]
+    served = 0
+
+    class SlowTrickle(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            nonlocal served
+            for chunk in chunks:
+                await asyncio.sleep(0.02)
+                served += 1
+                yield chunk
+
+        async def aclose(self) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=SlowTrickle())
+
+    provider = _provider(handler, max_retries=0)
+    with pytest.raises(ProviderTimeoutError) as caught:
+        await provider.complete(_req(timeout_s=0.12))
+
+    assert served > 1  # the body was actively arriving, not silent
+    assert caught.value.ambiguous is True
+    assert caught.value.retryable is False
+
+
+async def test_total_deadline_spans_retries_and_backoff(monkeypatch) -> None:
+    """Retries share one budget; a retry never resets the deadline."""
+    import app.llm.adapters.openai_compat as module
+
+    monkeypatch.setattr(module, "_BACKOFF_BASE_S", 0.01)
+    monkeypatch.setattr(module, "_BACKOFF_CAP_S", 0.01)
+    monkeypatch.setattr(module.random, "uniform", lambda _low, _high: 0.0)
+
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.3)
+        return httpx.Response(429, json={"error": {"message": "slow down"}})
+
+    provider = _provider(handler, max_retries=2)
+    begun = time.monotonic()
+    with pytest.raises(ProviderTimeoutError) as caught:
+        await provider.complete(_req(timeout_s=0.1))
+    elapsed = time.monotonic() - begun
+
+    # Total = 3 × 0.1s + 2 × (0.01s backoff + 0.25s jitter allowance) = 0.82s.
+    # A third attempt may start, but cannot finish and no retry escapes it.
+    assert caught.value.ambiguous is True
+    assert 1 <= calls <= 3
+    assert elapsed < 1.5
+    calls_at_timeout = calls
+    await asyncio.sleep(0.2)
+    assert calls == calls_at_timeout
+
+
+async def test_pre_send_timeout_keeps_its_non_ambiguous_mapping() -> None:
+    """The wall-clock wrapper must not reclassify provable pre-send failures."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("connect stalled", request=request)
+
+    provider = _provider(handler, max_retries=0)
+    with pytest.raises(ProviderTimeoutError) as caught:
+        await provider.complete(_req(timeout_s=0.5))
+
+    assert caught.value.ambiguous is False
+
+
+async def test_stream_total_deadline_bounds_slow_stream() -> None:
+    """Stream body consumption shares the deadline and closes on expiry."""
+
+    class SlowSse(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]) -> None:
+            self._chunks = chunks
+            self.served = 0
+            self.closed = False
+
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            for chunk in self._chunks:
+                await asyncio.sleep(0.02)
+                self.served += 1
+                yield chunk
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = SlowSse([_event("a") for _ in range(40)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+
+    provider = _provider(handler, max_retries=0)
+    begun = time.monotonic()
+    with pytest.raises(ProviderTimeoutError) as caught:
+        async for _chunk in provider.stream(_req(timeout_s=0.12)):
+            pass
+    elapsed = time.monotonic() - begun
+
+    assert stream.served > 1  # chunks kept arriving; only the budget stopped it
+    assert stream.closed is True  # socket/stream released on expiry
+    assert caught.value.ambiguous is True
+    assert elapsed < 1.0
 
 
 # --------------------------------------------------------------------- SSE ---

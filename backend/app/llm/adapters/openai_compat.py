@@ -12,9 +12,20 @@ Hard rules enforced here:
   It is never logged, never interpolated into messages, and never echoed
   in error details.
 - Retries: at most `max_retries` (default 2 → 3 attempts total), exponential
-  backoff with jitter, only for 429 and pre-send network failures. A 5xx or
-  post-send transport failure is ambiguous/possibly billed and is NOT retried.
-  Never for 401/403/other 4xx. Each attempt carries the full timeout.
+  backoff with jitter, only for 429 and pre-send network failures. A 5xx,
+  HTTP 408 response, or post-send transport failure is ambiguous/possibly
+  billed and is NOT retried. Never for 401/403/other 4xx. Each attempt carries
+  the full per-operation timeout, but it always runs inside ONE derived total
+  deadline.
+- Total deadline (Stage 18 S2.1): a single wall-clock budget bounds the ENTIRE
+  local call — client setup, every attempt, all backoff, response-body
+  consumption and local parsing. httpx's `timeout` applies per
+  connect/read/write/pool operation and does not cap total time, so a slow but
+  steady body can evade inactivity timeouts; the adapter therefore enforces
+  its own budget. Expiry raises `ProviderTimeoutError` with
+  `ambiguous=True`/`retryable=False` because the request may already have
+  reached the provider. A local timeout or cancellation never claims the
+  provider stopped processing or billing the request.
 - Structured output: `json_schema` mode first (when a schema is provided),
   `json_object` fallback + mandatory local parse-and-validate in both cases.
 """
@@ -22,6 +33,7 @@ Hard rules enforced here:
 import asyncio
 import json
 import random
+import time
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -176,6 +188,14 @@ def _error_for_status(status: int) -> LlmError:
         return ProviderAuthError(f"Provider rejected server credentials (HTTP {status}).")
     if status == 429:
         return RateLimitedError(f"Provider rate limit (HTTP {status}).")
+    if status == 408:
+        # The provider received the request but did not answer in time. It may
+        # still have processed (and billed) the call, so this is NOT proof of a
+        # safe pre-send failure: hold the outcome ambiguous and never resend.
+        error = ProviderError(f"Provider request timeout (HTTP {status}).")
+        error.ambiguous = True
+        error.retryable = False
+        return error
     if 500 <= status <= 599:
         # A server error can be returned after the provider has accepted or
         # billed the request. Treat the outcome as ambiguous and do not resend.
@@ -270,6 +290,52 @@ class OpenAICompatProvider:
         # 0.5, 1.0, 2.0 … seconds, capped, plus jitter.
         return min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2**retry_index)) + random.uniform(0, 0.25)
 
+    @staticmethod
+    def _backoff_budget_s(max_retries: int) -> float:
+        """Conservative wall-clock budget for every retry backoff.
+
+        Mirrors `_backoff_delay`'s cap and jitter exactly (jitter is < 0.25),
+        so the total deadline below never cuts a retry that the existing
+        retry policy is entitled to make.
+        """
+        return sum(
+            min(_BACKOFF_CAP_S, _BACKOFF_BASE_S * (2**retry_index)) + 0.25
+            for retry_index in range(max(0, max_retries))
+        )
+
+    def _total_deadline_s(self, request: LlmRequest) -> float:
+        """Hard wall-clock budget for one complete local provider operation.
+
+        Derived from the SAME inputs the adapter already uses, so it changes no
+        retry count, per-attempt timeout or provider parameter. The per-attempt
+        timeout follows `request.timeout_s` (executor/API cap) when supplied,
+        otherwise the client default; all attempts and their backoff share this
+        one budget rather than each resetting it.
+        """
+        attempt_timeout = request.timeout_s or self._timeout_s
+        attempts = self._max_retries + 1
+        return max(0.0, attempts * attempt_timeout + self._backoff_budget_s(self._max_retries))
+
+    @staticmethod
+    def _deadline_error(deadline_s: float) -> ProviderTimeoutError:
+        error = ProviderTimeoutError(
+            f"Provider call exceeded its {deadline_s:.2f}s total deadline."
+        )
+        # The request may have been transmitted (and billed) before the local
+        # budget expired. The phase is unknowable here, so fail closed: never
+        # retry and never treat this as proof that no charge occurred.
+        error.ambiguous = True
+        error.retryable = False
+        return error
+
+    @staticmethod
+    def _remaining_s(deadline_at: float) -> float:
+        """Return time left before `deadline_at`, or raise once exhausted."""
+        remaining = deadline_at - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        return remaining
+
     def _classify_transport_error(self, exc: Exception) -> LlmError:
         """Map a transport failure, distinguishing pre-send from post-send.
 
@@ -318,8 +384,8 @@ class OpenAICompatProvider:
             raise self._classify_transport_error(exc) from exc
         if 200 <= response.status_code < 300:
             return response
-        # Auth + other 4xx are final. 429 is retryable; 5xx is ambiguous and
-        # explicitly marked non-retryable by `_error_for_status`.
+        # Auth + other 4xx are final. 429 is retryable; 408 and 5xx are
+        # ambiguous and explicitly marked non-retryable by `_error_for_status`.
         raise _error_for_status(response.status_code)
 
     async def _with_retries(
@@ -345,41 +411,69 @@ class OpenAICompatProvider:
         return httpx.AsyncClient(transport=self._transport, timeout=timeout_s)
 
     async def complete(self, request: LlmRequest) -> LlmResponse:
+        deadline_s = self._total_deadline_s(request)
         try:
-            async with self._client(request.timeout_s or self._timeout_s) as client:
-                response, attempts = await self._with_retries(client, request, stream=False)
-        except asyncio.CancelledError:
-            raise
-        try:
-            payload = response.json()
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise BadResponseError(f"Provider returned non-JSON body: {exc}") from exc
-        text = _extract_text(payload)
-        data = self._prepare_structured(text, request.structured)
-        usage = _extract_usage(payload) if isinstance(payload, dict) else LlmUsage()
-        request_id = payload.get("id") if isinstance(payload, dict) else None
-        return LlmResponse(
-            text=text,
-            data=data,
-            usage=usage,
-            model=str(payload.get("model", "")) if isinstance(payload, dict) else "",
-            provider_request_id=str(request_id) if request_id else None,
-            attempts=attempts,
-            metadata={"provider": "openai_compat"},
-        )
+            # ONE budget spans connection setup, every retry, backoff, body
+            # read and local parsing. On expiry this cancels the in-flight
+            # coroutine; httpx then closes the client/socket in its context
+            # managers. Remote provider processing is NOT guaranteed stopped.
+            async with asyncio.timeout(deadline_s):
+                async with self._client(request.timeout_s or self._timeout_s) as client:
+                    response, attempts = await self._with_retries(client, request, stream=False)
+                try:
+                    payload = response.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    raise BadResponseError(f"Provider returned non-JSON body: {exc}") from exc
+                text = _extract_text(payload)
+                data = self._prepare_structured(text, request.structured)
+                usage = _extract_usage(payload) if isinstance(payload, dict) else LlmUsage()
+                request_id = payload.get("id") if isinstance(payload, dict) else None
+                return LlmResponse(
+                    text=text,
+                    data=data,
+                    usage=usage,
+                    model=str(payload.get("model", "")) if isinstance(payload, dict) else "",
+                    provider_request_id=str(request_id) if request_id else None,
+                    attempts=attempts,
+                    metadata={"provider": "openai_compat"},
+                )
+        except TimeoutError as exc:
+            # `asyncio.timeout` only; external CancelledError propagates
+            # unchanged because it is not a TimeoutError.
+            raise self._deadline_error(deadline_s) from exc
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmChunk]:
+        deadline_s = self._total_deadline_s(request)
+        deadline_at = time.monotonic() + deadline_s
+        try:
+            async for chunk in self._stream_chunks(request, deadline_at):
+                yield chunk
+        except TimeoutError as exc:
+            raise self._deadline_error(deadline_s) from exc
+
+    async def _stream_chunks(
+        self, request: LlmRequest, deadline_at: float
+    ) -> AsyncIterator[LlmChunk]:
         # The client MUST stay open for the whole stream: it owns the socket.
         client = self._client(request.timeout_s or self._timeout_s)
         response: httpx.Response | None = None
         try:
             try:
-                response, _ = await self._with_retries(client, request, stream=True)
+                # Connection + retries share the same budget as every read
+                # below; no attempt may reset the deadline.
+                async with asyncio.timeout(self._remaining_s(deadline_at)):
+                    response, _ = await self._with_retries(client, request, stream=True)
             except asyncio.CancelledError:
                 raise
             parser = SseParser()
             try:
-                async for chunk in response.aiter_bytes():
+                chunks = response.aiter_bytes()
+                while True:
+                    try:
+                        async with asyncio.timeout(self._remaining_s(deadline_at)):
+                            chunk = await anext(chunks)
+                    except StopAsyncIteration:
+                        break
                     for payload_text in parser.feed(chunk):
                         try:
                             payload = json.loads(payload_text)

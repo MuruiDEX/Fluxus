@@ -294,9 +294,11 @@ async def test_unknown_persists_row_unchanged(
     async def boom_update(*args, **kwargs):
         raise RuntimeError("store down")
 
-    # Persist txn fails at the task update; compensation then fails the same
-    # way, so the executor must report unknown without writing anything.
-    monkeypatch.setattr("app.persistence.repositories.base.BaseRepository.update", boom_update)
+    # Persist txn fails at the ownership fence; compensation then fails the
+    # same way, so the executor must report unknown without writing anything.
+    monkeypatch.setattr(
+        "app.persistence.repositories.concrete.TaskRepository.fence_owned", boom_update
+    )
     result = await _execute(session, provider, _req())
     assert result.outcome == "unknown"
     assert result.error_code == "compensation_failed"

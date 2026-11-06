@@ -14,11 +14,13 @@ from app.execution import executor as executor_module
 from app.execution.executor import ExecutionRequest, ExecutionResult, execute_task
 from app.execution.prompts import RESULT_SCHEMA, build_system_prompt, build_user_prompt
 from app.llm.adapters.openai_compat import OpenAICompatProvider
+from app.llm.base import LlmProvider
 from app.llm.mock import MockProvider
 from app.llm.types import LlmUsage, ProviderError, TransientProviderError
 from app.persistence.engine import session_factory
 from app.persistence.models.usage import BudgetReservation, UsageRecord
-from app.persistence.repositories.concrete import ProjectRepository
+from app.persistence.repositories.concrete import ProjectRepository, TaskRepository
+from app.persistence.repositories.usage import BudgetReservationRepository
 from app.usage import pricing
 from app.usage.tariffs import Tariff
 from tests.factories import BIZ, make_task, make_world
@@ -49,7 +51,7 @@ def _request(settings: Settings | None = None, task_id: str = "t_1") -> Executio
 
 
 async def _run(
-    session: AsyncSession, provider: MockProvider, request: ExecutionRequest
+    session: AsyncSession, provider: LlmProvider, request: ExecutionRequest
 ) -> ExecutionResult:
     await session.commit()
     return await execute_task(session, provider, request)
@@ -105,8 +107,6 @@ async def test_unpriced_budgeted_project_fails_closed(session: AsyncSession) -> 
 
 
 async def make_task_status(session: AsyncSession) -> str:
-    from app.persistence.repositories.concrete import TaskRepository
-
     await session.rollback()
     task = await TaskRepository().get(session, BIZ, "t_1")
     assert task is not None
@@ -201,6 +201,66 @@ async def test_ambiguous_failure_holds_budget(session: AsyncSession) -> None:
     second = await _run(session, MockProvider(texts=['{"summary": "y"}']), _request())
 
     assert second.outcome == "refused" and second.error_code == "budget_exceeded"
+    assert len(await _reservations(session)) == 1
+
+
+async def test_http_408_holds_reservation_ambiguous_without_ledger_or_spend(
+    session: AsyncSession,
+) -> None:
+    """An HTTP 408 response is a possibly-billed unknown outcome, not a free call."""
+    pricing.register_tariff(
+        Tariff(
+            provider="openai_compat",
+            model=MODEL,
+            input_per_1k=Decimal("5.00"),
+            output_per_1k=Decimal("10.00"),
+        )
+    )
+    pricing.register_tariff(TARIFF)  # the follow-up mock attempt must be priceable
+    await make_world(session)
+    await make_task(session, task_id="t_1", status="not_started")
+    await make_task(session, task_id="t_2", status="not_started")
+    bound = _bound_for("openai_compat", MODEL)
+    await ProjectRepository().update(session, BIZ, "proj_1", {"ai_budget": bound})
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(408, json={"error": {"message": "request timeout"}})
+
+    provider = OpenAICompatProvider(
+        api_key="test-only",
+        default_model=MODEL,
+        max_retries=2,
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await _run(session, provider, _request(task_id="t_1"))
+
+    assert result.outcome == "failed" and result.error_code == "provider_error"
+    assert calls == 1  # no automatic retry after a 408
+    assert await _usages(session) == []
+    holds = await _reservations(session)
+    assert len(holds) == 1
+    hold = holds[0]
+    assert hold.status == "ambiguous" and hold.reason == "provider_error"
+    assert hold.attempt == 0 and hold.attempt_key == f"{BIZ}:t_1:a0"
+    assert hold.execution_generation == 1
+    assert hold.amount == bound
+    assert await BudgetReservationRepository().pending_total(session, BIZ, "proj_1") == bound
+
+    project = await ProjectRepository().get(session, BIZ, "proj_1")
+    task = await TaskRepository().get(session, BIZ, "t_1")
+    assert project is not None and project.ai_spent == Decimal("0")
+    assert task is not None and task.cost_accrued == Decimal("0")
+
+    # The ambiguous hold stays part of pending budget and blocks a fresh attempt.
+    second_provider = MockProvider(texts=['{"summary": "y"}'])
+    second = await _run(session, second_provider, _request(task_id="t_2"))
+
+    assert second.outcome == "refused" and second.error_code == "budget_exceeded"
+    assert second_provider.calls == []
     assert len(await _reservations(session)) == 1
 
 
@@ -566,7 +626,7 @@ async def test_budget_patch_between_snapshot_and_reserve_cannot_use_stale_zero_h
     await make_task(session, status="not_started")
     await session.commit()
     factory = session_factory(test_engine)
-    original_claim = executor_module._tasks.claim_task
+    original_claim = executor_module._tasks.claim_owned
 
     async def claim_after_budget_patch(*args, **kwargs):
         # Simulate a committed project PATCH landing after Phase 0's snapshot
@@ -579,7 +639,7 @@ async def test_budget_patch_between_snapshot_and_reserve_cannot_use_stale_zero_h
                 await patch_session.flush()
         return await original_claim(*args, **kwargs)
 
-    monkeypatch.setattr(executor_module._tasks, "claim_task", claim_after_budget_patch)
+    monkeypatch.setattr(executor_module._tasks, "claim_owned", claim_after_budget_patch)
     provider = MockProvider(texts=['{"summary": "x"}'])
     provider._default_model = "race-unpriced-model"
 

@@ -167,6 +167,47 @@ async def _append_row(
     )
 
 
+async def _lock_generation_reservation(
+    session: AsyncSession,
+    business_id: str,
+    reservation_id: str | None,
+    *,
+    task_id: str | None,
+    attempt_key: str,
+    execution_generation: int | None,
+) -> tuple[bool, Any]:
+    """Prove a generation-scoped reservation is safe to settle, under lock.
+
+    Returns `(proceed, reservation)`:
+
+    - legacy/Team Lead caller (no generation): `(True, None)` — behavior is
+      unchanged and the existing CAS still protects the transition.
+    - generation-scoped caller: locks the reservation by full scope (business,
+      id, task, attempt, exact generation) and only permits `active` (normal)
+      or `consumed` (safe idempotent retry). A missing/mismatched row, or a
+      hold already reconciled to `ambiguous`/`released`/`written_off`, is
+      `(False, ...)` — no ledger row and no status transition.
+
+    The caller must already hold the task ownership fence, so the lock order
+    stays task → reservation and serializes against recovery.
+    """
+    if reservation_id is None or execution_generation is None:
+        return True, None
+    reservation = await _reservations.get_for_settlement(
+        session,
+        business_id,
+        reservation_id,
+        task_id=task_id,
+        attempt_key=attempt_key,
+        execution_generation=execution_generation,
+    )
+    if reservation is None:
+        return False, None
+    if reservation.status not in ("active", "consumed"):
+        return False, reservation
+    return True, reservation
+
+
 async def record_success(
     session: AsyncSession,
     business_id: str,
@@ -179,6 +220,7 @@ async def record_success(
     call_kind: str | None = None,
     attempt: int = 0,
     attempt_key: str,
+    execution_generation: int | None = None,
     provider: str,
     model: str,
     response: LlmResponse,
@@ -199,7 +241,23 @@ async def record_success(
     when the business has no configured budget); `task_id` is optional and
     task-less rows skip the task-cost recompute (the caller recomputes project
     spend when the row is project-scoped).
+
+    `execution_generation` (Stage 18 S2.2.4.5) fences task-execution settlement:
+    the reservation is locked and validated by exact scope BEFORE any ledger
+    append, and a hold already reconciled by recovery is never charged. On a
+    skip this returns `(None, False)`. Legacy/Team Lead callers omit it and keep
+    the previous behavior.
     """
+    proceed, _reservation = await _lock_generation_reservation(
+        session,
+        business_id,
+        reservation_id,
+        task_id=task_id,
+        attempt_key=attempt_key,
+        execution_generation=execution_generation,
+    )
+    if not proceed:
+        return None, False
     quote = price_response(provider, model, response)
     usage = response.usage
     keep_hold = False
@@ -240,7 +298,15 @@ async def record_success(
     won = False
     if reservation_id is not None:
         if keep_hold:
-            won = await mark_ambiguous(session, business_id, reservation_id, "post_send_unpriced")
+            won = await mark_ambiguous(
+                session,
+                business_id,
+                reservation_id,
+                "post_send_unpriced",
+                task_id=task_id,
+                attempt_key=attempt_key,
+                execution_generation=execution_generation,
+            )
         else:
             won = await _reservations.set_status(
                 session,
@@ -249,6 +315,9 @@ async def record_success(
                 from_statuses=("active",),
                 to_status="consumed",
                 usage_record_id=record.id,
+                task_id=task_id,
+                attempt_key=attempt_key,
+                execution_generation=execution_generation,
             )
     # Ledger-derived task cost; idempotent (SUM, never increment).
     if task_id is not None:
@@ -268,6 +337,7 @@ async def record_estimated_failure(
     call_kind: str | None = None,
     attempt: int = 0,
     attempt_key: str,
+    execution_generation: int | None = None,
     provider: str,
     model: str,
     input_bound_tokens: int,
@@ -287,7 +357,22 @@ async def record_estimated_failure(
       business-scoped calls always reserve, so they take the hold path.
 
     Returns `(record_or_None, reservation_settled, status)`.
+
+    `execution_generation` fences task-execution settlement exactly like
+    `record_success`: the hold is locked and validated before any ledger append
+    and a recovery-reconciled hold is never charged. A skip returns
+    `(None, False, \"skipped\")`.
     """
+    proceed, _reservation = await _lock_generation_reservation(
+        session,
+        business_id,
+        reservation_id,
+        task_id=task_id,
+        attempt_key=attempt_key,
+        execution_generation=execution_generation,
+    )
+    if not proceed:
+        return None, False, "skipped"
     prompt_tokens = max(0, int(input_bound_tokens))
     completion_tokens = max(0, int(max_output_tokens or 0))
     usage = LlmUsage(
@@ -309,7 +394,15 @@ async def record_estimated_failure(
     key = reservation_key or attempt_key
     if quote.status == "unknown" and reservation_id is not None:
         # Cannot price it and a hold exists: fail closed, keep exposure counted.
-        won = await mark_ambiguous(session, business_id, reservation_id, "post_send_unpriced")
+        won = await mark_ambiguous(
+            session,
+            business_id,
+            reservation_id,
+            "post_send_unpriced",
+            task_id=task_id,
+            attempt_key=attempt_key,
+            execution_generation=execution_generation,
+        )
         return None, won, "ambiguous"
     record = await _append_row(
         session,
@@ -337,6 +430,9 @@ async def record_estimated_failure(
             from_statuses=("active",),
             to_status="consumed",
             usage_record_id=record.id,
+            task_id=task_id,
+            attempt_key=attempt_key,
+            execution_generation=execution_generation,
         )
     if task_id is not None:
         await recalculate_task_cost(session, business_id, task_id)
@@ -344,9 +440,21 @@ async def record_estimated_failure(
 
 
 async def release_reservation(
-    session: AsyncSession, business_id: str, reservation_id: str | None, reason: str
+    session: AsyncSession,
+    business_id: str,
+    reservation_id: str | None,
+    reason: str,
+    *,
+    task_id: str | None = None,
+    attempt_key: str | None = None,
+    execution_generation: int | None = None,
 ) -> bool:
-    """Proven non-execution (pre-send failure / definitive provider error)."""
+    """Proven non-execution (pre-send failure / definitive provider error).
+
+    `execution_generation` adds the ownership fence: only the exact attempt's
+    reservation can be released, and a NULL generation never matches a supplied
+    integer. Omitting it keeps legacy/Team Lead behavior.
+    """
     if reservation_id is None:
         return False
     return await _reservations.set_status(
@@ -356,13 +464,28 @@ async def release_reservation(
         from_statuses=("active",),
         to_status="released",
         reason=reason,
+        task_id=task_id,
+        attempt_key=attempt_key,
+        execution_generation=execution_generation,
     )
 
 
 async def mark_ambiguous(
-    session: AsyncSession, business_id: str, reservation_id: str | None, reason: str
+    session: AsyncSession,
+    business_id: str,
+    reservation_id: str | None,
+    reason: str,
+    *,
+    task_id: str | None = None,
+    attempt_key: str | None = None,
+    execution_generation: int | None = None,
 ) -> bool:
-    """Outcome unknown — the provider may have billed. Held, never released."""
+    """Outcome unknown — the provider may have billed. Held, never released.
+
+    `execution_generation` scopes the transition to the exact attempt's
+    reservation (NULL never matches an integer); omitting it keeps the legacy
+    and Team Lead behavior.
+    """
     if reservation_id is None:
         return False
     return await _reservations.set_status(
@@ -372,4 +495,7 @@ async def mark_ambiguous(
         from_statuses=("active",),
         to_status="ambiguous",
         reason=reason,
+        task_id=task_id,
+        attempt_key=attempt_key,
+        execution_generation=execution_generation,
     )

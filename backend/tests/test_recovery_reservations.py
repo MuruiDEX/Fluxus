@@ -1,10 +1,10 @@
-"""Stage 16 slice 5: recovery holds (never releases) possibly-billed budget."""
+"""Stage 16 slice 5 / S2.2.4.6: recovery never releases possibly-billed budget."""
 
 from decimal import Decimal
 
 import httpx
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.persistence.models.usage import BudgetReservation
 from app.persistence.repositories.usage import BudgetReservationRepository
@@ -84,65 +84,8 @@ async def test_fresh_recovery_touches_no_reservation(
     assert hold.status == "active"  # live run untouched
 
 
-async def test_project_reconciliation_holds_taskless_teamlead_hold(
-    session: AsyncSession,
-) -> None:
-    await make_world(session)
-    repo = BudgetReservationRepository()
-    hold = await repo.reserve(
-        session,
-        BIZ,
-        project_id="proj_1",
-        task_id=None,
-        attempt_key="tl:b1:brief_finalize:g0",
-        amount=Decimal("1.00"),
-        mode="best_effort",
-    )
-    assert hold is not None
-    await session.commit()
-
-    held, released = await reconcile_project_reservations(session, BIZ, "proj_1")
-    await session.commit()
-
-    assert (held, released) == (1, 0)
-    hold = await _reservation(session)
-    assert hold.status == "ambiguous" and hold.reason == "recovery_stale"
-    assert hold.amount == Decimal("1.00")
-
-
-async def test_project_reconciliation_can_age_out_ambiguous(
-    session: AsyncSession,
-) -> None:
-    await make_world(session)
-    repo = BudgetReservationRepository()
-    hold = await repo.reserve(
-        session,
-        BIZ,
-        project_id="proj_1",
-        task_id=None,
-        attempt_key="tl:b1:brief_finalize:g0",
-        amount=Decimal("1.00"),
-    )
-    assert hold is not None
-    await repo.set_status(
-        session, BIZ, hold.id, from_statuses=("active",), to_status="ambiguous", reason="timeout"
-    )
-    await session.commit()
-    await session.execute(
-        text("UPDATE budget_reservations SET created_at = now() - interval '120 minutes'")
-    )
-    await session.commit()
-
-    held, released = await reconcile_project_reservations(
-        session, BIZ, "proj_1", ambiguous_release_minutes=60
-    )
-    await session.commit()
-
-    assert (held, released) == (0, 1)
-    assert (await _reservation(session)).status == "released"
-
-
-async def test_ambiguous_release_is_disabled_by_default(session: AsyncSession) -> None:
+async def _aged_ambiguous_task_hold(session: AsyncSession) -> Decimal:
+    """Create a 365-day-old `ambiguous` task hold; return pending before recovery."""
     await make_world(session)
     await make_task(session, status="working")
     repo = BudgetReservationRepository()
@@ -163,26 +106,95 @@ async def test_ambiguous_release_is_disabled_by_default(session: AsyncSession) -
     await session.execute(
         text("UPDATE budget_reservations SET created_at = now() - interval '365 days'")
     )
+    await session.execute(
+        text("UPDATE tasks SET updated_at = now() - interval '7200 seconds' WHERE id = 't_1'")
+    )
     await session.commit()
-
-    released = await repo.release_aged_ambiguous(session, BIZ, older_than_minutes=0)
-
-    assert released == 0
-    assert (await _reservation(session)).status == "ambiguous"
+    return await repo.pending_total(session, BIZ, "proj_1")
 
 
-async def test_ambiguous_release_when_operator_ages_it_out(session: AsyncSession) -> None:
+async def test_ambiguous_hold_aged_one_year_stays_ambiguous_after_recovery(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    pending_before = await _aged_ambiguous_task_hold(session)
+
+    headers = await _authed(session, api_client)
+    res = await api_client.post(_recover_url(), headers=headers)
+
+    assert res.status_code == 200, res.text
+    hold = await _reservation(session)
+    assert hold.status == "ambiguous"
+    assert hold.reason == "timeout"
+    assert (
+        await BudgetReservationRepository().pending_total(session, BIZ, "proj_1") == pending_before
+    )
+
+
+async def test_nonzero_deprecated_release_setting_has_no_effect(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    from app.core.config import Settings
+    from app.main import create_app
+    from app.persistence.engine import session_factory
+
+    pending_before = await _aged_ambiguous_task_hold(session)
+    settings = Settings(environment="test", usage_ambiguous_release_minutes=1)
+    # Backwards-compatible parsing is preserved, but the value is ignored.
+    assert settings.usage_ambiguous_release_minutes == 1
+
+    app = create_app(settings)
+    app.state.session_factory = session_factory(test_engine)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        headers = await _authed(session, client)
+        res = await client.post(_recover_url(), headers=headers)
+
+    assert res.status_code == 200, res.text
+    hold = await _reservation(session)
+    assert hold.status == "ambiguous"
+    assert (
+        await BudgetReservationRepository().pending_total(session, BIZ, "proj_1") == pending_before
+    )
+
+
+async def test_project_reconciliation_holds_taskless_teamlead_hold(
+    session: AsyncSession,
+) -> None:
     await make_world(session)
-    await make_task(session, status="working")
     repo = BudgetReservationRepository()
     hold = await repo.reserve(
         session,
         BIZ,
         project_id="proj_1",
-        task_id="t_1",
-        attempt=0,
-        attempt_key=f"{BIZ}:t_1:a0",
-        amount=Decimal("3.00"),
+        task_id=None,
+        attempt_key="tl:b1:brief_finalize:g0",
+        amount=Decimal("1.00"),
+        mode="best_effort",
+    )
+    assert hold is not None
+    await session.commit()
+
+    held = await reconcile_project_reservations(session, BIZ, "proj_1")
+    await session.commit()
+
+    assert held == 1
+    hold = await _reservation(session)
+    assert hold.status == "ambiguous" and hold.reason == "recovery_stale"
+    assert hold.amount == Decimal("1.00")
+
+
+async def test_project_reconciliation_never_ages_out_ambiguous(
+    session: AsyncSession,
+) -> None:
+    await make_world(session)
+    repo = BudgetReservationRepository()
+    hold = await repo.reserve(
+        session,
+        BIZ,
+        project_id="proj_1",
+        task_id=None,
+        attempt_key="tl:b1:brief_finalize:g0",
+        amount=Decimal("1.00"),
     )
     assert hold is not None
     await repo.set_status(
@@ -190,13 +202,15 @@ async def test_ambiguous_release_when_operator_ages_it_out(session: AsyncSession
     )
     await session.commit()
     await session.execute(
-        text("UPDATE budget_reservations SET created_at = now() - interval '120 minutes'")
+        text("UPDATE budget_reservations SET created_at = now() - interval '365 days'")
     )
     await session.commit()
+    pending_before = await repo.pending_total(session, BIZ, "proj_1")
 
-    released = await repo.release_aged_ambiguous(session, BIZ, older_than_minutes=60)
+    held = await reconcile_project_reservations(session, BIZ, "proj_1")
     await session.commit()
 
-    assert released == 1
+    assert held == 0
     hold = await _reservation(session)
-    assert hold.status == "released" and hold.reason == "aged_out"
+    assert hold.status == "ambiguous" and hold.reason == "timeout"
+    assert await repo.pending_total(session, BIZ, "proj_1") == pending_before

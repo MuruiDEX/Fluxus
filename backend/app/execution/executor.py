@@ -11,6 +11,13 @@ Transaction discipline (binding):
   Anything else ( С‡СѓР¶РѕР№ or newer run touched the row) в†’ hands off, report
   `unknown`, never reset С‡СѓР¶РѕР№ work.
 
+Stale ownership (S2.2.4.6): when the compensation fence proves our generation
+is gone, the old execution settles only its OWN reservation by exact identity
+(business, reservation id, task, attempt key, integer generation). It becomes
+`ambiguous` unless provider evidence proves the request was never sent, in which
+case it is `released`. No task row, ledger row, task cost or spend is written;
+`ambiguous` stays part of pending budget.
+
 Cancellation: `asyncio.CancelledError` is never converted or retried. After a
 confirmed-safe compensation the original CancelledError is re-raised so
 structured concurrency (TaskGroup / wait_for) keeps working; the cleanup is
@@ -19,16 +26,18 @@ observable in the database, not in a swallowed result.
 
 import asyncio
 import json
+import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution import prompts
+from app.execution.heartbeat import LeaseHeartbeat
 from app.execution.prompts import (
     MAX_ENVELOPE_CHARS,
     RESULT_SCHEMA,
@@ -44,8 +53,10 @@ from app.llm.types import (
     LlmError,
     LlmMessage,
     LlmRequest,
+    LlmResponse,
     StructuredOutput,
 )
+from app.persistence.engine import session_factory as make_session_factory
 from app.persistence.enums import TaskStatus, UsageCallKind
 from app.persistence.models.agent import Agent
 from app.persistence.models.business import Business
@@ -58,6 +69,7 @@ from app.persistence.repositories.concrete import (
     ApprovalRepository,
     BusinessRepository,
     ProjectRepository,
+    TaskOwnership,
     TaskRepository,
 )
 from app.persistence.repositories.spend import recalculate_project_spend
@@ -100,6 +112,9 @@ class ExecutionRequest:
     # Optional injected settings (tests); production passes app settings so the
     # output cap / unpriced reserve / tariff config match the running app.
     settings: Settings | None = None
+    # Separate-session factory for the lease heartbeat. Production passes the
+    # app factory; tests may leave it unset when the session is engine-bound.
+    session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 @dataclass
@@ -114,6 +129,9 @@ class ExecutionResult:
     error_code: str | None = None
     error_message: str | None = None
     compensated: bool = False
+    # Explicit signal for the next slice: the lease was lost while work was in
+    # flight, so status/settlement were deliberately left untouched.
+    ownership_lost: bool = False
 
 
 @dataclass
@@ -121,10 +139,15 @@ class _Claim:
     task_id: str
     pre_status: str
     pre_attempts: int
+    project_id: str = ""
     # Stable per-attempt identity derived BEFORE the network call and stored on
     # the reservation, so a crash+recovery re-derives the same key (no second
     # ledger row for the same attempt).
     attempt_key: str = ""
+    # Immutable ownership granted by the successful claim (Stage 18 S2.2.4.3:
+    # every persistence path proves it still matches). None only before/without
+    # a claim, in which case no execution state may be written.
+    ownership: TaskOwnership | None = None
 
 
 class _BudgetRaceLost(Exception):
@@ -138,6 +161,68 @@ class _BudgetPolicyRefused(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class _OwnershipLost(Exception):
+    """The lease heartbeat proved the caller no longer owns the task."""
+
+
+def _heartbeat_factory(session: AsyncSession) -> async_sessionmaker[AsyncSession] | None:
+    """Build a factory for heartbeat sessions bound to the same engine/pool."""
+    bind = session.bind
+    if isinstance(bind, AsyncEngine):
+        return make_session_factory(bind)
+    return None
+
+
+def _ownership_lost_result(task_id: str, status: str | None = None) -> ExecutionResult:
+    return ExecutionResult(
+        outcome="unknown",
+        task_id=task_id,
+        status=status,
+        error_code="ownership_lost",
+        error_message=(
+            "Lease ownership was lost during execution; no task status was "
+            "written and only this execution's reservation was settled "
+            "conservatively. Manual review required."
+        ),
+        ownership_lost=True,
+    )
+
+
+async def _complete_with_ownership(
+    provider: LlmProvider,
+    request: LlmRequest,
+    heartbeat: LeaseHeartbeat,
+) -> LlmResponse:
+    """Run the single provider call, aborting it if ownership is lost.
+
+    The provider is cancelled as soon as the heartbeat signals loss, so no
+    additional provider attempt can start. If it already completed, its
+    result is discarded rather than persisted under stale ownership.
+    """
+    provider_task = asyncio.create_task(provider.complete(request))
+    lost_task = asyncio.create_task(heartbeat.wait_lost())
+    try:
+        done, _ = await asyncio.wait(
+            (provider_task, lost_task), return_when=asyncio.FIRST_COMPLETED
+        )
+        if lost_task in done:
+            if not provider_task.done():
+                provider_task.cancel()
+            with suppress(Exception, asyncio.CancelledError):
+                await provider_task
+            raise _OwnershipLost
+        lost_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await lost_task
+        return await provider_task
+    finally:
+        for task in (provider_task, lost_task):
+            if not task.done():
+                task.cancel()
+            with suppress(Exception, asyncio.CancelledError):
+                await task
 
 
 def _project_reservation_policy(
@@ -289,6 +374,78 @@ async def _on_cancelled(
     raise asyncio.CancelledError()
 
 
+async def _settle_stale_reservation(
+    session: AsyncSession,
+    business_id: str,
+    claim: _Claim,
+    *,
+    reservation_id: str | None,
+    settle: str,
+) -> bool:
+    """Settle ONLY this execution's reservation after task ownership is lost.
+
+    The task row belongs to the current owner, so it is never written here. The
+    old execution's own hold, however, must not stay `active` forever. The
+    transition is one CAS keyed by the full identity — business, reservation id,
+    task, attempt key and exact integer generation — so it can never settle a
+    newer generation, a legacy NULL-generation row, another attempt or another
+    business. It writes no ledger row, task cost or project spend; an
+    `ambiguous` hold remains part of pending budget.
+
+    `settle` must reflect provider evidence: `release` only when the request
+    provably never reached the provider, otherwise `ambiguous`. An unknown value
+    is treated as `ambiguous`. Already `ambiguous`, `released`, `consumed` or
+    `written_off` rows match no `active` predicate, so repeated or racing
+    compensation is a safe no-op.
+    """
+    ownership = claim.ownership
+    if ownership is None or reservation_id is None:
+        return False
+    generation = ownership.execution_generation
+    # `set_status` omits the generation predicate when given None. Never let
+    # that legacy fallback widen a stale-owner transition: this path is valid
+    # only for a positive integer generation. NULL is never zero.
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
+        return False
+    if settle not in ("ambiguous", "release"):
+        settle = "ambiguous"
+    try:
+        async with session.begin():
+            if settle == "release":
+                return await release_reservation(
+                    session,
+                    business_id,
+                    reservation_id,
+                    "ownership_lost_pre_send",
+                    task_id=claim.task_id,
+                    attempt_key=claim.attempt_key,
+                    execution_generation=generation,
+                )
+            return await mark_ambiguous(
+                session,
+                business_id,
+                reservation_id,
+                "ownership_lost",
+                task_id=claim.task_id,
+                attempt_key=claim.attempt_key,
+                execution_generation=generation,
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.warning(
+            "stale reservation settlement failed",
+            exc_info=True,
+            extra={
+                "context": {
+                    "task_id": claim.task_id,
+                    "reservation_id": reservation_id,
+                }
+            },
+        )
+        return False
+
+
 async def _compensate_claim(
     session: AsyncSession,
     business_id: str,
@@ -297,42 +454,70 @@ async def _compensate_claim(
     reservation_id: str | None = None,
     settle: str | None = None,
 ) -> bool:
-    """Revert OUR claim only. Returns True iff the revert was applied.
+    """Revert OUR claim only, fenced by the exact ownership tuple.
 
-    Ownership proof: the row must still be `working` with the exact attempts
-    count from claim time. Any deviation means someone else (a newer run, an
-    operator, a completed persist) touched it — hands off, report unknown.
-    The reservation is settled in the SAME transaction: `ambiguous` when the
-    outcome may have billed, `release` only for a proven pre-send no-op.
+    The fence (`working` + generation + owner + live lease) is the
+    authoritative check: a stale worker can never overwrite a newer execution,
+    even if its status/attempts happen to match. On zero rows no task state is
+    written at all — no task update, no event, no spend. The old execution's OWN
+    reservation is still settled by exact generation (S2.2.4.6): `release` when
+    the caller proved a pre-send outcome, otherwise `ambiguous`.
     """
+    ownership = claim.ownership
+    if ownership is None:
+        return False
+    stale = False
     async with session.begin():
-        current = await _tasks.get(session, business_id, claim.task_id)
-        if (
-            current is None
-            or current.status != TaskStatus.WORKING.value
-            or current.attempts != claim.pre_attempts
-        ):
-            # Ownership unclear: if the call may have been billed, fail closed
-            # and HOLD the reservation instead of dropping it.
-            if reservation_id is not None and settle == "ambiguous":
-                await mark_ambiguous(session, business_id, reservation_id, "uncertain_ownership")
-            elif reservation_id is not None and settle == "release":
-                await release_reservation(session, business_id, reservation_id, "pre_send")
-            return False
-        await _tasks.update(session, business_id, claim.task_id, {"status": claim.pre_status})
-        await _append_event(
+        fenced = await _tasks.fence_owned(
             session,
             business_id,
-            current.project_id,
-            "executor",
-            "system",
-            f"Task {claim.task_id} reverted to {claim.pre_status} after cancelled run.",
+            claim.task_id,
+            execution_generation=ownership.execution_generation,
+            lease_owner=ownership.lease_owner,
+            values={"status": claim.pre_status},
         )
-        if reservation_id is not None and settle == "ambiguous":
-            await mark_ambiguous(session, business_id, reservation_id, "cancelled")
-        elif reservation_id is not None and settle == "release":
-            await release_reservation(session, business_id, reservation_id, "pre_send")
-    return True
+        if not fenced:
+            stale = True
+        else:
+            await _append_event(
+                session,
+                business_id,
+                claim.project_id,
+                "executor",
+                "system",
+                f"Task {claim.task_id} reverted to {claim.pre_status} after cancelled run.",
+            )
+            if reservation_id is not None and settle == "ambiguous":
+                await mark_ambiguous(
+                    session,
+                    business_id,
+                    reservation_id,
+                    "cancelled",
+                    task_id=claim.task_id,
+                    attempt_key=claim.attempt_key,
+                    execution_generation=ownership.execution_generation,
+                )
+            elif reservation_id is not None and settle == "release":
+                await release_reservation(
+                    session,
+                    business_id,
+                    reservation_id,
+                    "pre_send",
+                    task_id=claim.task_id,
+                    attempt_key=claim.attempt_key,
+                    execution_generation=ownership.execution_generation,
+                )
+    if stale:
+        # The task fence proved our generation is gone. Never touch the task,
+        # but do not leave our own hold stuck `active` forever either.
+        await _settle_stale_reservation(
+            session,
+            business_id,
+            claim,
+            reservation_id=reservation_id,
+            settle=settle or "ambiguous",
+        )
+    return not stale
 
 
 async def execute_task(
@@ -366,6 +551,13 @@ async def _execute_inner(
     settings = request.settings or get_settings()
     provider_name = getattr(provider, "name", "unknown")
     model_name = getattr(provider, "_default_model", "mock")
+    heartbeat_factory = request.session_factory or _heartbeat_factory(session)
+    if heartbeat_factory is None:
+        # The claim grants a lease; without a separate session factory the
+        # heartbeat cannot re-prove ownership. Fail before any write.
+        raise RuntimeError(
+            "execute_task requires an engine-bound session or an explicit session_factory"
+        )
 
     # ---- Phase 0: load + dispatch (reads only, no writes, no attempts) ----
     loaded = await _load_context(session, business_id, project_id, task_id)
@@ -513,6 +705,7 @@ async def _execute_inner(
         task_id=task_id,
         pre_status=pre_status,
         pre_attempts=pre_attempts,
+        project_id=project_id,
         attempt_key=attempt_key,
     )
     # Claim + budget reservation commit together, BEFORE any network call.
@@ -521,16 +714,25 @@ async def _execute_inner(
     # commit/rollback and must never be touched across boundaries.
     reservation_id: str | None = None
     reservation_key: str | None = None
+    ownership: TaskOwnership | None = None
+    claimed = False
+    lease_owner = f"executor:{uuid.uuid4().hex}"
     try:
         async with session.begin():
-            claimed = await _tasks.claim_task(
+            ownership = await _tasks.claim_owned(
                 session,
                 business_id,
                 task_id,
                 from_statuses=_CLAIMABLE,
                 to_status=TaskStatus.WORKING.value,
+                lease_owner=lease_owner,
+                lease_ttl_seconds=settings.execution_lease_ttl_s,
+                lease_wall_seconds=settings.execution_lease_wall_s,
             )
+            claimed = ownership is not None
             if claimed:
+                # The exact tuple every later persistence path must present.
+                claim.ownership = ownership
                 # Re-read under the same project lock used by `reserve`.
                 # A PATCH that landed after Phase 0 must be reflected in the
                 # amount/mode decision, otherwise a zero hold could bypass a
@@ -560,6 +762,7 @@ async def _execute_inner(
                     attempt_key=attempt_key,
                     amount=reserve_amount,
                     mode=reserve_mode,
+                    execution_generation=ownership.execution_generation,
                 )
                 if reservation is None:
                     raise _BudgetRaceLost()
@@ -632,11 +835,71 @@ async def _execute_inner(
         timeout_s=request.timeout_s or 30.0,
         idempotency_key=reservation_key or attempt_key,
     )
+    if ownership is None:  # defensive: `claimed` is only True with a returned row
+        raise RuntimeError("claim succeeded without ownership data")
+    heartbeat = LeaseHeartbeat(
+        session_factory=heartbeat_factory,
+        ownership=ownership,
+        ttl_seconds=settings.execution_lease_ttl_s,
+        interval_seconds=settings.execution_heartbeat_interval_s,
+    )
+    heartbeat.start()
     try:
-        response = await provider.complete(llm_request)
+        try:
+            response = await _complete_with_ownership(provider, llm_request, heartbeat)
+        finally:
+            # No heartbeat may run while status/settlement is persisted.
+            await heartbeat.stop()
+        if heartbeat.ownership_lost:
+            await _settle_stale_reservation(
+                session,
+                business_id,
+                claim,
+                reservation_id=reservation_id,
+                settle="ambiguous",
+            )
+            return _ownership_lost_result(task_id, TaskStatus.WORKING.value)
+    except _OwnershipLost:
+        await _settle_stale_reservation(
+            session,
+            business_id,
+            claim,
+            reservation_id=reservation_id,
+            settle="ambiguous",
+        )
+        return _ownership_lost_result(task_id, TaskStatus.WORKING.value)
     except asyncio.CancelledError:
+        if heartbeat.ownership_lost:
+            # The row is no longer ours: the task must not be written. The
+            # provider may already have received the request, so settle only
+            # our own reservation as held, then propagate the cancellation.
+            await _settle_stale_reservation(
+                session,
+                business_id,
+                claim,
+                reservation_id=reservation_id,
+                settle="ambiguous",
+            )
+            raise
         await _on_cancelled(session, business_id, claim, reservation_id)
     except LlmError as exc:
+        if heartbeat.ownership_lost:
+            # Provider evidence still classifies the outcome: a bad response
+            # (or any explicitly ambiguous error) means the provider may have
+            # billed; a non-ambiguous pre-send error is safe to release.
+            stale_settle = (
+                "ambiguous"
+                if isinstance(exc, BadResponseError) or getattr(exc, "ambiguous", False)
+                else "release"
+            )
+            await _settle_stale_reservation(
+                session,
+                business_id,
+                claim,
+                reservation_id=reservation_id,
+                settle=stale_settle,
+            )
+            return _ownership_lost_result(task_id, TaskStatus.WORKING.value)
         if isinstance(exc, _NONSTARTERS):
             # Misconfiguration surfacing mid-flight (factory normally fails
             # fast): nothing was sent, so release the reservation, compensate
@@ -712,55 +975,60 @@ async def _execute_inner(
         event_cost = quote.cost if quote.status == "confirmed" else None
 
     # ---- Phase 4: persist (single txn; one aggregate per flush inside repos) ----
+    # The authoritative ownership check is the FIRST write: a conditional
+    # UPDATE that both fences the transition and applies it. It is never a
+    # read-then-update, so a stale worker cannot overwrite a newer execution.
+    stale = False
     try:
         async with session.begin():
-            current = await _tasks.get(session, business_id, task_id)
-            if current is None or current.status != TaskStatus.WORKING.value:
-                # Not ours anymore (should be impossible after our claim, but
-                # never assume): hold the reservation (may be billed) and report.
-                await mark_ambiguous(session, business_id, reservation_id, "ownership_lost")
-                return ExecutionResult(
-                    outcome="unknown",
-                    task_id=task_id,
-                    status=current.status if current else None,
-                    error_code="internal",
-                    error_message="Task left our ownership before persist; manual review required.",
-                )
-            await _tasks.update(
+            fenced = await _tasks.fence_owned(
                 session,
                 business_id,
                 task_id,
-                {"status": TaskStatus.COMPLETED.value, "summary": summary, "progress": 100},
+                execution_generation=ownership.execution_generation,
+                lease_owner=ownership.lease_owner,
+                values={
+                    "status": TaskStatus.COMPLETED.value,
+                    "summary": summary,
+                    "progress": 100,
+                },
             )
-            await _append_event(
-                session,
-                business_id,
-                project_id,
-                agent_name,
-                "result",
-                envelope_text,
-                event_cost,
-            )
-            if reservation_id is not None:
-                # Ledger row + reservation consume + task-cost recompute, atomic.
-                await record_success(
+            if not fenced:
+                # Zero rows: no result, no event, no ledger, no spend. The
+                # provider DID answer, so the old execution's own hold is
+                # settled `ambiguous` after this txn (never the task row).
+                stale = True
+            else:
+                await _append_event(
                     session,
                     business_id,
-                    reservation_id=reservation_id,
-                    reservation_key=reservation_key or attempt_key,
-                    task_id=task_id,
-                    project_id=project_id,
-                    agent_id=agent_id,
-                    call_kind=UsageCallKind.TASK_EXECUTION.value,
-                    attempt=pre_attempts,
-                    attempt_key=attempt_key,
-                    provider=provider_name,
-                    model=model_name,
-                    response=response,
-                    input_bound_tokens=input_bound,
-                    max_output_tokens=settings.llm_max_tokens,
+                    project_id,
+                    agent_name,
+                    "result",
+                    envelope_text,
+                    event_cost,
                 )
-            await recalculate_project_spend(session, business_id, project_id)
+                if reservation_id is not None:
+                    # Ledger row + reservation consume + task-cost recompute, atomic.
+                    await record_success(
+                        session,
+                        business_id,
+                        reservation_id=reservation_id,
+                        reservation_key=reservation_key or attempt_key,
+                        task_id=task_id,
+                        project_id=project_id,
+                        agent_id=agent_id,
+                        call_kind=UsageCallKind.TASK_EXECUTION.value,
+                        attempt=pre_attempts,
+                        attempt_key=attempt_key,
+                        execution_generation=ownership.execution_generation,
+                        provider=provider_name,
+                        model=model_name,
+                        response=response,
+                        input_bound_tokens=input_bound,
+                        max_output_tokens=settings.llm_max_tokens,
+                    )
+                await recalculate_project_spend(session, business_id, project_id)
     except asyncio.CancelledError:
         # Our txn rolled back atomically → nothing persisted → compensate.
         await _on_cancelled(session, business_id, claim, reservation_id)
@@ -778,6 +1046,17 @@ async def _execute_inner(
             persist_exc,
             reservation_id=reservation_id,
         )
+    if stale:
+        # The provider answered but the task is no longer ours: settle ONLY our
+        # exact-generation reservation as ambiguous and leave everything else.
+        await _settle_stale_reservation(
+            session,
+            business_id,
+            claim,
+            reservation_id=reservation_id,
+            settle="ambiguous",
+        )
+        return _ownership_lost_result(task_id)
     final = await _tasks.get(session, business_id, task_id)
     return ExecutionResult(
         outcome="completed",
@@ -831,13 +1110,9 @@ async def _handle_persist_error(
         )
     if compensated:
         raise exc
-    return ExecutionResult(
-        outcome="unknown",
-        task_id=claim.task_id,
-        status=TaskStatus.WORKING.value,
-        error_code="compensation_failed",
-        error_message=f"Persist failed ({exc}); task no longer ours. Manual review required.",
-    )
+    # The txn rolled back, and the compensation fence proved the row is no
+    # longer ours: report ownership loss rather than a generic persist error.
+    return _ownership_lost_result(claim.task_id)
 
 
 async def _record_failure(
@@ -859,6 +1134,13 @@ async def _record_failure(
 ) -> ExecutionResult:
     """Persist a failed execution: status failed + attempts+1, atomically.
 
+    The ownership fence is the first and authoritative write. A stale worker
+    (superseded generation/owner, or an expired/deadline-passed lease) matches
+    zero rows and writes no task state — no failure status, no attempts
+    increment, no event, no ledger, no spend. It still settles ONLY its own
+    exact-generation reservation by provider classification (`ambiguous` unless
+    the request provably never reached the provider).
+
     The reservation is settled in the SAME txn as the failure record:
     `ambiguous` when the provider call may have been billed, `release` when it
     provably was not. A held (ambiguous) amount still counts against budget.
@@ -866,60 +1148,70 @@ async def _record_failure(
     `estimated` ledger row (tariff bound) or, when unpriceable, keeps the hold
     ambiguous — never released, never zero.
     """
+    ownership = claim.ownership
+    if ownership is None:
+        return _ownership_lost_result(task_id)
+    stale = False
     try:
         async with session.begin():
-            current = await _tasks.get(session, business_id, task_id)
-            if current is None or current.status != TaskStatus.WORKING.value:
-                if reservation_id is not None and (settle == "ambiguous" or estimate is not None):
-                    await mark_ambiguous(session, business_id, reservation_id, "ownership_lost")
+            fenced = await _tasks.fence_owned(
+                session,
+                business_id,
+                task_id,
+                execution_generation=ownership.execution_generation,
+                lease_owner=ownership.lease_owner,
+                values={
+                    "status": TaskStatus.FAILED.value,
+                    "attempts": Task.attempts + 1,
+                },
+            )
+            if not fenced:
+                stale = True
+            else:
+                text = (
+                    f"Task {task_id} failed ({exc.code}): {exc}. "
+                    f"Attempt {claim.pre_attempts + 1}/{MAX_ATTEMPTS}."
+                )
+                await _append_event(session, business_id, project_id, agent_name, "system", text)
+                if reservation_id is not None and estimate is not None:
+                    await record_estimated_failure(
+                        session,
+                        business_id,
+                        reservation_id=reservation_id,
+                        reservation_key=reservation_key,
+                        task_id=task_id,
+                        project_id=project_id,
+                        agent_id=agent_id,
+                        call_kind=UsageCallKind.TASK_EXECUTION.value,
+                        attempt=claim.pre_attempts,
+                        attempt_key=claim.attempt_key,
+                        execution_generation=ownership.execution_generation,
+                        provider=provider_name,
+                        model=model_name,
+                        input_bound_tokens=estimate[0],
+                        max_output_tokens=estimate[1],
+                    )
+                    await recalculate_project_spend(session, business_id, project_id)
+                elif reservation_id is not None and settle == "ambiguous":
+                    await mark_ambiguous(
+                        session,
+                        business_id,
+                        reservation_id,
+                        exc.code,
+                        task_id=task_id,
+                        attempt_key=claim.attempt_key,
+                        execution_generation=ownership.execution_generation,
+                    )
                 elif reservation_id is not None:
                     await release_reservation(
-                        session, business_id, reservation_id, "ownership_lost"
+                        session,
+                        business_id,
+                        reservation_id,
+                        exc.code,
+                        task_id=task_id,
+                        attempt_key=claim.attempt_key,
+                        execution_generation=ownership.execution_generation,
                     )
-                return ExecutionResult(
-                    outcome="unknown",
-                    task_id=task_id,
-                    status=current.status if current else None,
-                    error_code="internal",
-                    error_message=(
-                        "Task left our ownership before failure persist; manual review required."
-                    ),
-                )
-            # Atomic increment at the DB level: concurrent finishers impossible
-            # (single holder by claim), but the increment itself never reads stale.
-            await session.execute(
-                sa_update(Task)
-                .where(Task.business_id == business_id, Task.id == task_id)
-                .values(status=TaskStatus.FAILED.value, attempts=Task.attempts + 1)
-            )
-            await session.flush()
-            text = (
-                f"Task {task_id} failed ({exc.code}): {exc}. "
-                f"Attempt {claim.pre_attempts + 1}/{MAX_ATTEMPTS}."
-            )
-            await _append_event(session, business_id, project_id, agent_name, "system", text)
-            if reservation_id is not None and estimate is not None:
-                await record_estimated_failure(
-                    session,
-                    business_id,
-                    reservation_id=reservation_id,
-                    reservation_key=reservation_key,
-                    task_id=task_id,
-                    project_id=project_id,
-                    agent_id=agent_id,
-                    call_kind=UsageCallKind.TASK_EXECUTION.value,
-                    attempt=claim.pre_attempts,
-                    attempt_key=claim.attempt_key,
-                    provider=provider_name,
-                    model=model_name,
-                    input_bound_tokens=estimate[0],
-                    max_output_tokens=estimate[1],
-                )
-                await recalculate_project_spend(session, business_id, project_id)
-            elif reservation_id is not None and settle == "ambiguous":
-                await mark_ambiguous(session, business_id, reservation_id, exc.code)
-            elif reservation_id is not None:
-                await release_reservation(session, business_id, reservation_id, exc.code)
     except asyncio.CancelledError:
         await _on_cancelled(session, business_id, claim, reservation_id)
     except Exception as persist_exc:
@@ -928,6 +1220,17 @@ async def _record_failure(
         return await _handle_persist_error(
             session, business_id, claim, persist_exc, reservation_id=reservation_id
         )
+    if stale:
+        # Never write the task after ownership loss; settle only our own
+        # reservation using the provider evidence already computed by the caller.
+        await _settle_stale_reservation(
+            session,
+            business_id,
+            claim,
+            reservation_id=reservation_id,
+            settle=settle,
+        )
+        return _ownership_lost_result(task_id)
     final = await _tasks.get(session, business_id, task_id)
     return ExecutionResult(
         outcome="failed",

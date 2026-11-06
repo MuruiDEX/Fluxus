@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.execution.executor import ExecutionRequest, execute_task
+from app.execution.recovery import recover_task
 from app.llm.mock import MockProvider
 from app.persistence.engine import create_engine_from_url, session_factory
 from app.persistence.repositories.concrete import ApprovalRepository, TaskRepository
@@ -264,6 +265,94 @@ async def test_restart_leaves_no_open_transaction(test_db_url: str) -> None:
                 assert len(session.new) == 0 and len(session.dirty) == 0
                 await session.rollback()
                 assert len(session.new) == 0 and len(session.dirty) == 0
+        finally:
+            await engine2.dispose()
+    finally:
+        await engine.dispose()
+
+
+async def test_expired_lease_takeover_survives_restart_and_is_single_use(
+    test_db_url: str,
+) -> None:
+    """A restart discovers the persisted expired lease; takeover happens once."""
+    engine, factory = await _fresh_factory(test_db_url)
+    try:
+        await _seed_world(factory)
+        await _make_task(factory, "t_lease")
+        async with factory() as session:
+            async with session.begin():
+                stale = await TaskRepository().claim_owned(
+                    session,
+                    BIZ,
+                    "t_lease",
+                    from_statuses=("not_started",),
+                    to_status="working",
+                    lease_owner="worker-a",
+                    lease_ttl_seconds=300,
+                    lease_wall_seconds=2400,
+                )
+                assert stale is not None and stale.execution_generation == 1
+            async with session.begin():
+                await session.execute(
+                    text(
+                        "UPDATE tasks SET lease_expires_at = now() - interval '1 second' "
+                        "WHERE id = 't_lease'"
+                    )
+                )
+        await engine.dispose()
+
+        engine2 = create_engine_from_url(test_db_url)
+        try:
+            factory2 = session_factory(engine2)
+            async with factory2() as session:
+                async with session.begin():
+                    first = await recover_task(
+                        session,
+                        BIZ,
+                        "proj_1",
+                        "t_lease",
+                        recovery_owner="recovery:restart",
+                        lease_ttl_seconds=300,
+                        lease_wall_seconds=2400,
+                        stale_seconds=2400,
+                    )
+                assert first.outcome == "recovered"
+                assert first.generation == 2
+                assert first.status == "not_started"
+
+            async with factory2() as session:
+                async with session.begin():
+                    second = await recover_task(
+                        session,
+                        BIZ,
+                        "proj_1",
+                        "t_lease",
+                        recovery_owner="recovery:restart-2",
+                        lease_ttl_seconds=300,
+                        lease_wall_seconds=2400,
+                        stale_seconds=2400,
+                    )
+                assert second.outcome == "not_stale"
+                assert second.generation is None
+
+            async with factory2() as session:
+                row = await tasks_repo.get(session, BIZ, "t_lease")
+                assert row is not None
+                assert row.execution_generation == 2
+                assert row.status == "not_started"
+
+            # The recovered task is claimable and completes under a new
+            # generation, using its own fresh lease/ownership token.
+            async with factory2() as session:
+                result = await execute_task(
+                    session, MockProvider(texts=[VALID]), _request("t_lease")
+                )
+            assert result.outcome == "completed", result
+            async with factory2() as session:
+                row = await tasks_repo.get(session, BIZ, "t_lease")
+                assert row is not None
+                assert row.status == "completed"
+                assert row.execution_generation == 3
         finally:
             await engine2.dispose()
     finally:

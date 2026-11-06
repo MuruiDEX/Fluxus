@@ -1,9 +1,13 @@
 """Recovery endpoint tests: stale reset, fresh refusal, audit atomicity."""
 
+from decimal import Decimal
+
 import httpx
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.persistence.models.usage import BudgetReservation
+from app.persistence.repositories.usage import BudgetReservationRepository
 from tests.conftest import login_as, seed_operator
 from tests.factories import BIZ, make_task, make_world
 from tests.factories import tasks as tasks_repo
@@ -26,6 +30,21 @@ async def _age_task(session: AsyncSession, task_id: str, interval: str) -> None:
         {"i": interval, "tid": task_id},
     )
     await session.commit()
+
+
+async def _task_and_hold(session: AsyncSession, task_id: str):
+    """Reload task + reservation from the DB after an API call."""
+    await session.rollback()
+    task = await tasks_repo.get(session, BIZ, task_id)
+    hold = (
+        await session.execute(
+            select(BudgetReservation).where(
+                BudgetReservation.business_id == BIZ,
+                BudgetReservation.task_id == task_id,
+            )
+        )
+    ).scalar_one()
+    return task, hold
 
 
 async def _set_status(session: AsyncSession, task_id: str, status: str, attempts: int = 0) -> None:
@@ -175,8 +194,6 @@ async def test_spend_invariant_after_recovery(
     session: AsyncSession, api_client: httpx.AsyncClient, test_engine
 ) -> None:
     """Recovery touches status only: money must be exactly where it was."""
-    from decimal import Decimal
-
     from app.persistence.engine import session_factory
     from tests.factories import spend_of_project
 
@@ -199,3 +216,67 @@ async def test_spend_invariant_after_recovery(
         assert await spend_of_project(fresh, BIZ, "proj_1") == Decimal("4.50")
         task = await tasks_repo.get(fresh, BIZ, "t_1")
         assert task is not None and task.cost_accrued == Decimal("4.50")
+
+
+async def test_recovery_cutoff_boundary_uses_database_clock(
+    session: AsyncSession, api_client: httpx.AsyncClient
+) -> None:
+    """Default 40m cutoff: 2399s fresh, 2400s/2401s stale, all in DB time."""
+    await make_world(session)
+    await make_task(session, "t_under", status="working")
+    await make_task(session, "t_exact", status="working")
+    await make_task(session, "t_over", status="working")
+    repo = BudgetReservationRepository()
+    for task_id in ("t_under", "t_exact", "t_over"):
+        hold = await repo.reserve(
+            session,
+            BIZ,
+            project_id="proj_1",
+            task_id=task_id,
+            attempt=0,
+            attempt_key=f"{BIZ}:{task_id}:a0",
+            amount=Decimal("2.00"),
+        )
+        assert hold is not None
+    await session.commit()
+
+    # Log in before aging so the one-second boundary is not consumed by auth.
+    headers = await _authed(session, api_client)
+
+    # Age with PostgreSQL now(): the endpoint must use database time.
+    await session.execute(
+        text("UPDATE tasks SET updated_at = now() - interval '2399 seconds' WHERE id = 't_under'")
+    )
+    await session.execute(
+        text("UPDATE tasks SET updated_at = now() - interval '2400 seconds' WHERE id = 't_exact'")
+    )
+    await session.execute(
+        text("UPDATE tasks SET updated_at = now() - interval '2401 seconds' WHERE id = 't_over'")
+    )
+    await session.commit()
+
+    under = await api_client.post(_recover_url("t_under"), headers=headers)
+    assert under.status_code == 409, under.text
+    assert under.json()["outcome"] == "not_stale"
+    task, hold = await _task_and_hold(session, "t_under")
+    assert task is not None and task.status == "working"
+    assert hold.status == "active"
+    assert hold.amount == Decimal("2.00")
+
+    # 40 minutes exactly is the configured cutoff. By the time the endpoint
+    # executes, DB now() is strictly later, so the row must be recoverable.
+    exact = await api_client.post(_recover_url("t_exact"), headers=headers)
+    assert exact.status_code == 200, exact.text
+    assert exact.json()["outcome"] == "recovered"
+    task, hold = await _task_and_hold(session, "t_exact")
+    assert task is not None and task.status == "not_started"
+    assert hold.status == "ambiguous" and hold.reason == "recovery_stale"
+    assert hold.amount == Decimal("2.00")
+
+    over = await api_client.post(_recover_url("t_over"), headers=headers)
+    assert over.status_code == 200, over.text
+    assert over.json()["outcome"] == "recovered"
+    task, hold = await _task_and_hold(session, "t_over")
+    assert task is not None and task.status == "not_started"
+    assert hold.status == "ambiguous" and hold.reason == "recovery_stale"
+    assert hold.amount == Decimal("2.00")

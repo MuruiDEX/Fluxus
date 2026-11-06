@@ -111,6 +111,7 @@ class BudgetReservation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
         UniqueConstraint("idempotency_key", name="uq_budget_reservations_idempotency"),
         Index("ix_budget_reservations_business_project", "business_id", "project_id"),
         Index("ix_budget_reservations_attempt", "business_id", "attempt_key"),
+        Index("ix_budget_reservations_business_task", "business_id", "task_id"),
     )
 
     business_id: Mapped[str] = mapped_column(
@@ -134,4 +135,7 @@ class BudgetReservation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     # zero-budget/unbounded calls.
     mode: Mapped[str] = mapped_column(String(16), default="guaranteed")
     usage_record_id: Mapped[str | None] = mapped_column(String(ID_LEN), nullable=True)
+    # Generation that created this hold. NULL remains valid for legacy rows
+    # and Team Lead/business-scoped calls (no task generation to record).
+    execution_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(256))

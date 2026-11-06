@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -307,6 +307,78 @@ class BudgetReservationRepository:
         )
         return res.scalar_one_or_none()
 
+    async def get_for_task(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        execution_generation: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> BudgetReservation | None:
+        """Latest reservation for one task, always tenant-scoped.
+
+        `execution_generation` is optional: omitting it keeps legacy/task-less
+        lookups working. When supplied, NULL-generation rows never match.
+
+        Ordering is deterministic across attempt keys: `run_seq` is only unique
+        per `(business_id, attempt_key)`, so two attempts on one task can tie.
+        `created_at DESC, id DESC` gives a stable winner (same-transaction rows
+        share `created_at`, hence the id tie-breaker).
+        """
+        stmt = select(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.task_id == task_id,
+        )
+        if execution_generation is not None:
+            stmt = stmt.where(BudgetReservation.execution_generation == execution_generation)
+        if statuses is not None:
+            stmt = stmt.where(BudgetReservation.status.in_(statuses))
+        stmt = stmt.order_by(
+            BudgetReservation.created_at.desc(), BudgetReservation.id.desc()
+        ).limit(1)
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def get_for_settlement(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        reservation_id: str,
+        *,
+        task_id: str | None = None,
+        attempt_key: str | None = None,
+        execution_generation: int | None = None,
+    ) -> BudgetReservation | None:
+        """Lock one reservation and prove its full settlement scope.
+
+        Generation-scoped task settlement calls this BEFORE appending a ledger
+        row: a worker must never charge another generation's hold, and an
+        `ambiguous`/`released` hold must never gain a ledger entry after
+        recovery. The `FOR UPDATE` lock serializes this validation against
+        recovery's active→ambiguous UPDATE, so the following append + CAS
+        observe one stable status.
+
+        With no generation the legacy/Team Lead lookup is unchanged (business
+        + id, plus any supplied task/attempt scope). A NULL reservation
+        generation never matches a supplied integer, including zero.
+        """
+        if execution_generation is not None and (task_id is None or attempt_key is None):
+            raise ValueError("generation-scoped settlement requires task_id and attempt_key")
+        stmt = select(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+        )
+        if task_id is not None:
+            stmt = stmt.where(BudgetReservation.task_id == task_id)
+        if attempt_key is not None:
+            stmt = stmt.where(BudgetReservation.attempt_key == attempt_key)
+        if execution_generation is not None:
+            stmt = stmt.where(BudgetReservation.execution_generation == execution_generation)
+        stmt = stmt.with_for_update()
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
     async def pending_total(
         self, session: AsyncSession, business_id: str, project_id: str
     ) -> Decimal:
@@ -376,6 +448,7 @@ class BudgetReservationRepository:
         amount: Decimal,
         currency: str = "USD",
         mode: str = "guaranteed",
+        execution_generation: int | None = None,
     ) -> BudgetReservation | None:
         """Reserve against the project's `ai_budget`, atomically.
 
@@ -431,6 +504,7 @@ class BudgetReservationRepository:
             currency=currency,
             status=ReservationStatus.ACTIVE.value,
             mode=mode,
+            execution_generation=execution_generation,
             idempotency_key=f"reserve:{attempt_key}:{run_seq}",
         )
         session.add(reservation)
@@ -447,6 +521,7 @@ class BudgetReservationRepository:
         amount: Decimal,
         currency: str = "USD",
         mode: str = "guaranteed",
+        execution_generation: int | None = None,
     ) -> BudgetReservation | None:
         """Reserve against the business ceiling for a business-scoped call.
 
@@ -497,6 +572,7 @@ class BudgetReservationRepository:
             currency=currency,
             status=ReservationStatus.ACTIVE.value,
             mode=mode,
+            execution_generation=execution_generation,
             idempotency_key=f"reserve:{attempt_key}:{run_seq}",
         )
         session.add(reservation)
@@ -513,20 +589,39 @@ class BudgetReservationRepository:
         to_status: str,
         reason: str = "",
         usage_record_id: str | None = None,
+        task_id: str | None = None,
+        attempt_key: str | None = None,
+        execution_generation: int | None = None,
     ) -> bool:
-        """Atomic compare-and-set on the reservation. Returns True iff applied."""
+        """Atomic compare-and-set on the reservation. Returns True iff applied.
+
+        `task_id`/`attempt_key` add optional execution scope to the CAS so a
+        settlement can only ever touch the reservation belonging to that exact
+        attempt. Omit them for legacy/Team Lead callers whose lookup is already
+        uniquely addressed by `reservation_id`.
+
+        `execution_generation` adds the ownership-generation fence (Stage 18
+        S2.2.4.5). It requires the task/attempt scope as well, and matches only
+        that exact integer: a NULL generation (legacy/Team Lead) never matches,
+        including when zero is supplied. Omitting it preserves legacy behavior.
+        """
+        if execution_generation is not None and (task_id is None or attempt_key is None):
+            raise ValueError("generation-scoped settlement requires task_id and attempt_key")
         values: dict[str, Any] = {"status": to_status, "reason": reason}
         if usage_record_id is not None:
             values["usage_record_id"] = usage_record_id
-        stmt = (
-            update(BudgetReservation)
-            .where(
-                BudgetReservation.business_id == business_id,
-                BudgetReservation.id == reservation_id,
-                BudgetReservation.status.in_(from_statuses),
-            )
-            .values(**values)
+        stmt = update(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+            BudgetReservation.status.in_(from_statuses),
         )
+        if task_id is not None:
+            stmt = stmt.where(BudgetReservation.task_id == task_id)
+        if attempt_key is not None:
+            stmt = stmt.where(BudgetReservation.attempt_key == attempt_key)
+        if execution_generation is not None:
+            stmt = stmt.where(BudgetReservation.execution_generation == execution_generation)
+        stmt = stmt.values(**values)
         result = await session.execute(stmt)
         await session.flush()
         return (result.rowcount or 0) == 1
@@ -540,6 +635,7 @@ class BudgetReservationRepository:
         task_id: str | None = None,
         project_id: str | None = None,
         attempt_key: str | None = None,
+        before_execution_generation: int | None = None,
     ) -> int:
         """Convert crashed `active` holds to `ambiguous` (fail-closed).
 
@@ -548,6 +644,12 @@ class BudgetReservationRepository:
         reconciles it. Scope by any combination of task/project/attempt; with no
         scope this would match every active hold, so callers must pass one
         (enforced by the tests, not the DB).
+
+        `before_execution_generation` is the lease-takeover fence (Stage 18
+        S2.2.4.5): it additionally matches only rows whose generation is NULL
+        (legacy/unknown) or strictly older than the new generation. Rows from
+        the new or a future generation are excluded. NULL is included
+        explicitly as legacy — it is never treated as generation zero.
         """
         stmt = (
             update(BudgetReservation)
@@ -563,6 +665,13 @@ class BudgetReservationRepository:
             stmt = stmt.where(BudgetReservation.project_id == project_id)
         if attempt_key is not None:
             stmt = stmt.where(BudgetReservation.attempt_key == attempt_key)
+        if before_execution_generation is not None:
+            stmt = stmt.where(
+                or_(
+                    BudgetReservation.execution_generation.is_(None),
+                    BudgetReservation.execution_generation < before_execution_generation,
+                )
+            )
         result = await session.execute(stmt)
         await session.flush()
         return int(result.rowcount or 0)
@@ -573,48 +682,17 @@ class BudgetReservationRepository:
         business_id: str,
         task_id: str,
         reason: str = "recovery_stale",
+        *,
+        before_execution_generation: int | None = None,
     ) -> int:
         """Task-scoped convenience wrapper (Stage 16 recovery)."""
         return await self.mark_active_ambiguous(
-            session, business_id, reason=reason, task_id=task_id
+            session,
+            business_id,
+            reason=reason,
+            task_id=task_id,
+            before_execution_generation=before_execution_generation,
         )
-
-    async def release_aged_ambiguous(
-        self,
-        session: AsyncSession,
-        business_id: str,
-        *,
-        older_than_minutes: int,
-        task_id: str | None = None,
-        project_id: str | None = None,
-    ) -> int:
-        """Release `ambiguous` holds older than the configured age.
-
-        Disabled by default (0 == never): releasing a possibly-billed hold is
-        an explicit operator decision, never an automatic assumption.
-        """
-        if older_than_minutes <= 0:
-            return 0
-        stmt = (
-            update(BudgetReservation)
-            .where(
-                BudgetReservation.business_id == business_id,
-                BudgetReservation.status == ReservationStatus.AMBIGUOUS.value,
-                BudgetReservation.created_at
-                < func.now() - func.make_interval(0, 0, 0, 0, 0, 0, older_than_minutes * 60),
-            )
-            .values(
-                status=ReservationStatus.RELEASED.value,
-                reason="aged_out",
-            )
-        )
-        if task_id is not None:
-            stmt = stmt.where(BudgetReservation.task_id == task_id)
-        if project_id is not None:
-            stmt = stmt.where(BudgetReservation.project_id == project_id)
-        result = await session.execute(stmt)
-        await session.flush()
-        return int(result.rowcount or 0)
 
     async def list_pending(
         self, session: AsyncSession, business_id: str, *, project_id: str | None = None

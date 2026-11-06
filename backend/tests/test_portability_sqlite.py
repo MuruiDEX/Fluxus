@@ -124,3 +124,75 @@ async def test_transaction_rollback(sqlite_engine: AsyncEngine) -> None:
         assert await businesses.count(sess, BIZ) == 1
     finally:
         await sess.close()
+
+
+async def test_lease_consistency_check_enforced(sqlite_engine: AsyncEngine) -> None:
+    """S2.2.4.1 lease CHECKs also hold under Base.metadata.create_all on SQLite."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.persistence.models.task import Task
+    from tests.factories import make_world
+
+    sess = await fresh_session(sqlite_engine)
+    try:
+        await make_world(sess)
+        now = datetime.now(UTC)
+
+        def task(task_id: str, **over: object) -> Task:
+            data: dict = {
+                "id": task_id,
+                "business_id": "biz_test",
+                "project_id": "proj_1",
+                "title": "x",
+                "owner_agent_id": "ag_1",
+                "status": "working",
+                "progress": 0,
+            }
+            data.update(over)
+            return Task(**data)
+
+        # No lease, a consistent live lease, and a consistent expired lease.
+        sess.add(task("t_null"))
+        sess.add(
+            task(
+                "t_live",
+                lease_owner="w",
+                lease_expires_at=now + timedelta(seconds=60),
+                lease_deadline_at=now + timedelta(seconds=120),
+            )
+        )
+        sess.add(
+            task(
+                "t_expired",
+                lease_owner="w",
+                lease_expires_at=now - timedelta(seconds=60),
+                lease_deadline_at=now + timedelta(seconds=60),
+            )
+        )
+        await sess.flush()
+
+        bad = (
+            {"lease_owner": "w"},
+            {"lease_expires_at": now + timedelta(seconds=60)},
+            {
+                "lease_owner": "w",
+                "lease_expires_at": now + timedelta(seconds=60),
+            },
+            {
+                "lease_owner": "w",
+                "lease_expires_at": now + timedelta(seconds=120),
+                "lease_deadline_at": now + timedelta(seconds=60),
+            },
+        )
+        for index, over in enumerate(bad):
+            with pytest.raises(IntegrityError):
+                async with sess.begin_nested():
+                    sess.add(task(f"t_bad_{index}", **over))
+                    await sess.flush()
+
+        with pytest.raises(IntegrityError):
+            async with sess.begin_nested():
+                sess.add(task("t_neg_gen", execution_generation=-1))
+                await sess.flush()
+    finally:
+        await sess.close()

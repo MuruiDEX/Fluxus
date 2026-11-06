@@ -830,6 +830,40 @@ async def test_ambiguous_provider_failure_keeps_hold_without_ledger_row(
     assert holds[0].reason == expected_reason
 
 
+async def test_total_deadline_timeout_keeps_business_hold_ambiguous(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """An expired local budget is an unknown provider outcome, not a free call."""
+    await make_world(session)
+    await session.commit()
+    factory = session_factory(test_engine)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200, json={})
+
+    provider = OpenAICompatProvider(
+        api_key="test-only",
+        default_model="mock",
+        timeout_s=5.0,
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+    # The per-request cap (0.1s) takes precedence; one attempt = the budget.
+    request = _request().model_copy(update={"timeout_s": 0.1})
+    with pytest.raises(ProviderTimeoutError) as caught:
+        await _meter(factory).complete(provider, request, generation=0)
+
+    assert caught.value.ambiguous is True
+    usages, holds = await _rows(session)
+    assert usages == []  # no ledger row for an unconfirmed outcome
+    assert len(holds) == 1
+    hold = holds[0]
+    assert hold.project_id is None and hold.task_id is None
+    assert hold.status == "ambiguous"
+    assert hold.reason == "provider_timeout"
+
+
 async def test_unusable_usage_is_estimated_and_blocks_next_teamlead_reservation(
     session: AsyncSession, test_engine: AsyncEngine
 ) -> None:

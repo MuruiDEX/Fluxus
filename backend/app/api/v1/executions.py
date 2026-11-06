@@ -105,6 +105,7 @@ async def run_execution(
                 task_id=task_id,
                 timeout_s=timeout_s,
                 settings=settings,
+                session_factory=factory,
             ),
         )
     status_code = _OUTCOME_HTTP[result.outcome]

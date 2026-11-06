@@ -5,13 +5,16 @@ write; violations raise DanglingReferenceError (в†’ 422 dangling_reference 
 the API boundary). No business logic beyond integrity lives here.
 """
 
-from datetime import UTC
+import math
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import case, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.persistence.enums import TaskStatus
 from app.persistence.exceptions import (
     AgentDisabledError,
     DanglingReferenceError,
@@ -38,6 +41,50 @@ from app.persistence.repositories.base import (
     quantize_ai_budget,
     quantize_money,
 )
+
+
+@dataclass(frozen=True)
+class TaskOwnership:
+    """Generation-fenced ownership granted by `TaskRepository.claim_owned`.
+
+    `execution_generation` is scoped to one task (it is not globally unique).
+    A later operation must include both `business_id` and this generation in
+    its predicate to prove it still owns the row.
+    """
+
+    business_id: str
+    task_id: str
+    execution_generation: int
+    lease_owner: str
+    lease_expires_at: datetime | None
+    lease_deadline_at: datetime | None
+
+
+@dataclass(frozen=True)
+class LeaseRenewal:
+    """Result of a heartbeat renewal. `renewed=False` means ownership was lost."""
+
+    renewed: bool
+    lease_expires_at: datetime | None = None
+    lease_deadline_at: datetime | None = None
+
+
+# The only status a worker may persist FROM while holding a lease. Terminal
+# rows are fenced out: a stale worker can never re-complete a completed task or
+# overwrite a newer failure. `working` is the sole active-ownership state.
+_FENCE_EXPECTED_STATUS = TaskStatus.WORKING.value
+# Legitimate targets of an execution transition from `working`:
+#   success -> completed, failure -> failed, compensation -> pre-claim status.
+# `working` itself is excluded (it would be a renewal, not a transition).
+_FENCE_TARGET_STATUSES = frozenset(
+    {
+        TaskStatus.COMPLETED.value,
+        TaskStatus.FAILED.value,
+        TaskStatus.NOT_STARTED.value,
+    }
+)
+# The fence decides ownership; it must never rewrite ownership itself.
+_FENCE_FIELDS = frozenset({"status", "summary", "progress", "attempts"})
 
 
 class BusinessRepository(BaseRepository[Business]):
@@ -228,6 +275,325 @@ class TaskRepository(BaseRepository[Task]):
         await session.flush()
         return (result.rowcount or 0) == 1
 
+    async def claim_owned(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        from_statuses: tuple[str, ...],
+        to_status: str,
+        lease_owner: str,
+        lease_ttl_seconds: float,
+        lease_wall_seconds: float,
+    ) -> TaskOwnership | None:
+        """Generation-fenced claim that grants a lease in the same UPDATE.
+
+        Returns the granted ownership, or None when the row was not claimed
+        (another writer won or the status moved). The database enforces both
+        lease CHECKs immediately, so all three lease columns are written by
+        this single statement: a two-step grant would transiently violate
+        `ck_tasks_lease_consistency`.
+
+        The generation is incremented atomically. A previous owner's value
+        therefore stops matching, which is what later slices rely on to fence
+        stale persistence. This method does not hold the transaction open
+        across any network call.
+
+        This is a create-only primitive: `to_status` must not be one of the
+        accepted `from_statuses`, so a caller cannot re-issue the same status
+        and displace a live owner. Displacing an expired owner is a separate
+        operation: `takeover_expired` checks the observed generation/owner,
+        database-time lease expiry and the absolute deadline before bumping.
+        """
+        if not from_statuses:
+            raise ValueError("from_statuses must not be empty")
+        if to_status in from_statuses:
+            raise ValueError("to_status must not be in from_statuses")
+        valid_statuses = {status.value for status in TaskStatus}
+        for status in (*from_statuses, to_status):
+            if not isinstance(status, str) or status not in valid_statuses:
+                raise ValueError(f"invalid status literal: {status!r}")
+        if not lease_owner or len(lease_owner) > 64:
+            raise ValueError("lease_owner must be 1..64 characters")
+        if not math.isfinite(lease_ttl_seconds) or not math.isfinite(lease_wall_seconds):
+            raise ValueError("lease durations must be finite")
+        if lease_ttl_seconds <= 0 or lease_wall_seconds <= 0:
+            raise ValueError("lease durations must be positive")
+        if lease_ttl_seconds > lease_wall_seconds:
+            raise ValueError("lease ttl must not exceed the lease wall")
+
+        ttl = func.make_interval(0, 0, 0, 0, 0, 0, lease_ttl_seconds)
+        wall = func.make_interval(0, 0, 0, 0, 0, 0, lease_wall_seconds)
+        stmt = (
+            update(Task)
+            .where(
+                Task.business_id == business_id,
+                Task.id == task_id,
+                Task.status.in_(from_statuses),
+            )
+            .values(
+                status=to_status,
+                execution_generation=Task.execution_generation + 1,
+                lease_owner=lease_owner,
+                lease_expires_at=func.now() + ttl,
+                lease_deadline_at=func.now() + wall,
+                updated_at=func.now(),
+            )
+            .returning(
+                Task.execution_generation,
+                Task.lease_owner,
+                Task.lease_expires_at,
+                Task.lease_deadline_at,
+            )
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        row = result.first()
+        if row is None:
+            return None
+        return TaskOwnership(
+            business_id=business_id,
+            task_id=task_id,
+            execution_generation=int(row[0]),
+            lease_owner=row[1],
+            lease_expires_at=row[2],
+            lease_deadline_at=row[3],
+        )
+
+    async def takeover_expired(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        expected_execution_generation: int,
+        expected_lease_owner: str,
+        lease_owner: str,
+        lease_ttl_seconds: float,
+        lease_wall_seconds: float,
+    ) -> TaskOwnership | None:
+        """Atomically take over an EXPIRED execution lease (S2.2.4.4).
+
+        One conditional UPDATE. It succeeds only when:
+        - the `(business_id, task_id)` row is still `working`;
+        - its ownership tuple is exactly the one the caller observed
+          (`execution_generation` + `lease_owner`);
+        - the lease is complete (all three lease columns non-NULL);
+        - `lease_expires_at <= now()` (the previous owner stopped proving
+          liveness), compared in database time;
+        - `lease_deadline_at > now()` (the absolute wall has not passed). A
+          run past its wall is NOT taken over here: no terminal timeout policy
+          exists yet, so it stays fail-closed for manual handling.
+
+        On success it increments the generation **in SQL**, installs a new,
+        caller-supplied unique owner, and grants a fresh bounded lease
+        (`now + ttl`, `now + wall`). `RETURNING` supplies the exact persisted
+        values, so the returned `TaskOwnership` is the new immutable token.
+        Every previous token now fails `renew_lease`/`fence_owned`.
+
+        Zero rows means: another worker won, the lease is still live, the
+        deadline passed, or the status/tuple moved. Callers must not write
+        anything in that case. The caller commits promptly; no provider call
+        may run while this transaction stays open.
+        """
+        if not isinstance(expected_execution_generation, int):
+            raise ValueError("expected execution_generation must be an integer")
+        if expected_execution_generation < 0:
+            raise ValueError("expected execution_generation must be non-negative")
+        if not expected_lease_owner or len(expected_lease_owner) > 64:
+            raise ValueError("expected lease_owner must be 1..64 characters")
+        if not lease_owner or len(lease_owner) > 64:
+            raise ValueError("lease_owner must be 1..64 characters")
+        if lease_owner == expected_lease_owner:
+            raise ValueError("takeover must assign a new lease_owner")
+        if not math.isfinite(lease_ttl_seconds) or not math.isfinite(lease_wall_seconds):
+            raise ValueError("lease durations must be finite")
+        if lease_ttl_seconds <= 0 or lease_wall_seconds <= 0:
+            raise ValueError("lease durations must be positive")
+        if lease_ttl_seconds > lease_wall_seconds:
+            raise ValueError("lease ttl must not exceed the lease wall")
+
+        now = func.now()
+        ttl = func.make_interval(0, 0, 0, 0, 0, 0, lease_ttl_seconds)
+        wall = func.make_interval(0, 0, 0, 0, 0, 0, lease_wall_seconds)
+        stmt = (
+            update(Task)
+            .where(
+                Task.business_id == business_id,
+                Task.id == task_id,
+                Task.status == TaskStatus.WORKING.value,
+                Task.execution_generation == expected_execution_generation,
+                Task.lease_owner == expected_lease_owner,
+                Task.lease_owner.is_not(None),
+                Task.lease_expires_at.is_not(None),
+                Task.lease_deadline_at.is_not(None),
+                Task.lease_expires_at <= now,
+                Task.lease_deadline_at > now,
+            )
+            .values(
+                execution_generation=Task.execution_generation + 1,
+                lease_owner=lease_owner,
+                lease_expires_at=now + ttl,
+                lease_deadline_at=now + wall,
+                # A takeover starts a new ownership epoch; keep the legacy
+                # staleness clock aligned with the new claim (same as claim).
+                updated_at=now,
+            )
+            .returning(
+                Task.execution_generation,
+                Task.lease_owner,
+                Task.lease_expires_at,
+                Task.lease_deadline_at,
+            )
+        )
+        with session.no_autoflush:
+            row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return TaskOwnership(
+            business_id=business_id,
+            task_id=task_id,
+            execution_generation=int(row[0]),
+            lease_owner=row[1],
+            lease_expires_at=row[2],
+            lease_deadline_at=row[3],
+        )
+
+    async def fence_owned(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        execution_generation: int,
+        lease_owner: str,
+        values: dict[str, Any],
+        expected_status: str = _FENCE_EXPECTED_STATUS,
+    ) -> bool:
+        """Atomically apply a terminal execution transition iff still owned.
+
+        This is the authoritative ownership check for task execution
+        persistence (Stage 18 S2.2.4.3). It is ONE conditional UPDATE that
+        proves, using database time:
+
+        - `business_id` + `task_id` scope;
+        - the expected status (`working`, the only active-ownership state);
+        - the exact `execution_generation` granted by our claim;
+        - the exact `lease_owner` granted by our claim;
+        - the lease exists, has not expired and has not passed its absolute
+          deadline.
+
+        It both checks ownership and applies the transition (`values` +
+        `updated_at = now()`), so a successful CAS is never followed by an
+        unconditional status write that could overwrite a newer state. Zero
+        rows means ownership is gone: callers MUST NOT write any execution
+        state, event, ledger or reservation effect afterwards.
+
+        The row lock taken by this UPDATE serializes the rest of the caller's
+        transaction, so later ledger/cost writes for this execution cannot
+        race a newer owner. The lock is held only for the persistence
+        transaction, never across a provider call.
+        """
+        if expected_status != _FENCE_EXPECTED_STATUS:
+            raise ValueError(
+                "fence_owned only transitions from 'working'; "
+                f"got expected_status={expected_status!r}"
+            )
+        if not isinstance(execution_generation, int) or execution_generation < 1:
+            raise ValueError("execution_generation must be a positive integer")
+        if not lease_owner or len(lease_owner) > 64:
+            raise ValueError("lease_owner must be 1..64 characters")
+        if not values:
+            raise ValueError("fence_owned requires the transition values")
+        unexpected = set(values) - _FENCE_FIELDS
+        if unexpected:
+            raise ValueError(f"fence_owned cannot write fields: {sorted(unexpected)}")
+        target = values.get("status")
+        if target not in _FENCE_TARGET_STATUSES:
+            raise ValueError(f"illegal fence target status: {target!r}")
+
+        now = func.now()
+        stmt = (
+            update(Task)
+            .where(
+                Task.business_id == business_id,
+                Task.id == task_id,
+                Task.status == _FENCE_EXPECTED_STATUS,
+                Task.execution_generation == execution_generation,
+                Task.lease_owner == lease_owner,
+                Task.lease_expires_at.is_not(None),
+                Task.lease_deadline_at.is_not(None),
+                Task.lease_expires_at > now,
+                Task.lease_deadline_at > now,
+            )
+            .values(**values, updated_at=now)
+        )
+        # No autoflush: the CAS must be the first write of the transaction,
+        # never preceded by pending ORM state being flushed implicitly.
+        with session.no_autoflush:
+            result = await session.execute(stmt)
+        return (result.rowcount or 0) == 1
+
+    async def renew_lease(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        execution_generation: int,
+        lease_owner: str,
+        ttl_seconds: float,
+    ) -> LeaseRenewal:
+        """Extend a live lease only while the caller provably still owns it.
+
+        One conditional UPDATE, evaluated by PostgreSQL against database
+        time. It never changes status, generation or `updated_at`, and it
+        never extends `lease_deadline_at`; the new expiry is clamped to the
+        existing deadline. An already-expired lease, or a lease past its
+        absolute deadline, is not renewable: those are ownership-lost
+        outcomes for the caller (recovery/takeover is a later slice).
+        """
+        if not lease_owner or len(lease_owner) > 64:
+            raise ValueError("lease_owner must be 1..64 characters")
+        if not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
+            raise ValueError("lease ttl must be a finite positive number of seconds")
+        if not isinstance(execution_generation, int) or execution_generation < 0:
+            raise ValueError("execution_generation must be a non-negative integer")
+
+        now = func.now()
+        ttl = func.make_interval(0, 0, 0, 0, 0, 0, ttl_seconds)
+        stmt = (
+            update(Task)
+            .where(
+                Task.business_id == business_id,
+                Task.id == task_id,
+                Task.status == TaskStatus.WORKING.value,
+                Task.execution_generation == execution_generation,
+                Task.lease_owner == lease_owner,
+                Task.lease_expires_at.is_not(None),
+                Task.lease_deadline_at.is_not(None),
+                Task.lease_expires_at > now,
+                Task.lease_deadline_at > now,
+            )
+            .values(
+                lease_expires_at=func.least(now + ttl, Task.lease_deadline_at),
+                # Explicit no-op: a Core UPDATE otherwise applies
+                # TimestampMixin.onupdate and moves the recovery staleness
+                # clock merely to keep the task alive.
+                updated_at=Task.updated_at,
+            )
+            .returning(Task.lease_expires_at, Task.lease_deadline_at)
+        )
+        row = (await session.execute(stmt)).first()
+        if row is None:
+            return LeaseRenewal(renewed=False)
+        return LeaseRenewal(
+            renewed=True,
+            lease_expires_at=row[0],
+            lease_deadline_at=row[1],
+        )
+
     async def recover_stale(
         self,
         session: AsyncSession,
@@ -236,10 +602,13 @@ class TaskRepository(BaseRepository[Task]):
         *,
         stale_seconds: float,
     ) -> str | None:
-        """Reset a provably-stale `working` row, atomically with audit intent.
+        """Reset a provably-stale LEGACY `working` row (no ownership lease).
 
         Safety (all in ONE conditional UPDATE, evaluated by the database):
         - row must be `working` (never touch a live run or a finished run);
+        - the row must carry NO lease. Lease-bearing rows belong to the
+          generation-fenced path (`takeover_expired`); this legacy clock must
+          never bypass a live or expired ownership token.
         - `updated_at` must be older than `now() - stale_seconds`, compared in
           SQL so no application clock skew can shrink the window;
         - a concurrent holder's row lock makes this statement wait (bounded by
@@ -258,6 +627,9 @@ class TaskRepository(BaseRepository[Task]):
                 Task.business_id == business_id,
                 Task.id == task_id,
                 Task.status == "working",
+                Task.lease_owner.is_(None),
+                Task.lease_expires_at.is_(None),
+                Task.lease_deadline_at.is_(None),
                 Task.updated_at < func.now() - func.make_interval(0, 0, 0, 0, 0, 0, stale_seconds),
             )
             .values(

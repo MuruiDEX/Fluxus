@@ -204,8 +204,10 @@ frontend can tell which one is underneath. No decision by code yet.
 - Rules: `asyncio.CancelledError` propagates unwrapped and is never retried
   (streams/clients close in `finally`); `json_schema` first with `json_object`
   fallback; max 2 retries with backoff+jitter only for safe 429/pre-send
-  network failures; 5xx and post-send transport failures are held ambiguous
-  (attempts counted in metadata); provider auth failures use the distinct
+  network failures; 5xx, HTTP 408 responses and post-send transport failures
+  are held ambiguous and are never released by age (attempts counted in
+  metadata); provider auth
+  failures use the distinct
   `provider_auth_error` code (contract v1.2), never user `unauthorized`.
 - Secrets: `APP_LLM_API_KEY` → Settings → Authorization header, one use site;
   enforced absent from logs/exceptions by `tests/test_llm_secrets.py`.
@@ -229,7 +231,10 @@ frontend can tell which one is underneath. No decision by code yet.
   `RuntimeError` otherwise) and always leaves the session clean.
 - Cancellation re-raises `CancelledError` after confirmed-safe compensation
   (revert to pre-claim status, ownership re-verified); unknown states are
-  reported as `unknown`, never silently fixed.
+  reported as `unknown`, never silently fixed. When ownership is lost, the old
+  execution never writes the task row; it settles only its own exact-generation
+  reservation (`ambiguous` unless a pre-send failure is proven, then
+  `released`), with no ledger or spend entry.
 - `ai_spent` writable only via `recalculate_project_spend()` — enforced by
   `BaseRepository.update()` guard (`ImmutableFieldError`).
 - No endpoints, migrations, dependencies, frontend changes, or contract changes.
