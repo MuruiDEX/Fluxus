@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { Button, buttonClass, type ButtonBaseProps } from "@/components/system/controls";
 
-/** One visual definition per control so links and buttons never drift apart. */
-const primaryClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-control bg-gradient-to-r from-brand-500 to-sky-400 px-3.5 text-body-sm font-semibold text-white shadow-card transition-opacity duration-150 hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60";
-
-const ghostClass =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-control border border-line bg-surface px-3.5 text-body-sm font-medium text-ink-700 transition-colors duration-150 hover:bg-mist-100 active:bg-mist-200 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10";
+/**
+ * Button visuals live in `controls.tsx`; these wrappers keep the historical
+ * `PrimaryButton` / `GhostButton` / link API so existing pages are untouched.
+ */
+type ActionButtonProps = Omit<ButtonBaseProps, "variant"> & { children?: ReactNode };
 
 export function PageHeader({
   title,
@@ -187,61 +187,12 @@ export function EmptyState({
   );
 }
 
-export function PrimaryButton({
-  children,
-  onClick,
-  className,
-  type = "button",
-  disabled,
-  title,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  className?: string;
-  /** Defaults to "button": a plain button must never submit a form by accident. */
-  type?: "button" | "submit";
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={cn(primaryClass, className)}
-    >
-      {children}
-    </button>
-  );
+export function PrimaryButton(props: ActionButtonProps) {
+  return <Button variant="primary" {...props} />;
 }
 
-export function GhostButton({
-  children,
-  onClick,
-  className,
-  type = "button",
-  disabled,
-  title,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  className?: string;
-  type?: "button" | "submit";
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={cn(ghostClass, className)}
-    >
-      {children}
-    </button>
-  );
+export function GhostButton(props: ActionButtonProps) {
+  return <Button variant="ghost" {...props} />;
 }
 
 /**
@@ -261,7 +212,7 @@ export function PrimaryLink({
   title?: string;
 }) {
   return (
-    <Link href={href} title={title} className={cn(primaryClass, className)}>
+    <Link href={href} title={title} className={cn(buttonClass({ variant: "primary" }), className)}>
       {children}
     </Link>
   );
@@ -277,7 +228,7 @@ export function GhostLink({
   className?: string;
 }) {
   return (
-    <Link href={href} className={cn(ghostClass, className)}>
+    <Link href={href} className={cn(buttonClass({ variant: "ghost" }), className)}>
       {children}
     </Link>
   );

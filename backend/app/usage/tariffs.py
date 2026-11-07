@@ -22,6 +22,21 @@ class TariffError(ValueError):
     """A tariff entry is malformed (raises at registration, never silently)."""
 
 
+def canonical_currency(value: object) -> str:
+    """Return the canonical accounting currency or reject unsupported values.
+
+    Fluxus accounts in USD only. Case-insensitive USD with surrounding
+    whitespace is normalized to exactly ``"USD"``; every other value is a
+    configuration error rather than a silent conversion.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise TariffError("tariff.currency must be a non-empty string")
+    normalized = value.strip().upper()
+    if normalized != "USD":
+        raise TariffError(f"tariff.currency must be USD; got {value!r}")
+    return "USD"
+
+
 @dataclass(frozen=True)
 class Tariff:
     provider: str
@@ -34,13 +49,17 @@ class Tariff:
     source: str = "operator"
     version: str = TARIFF_VERSION
 
+    def __post_init__(self) -> None:
+        # Frozen dataclass: normalize before the instance becomes observable.
+        object.__setattr__(self, "currency", canonical_currency(self.currency))
+
     def validate(self) -> None:
         if not isinstance(self.provider, str) or not self.provider:
             raise TariffError("tariff.provider must be a non-empty string")
         if not isinstance(self.model, str) or not self.model:
             raise TariffError("tariff.model must be a non-empty string")
-        if not isinstance(self.currency, str) or not self.currency:
-            raise TariffError("tariff.currency must be a non-empty string")
+        # Second boundary for objects that bypass normal construction.
+        canonical_currency(self.currency)
         for name, value in (
             ("input_per_1k", self.input_per_1k),
             ("output_per_1k", self.output_per_1k),
@@ -77,7 +96,7 @@ def tariff_from_dict(raw: dict) -> Tariff:
         model=model,
         input_per_1k=input_per_1k,
         output_per_1k=output_per_1k,
-        currency=str(raw.get("currency", "USD")),
+        currency=raw.get("currency", "USD"),
         cached_input_per_1k=_to_decimal(cached) if cached is not None else None,
         source=str(raw.get("source", "operator")),
         version=str(raw.get("version", TARIFF_VERSION)),

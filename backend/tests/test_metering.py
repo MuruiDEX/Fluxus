@@ -327,6 +327,38 @@ async def test_project_scoped_call_reserves_then_settles(
     assert project is not None and project.ai_spent == Decimal("0.10")
 
 
+async def test_usd_tariff_reservation_and_ledger_currency_are_compatible(
+    session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    """A normalized USD tariff prices a USD reservation and writes USD exactly."""
+    pricing.register_tariff(
+        Tariff(
+            provider="mock",
+            model="mock",
+            input_per_1k=Decimal("5.00"),
+            output_per_1k=Decimal("10.00"),
+            currency=" usd ",
+        )
+    )
+    resolved = pricing.resolve_tariff("mock", "mock")
+    assert resolved is not None and resolved.currency == "USD"
+
+    await make_world(session)
+    await ProjectRepository().update(session, BIZ, "proj_1", {"ai_budget": Decimal("100.00")})
+    await session.commit()
+    factory = session_factory(test_engine)
+
+    await _meter(factory, call_kind="brief_finalize", project_id="proj_1").complete(
+        MockProvider(texts=["ok"]), _request(), generation=0
+    )
+
+    usages, holds = await _rows(session)
+    assert len(usages) == 1 and len(holds) == 1
+    assert holds[0].currency == "USD"
+    assert usages[0].currency == "USD"
+    assert holds[0].usage_record_id == usages[0].id
+
+
 async def test_post_send_bad_response_is_estimated_not_released(
     session: AsyncSession, test_engine: AsyncEngine
 ) -> None:

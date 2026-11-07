@@ -79,7 +79,8 @@ describe("semantic design tokens", () => {
   it("gives the radius tokens real consumers in shared primitives", () => {
     const primitives = read("components/system/ui.tsx");
     expect(primitives).toContain("rounded-card");
-    expect(primitives).toContain("rounded-control");
+    // Button and form-chrome radius moved into the shared controls module.
+    expect(read("components/system/controls.tsx")).toContain("rounded-control");
   });
 });
 
