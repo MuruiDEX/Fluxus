@@ -3,7 +3,8 @@
 import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { AgentStatusBadge, Avatar } from "@/components/system/badges";
-import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, LiveBadge, PageHeader, PrimaryButton, SkeletonCard } from "@/components/system/ui";
+import { StaggerGroup, StaggerItem } from "@/components/system/motion";
 import { AgentToggleButton } from "@/components/system/AgentToggle";
 
 import { useSession } from "@/lib/store/auth";
@@ -28,11 +29,11 @@ function AgentGrid({
         title="Agents"
         sub={`${hired.length} AI employees on your team. Each has permissions, tools and a performance record.`}
       />
-      <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+      <StaggerGroup className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
         {agents.map((a) => (
-          <div key={a.id} className="flex h-full flex-col gap-2">
+          <StaggerItem key={a.id} className="flex h-full flex-col gap-2">
             <Link href={`/agents/${a.id}`} className="flex-1">
-              <Card className="flex h-full flex-col gap-2 p-4 transition-transform hover:-translate-y-0.5">
+              <Card className="flex h-full flex-col gap-2 p-4 transition-transform duration-200 hover:-translate-y-0.5">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={a.name} hue={a.avatarHue} size={38} />
                   <div className="min-w-0 flex-1">
@@ -54,9 +55,9 @@ function AgentGrid({
               </Card>
             </Link>
             {renderAction?.(a)}
-          </div>
+          </StaggerItem>
         ))}
-      </div>
+      </StaggerGroup>
     </>
   );
 }
@@ -78,7 +79,18 @@ function LiveAgentsView({ businessId }: { businessId: string }) {
     return (
       <>
         <PageHeader title="Agents" sub="Loading team from server…" badge={<LiveBadge />} />
-        <Card className="p-8 text-center text-[13px] text-ink-400">Loading agents…</Card>
+        <div
+          role="status"
+          aria-label="Loading agents"
+          className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </>
     );
   }

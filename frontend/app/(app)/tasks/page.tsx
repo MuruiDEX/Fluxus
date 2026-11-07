@@ -17,7 +17,16 @@ import { useAgents, useProjects } from "@/lib/store/app";
 import { cn } from "@/lib/cn";
 import type { Agent, Project, Task, TaskStatus } from "@/lib/domain/types";
 
-const filters: ("all" | TaskStatus)[] = ["all", "working", "waiting_dependency", "waiting_assets", "not_started", "completed"];
+const filters: ("all" | TaskStatus)[] = [
+  "all",
+  "working",
+  "waiting_dependency",
+  "waiting_assets",
+  "waiting_approval",
+  "not_started",
+  "completed",
+  "failed",
+];
 
 function TaskCards({
   tasks,
@@ -41,6 +50,8 @@ function TaskCards({
         {filters.map((f) => (
           <button
             key={f}
+            type="button"
+            aria-pressed={filter === f}
             onClick={() => setFilter(f)}
             className={cn(
               "rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors",
@@ -51,6 +62,13 @@ function TaskCards({
           </button>
         ))}
       </div>
+      {visible.length === 0 && (
+        <Card className="p-8 text-center text-[13px] text-ink-400">
+          {tasks.length === 0
+            ? "No tasks yet. Plan a project to give the team work."
+            : `No tasks with status “${filter.replace(/_/g, " ")}”.`}
+        </Card>
+      )}
       <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
         {visible.map((t) => {
           const a = agents.find((x) => x.id === t.ownerAgentId);

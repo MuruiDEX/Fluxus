@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Loader2 } from "lucide-react";
 import {
   Card,
@@ -12,8 +13,10 @@ import {
   PrimaryButton,
 } from "@/components/system/ui";
 import { useLiveIntake, type IntakePhase } from "@/lib/store/intake";
+import { GOAL_MAX_LENGTH, adoptGoalParam, readGoalParam } from "@/lib/intake-goal";
 import type { ApiBrief } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { transition } from "@/lib/motion";
 
 /**
  * LIVE Team-Lead intake (Stage 11) — goal → questions → answers → brief
@@ -22,6 +25,9 @@ import { cn } from "@/lib/cn";
  * DEMO (the demo wizard owns its simulated flow).
  *
  * - Inputs live in local state: a failed request never wipes them.
+ * - ?goal=<text> seeds the goal field (command bar, CEO briefing, onboarding).
+ *   It only prefills — nothing is submitted until the user asks the Team Lead
+ *   — and it never replaces text the user already edited.
  * - ?brief=<id> resumes from server truth (answering/reviewing/done by
  *   persisted status); unknown ids surface the 404 honestly.
  * - No optimistic rows: questions, brief and plan appear only from 2xx.
@@ -130,9 +136,14 @@ export function LiveIntakeView({ businessId }: { businessId: string }) {
   const plan = useLiveIntake((s) => s.plan);
   const resume = useLiveIntake((s) => s.resume);
   const clear = useLiveIntake((s) => s.clear);
-  const resumeId = useSearchParams().get("brief");
+  const searchParams = useSearchParams();
+  const resumeId = searchParams.get("brief");
+  // Already percent-decoded by Next; read exactly once (see lib/intake-goal).
+  const goalParam = readGoalParam(searchParams);
 
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(goalParam);
+  // Last value adopted from the URL: the reference point for "untouched".
+  const seededGoal = useRef(goalParam);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [clientError, setClientError] = useState<string | null>(null);
 
@@ -144,6 +155,16 @@ export function LiveIntakeView({ businessId }: { businessId: string }) {
     if (resumeId) void resume(businessId, resumeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId, resumeId]);
+
+  // A second ?goal= can arrive without remounting (command bar opened from the
+  // intake itself). Adopt it only while the field is untouched, so text the
+  // user typed is never replaced behind their back.
+  useEffect(() => {
+    const next = adoptGoalParam(goal, seededGoal.current, goalParam);
+    if (next.seeded === seededGoal.current) return;
+    seededGoal.current = next.seeded;
+    setGoal(next.value);
+  }, [goalParam, goal]);
 
   const { step, of } = phaseStep(phase);
 
@@ -191,6 +212,15 @@ export function LiveIntakeView({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
       />
       <StepShell step={step} of={of}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={phase}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, transition: transition.fast }}
+            transition={transition.base}
+            className="flex flex-col gap-3"
+          >
         {(phase === "idle" || (phase === "error" && !brief)) && (
           <>
             <label className="flex flex-col gap-1.5">
@@ -200,6 +230,7 @@ export function LiveIntakeView({ businessId }: { businessId: string }) {
                 onChange={(e) => setGoal(e.target.value)}
                 placeholder="I want to launch a fitness studio in Krakow."
                 rows={3}
+                maxLength={GOAL_MAX_LENGTH}
                 className="rounded-[10px] border border-mist-200 bg-transparent p-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10"
               />
             </label>
@@ -343,7 +374,8 @@ export function LiveIntakeView({ businessId }: { businessId: string }) {
             </div>
           </>
         )}
-
+          </motion.div>
+        </AnimatePresence>
       </StepShell>
     </>
   );

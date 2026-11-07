@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.persistence.enums import TaskStatus
@@ -193,6 +193,25 @@ class ProjectRepository(BaseRepository[Project]):
 
 class TaskRepository(BaseRepository[Task]):
     model = Task
+
+    async def lock_for_update(
+        self, session: AsyncSession, business_id: str, task_id: str
+    ) -> Task | None:
+        """Tenant-scoped row lock, refreshed from the database.
+
+        Manual reconciliation must acquire this BEFORE the reservation lock so
+        the canonical order stays Task → Reservation → Project, matching the
+        executor settlement path and recovery. `populate_existing` prevents a
+        stale identity-map instance from hiding a concurrent change.
+        """
+        stmt = (
+            select(Task)
+            .where(Task.business_id == business_id, Task.id == task_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
 
     async def create(self, session: AsyncSession, business_id: str, data: dict[str, Any]) -> Task:
         payload = dict(data)

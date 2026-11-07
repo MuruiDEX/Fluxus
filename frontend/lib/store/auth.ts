@@ -115,8 +115,18 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   logout: async () => {
-    await apiLogout();
-    set({ ...clearSession(), error: null });
+    let failure: string | null = null;
+    try {
+      await apiLogout();
+    } catch (err) {
+      // Clear the local identity either way, but never claim a server-confirmed
+      // sign-out that did not happen.
+      failure =
+        err instanceof ApiError && err.status === 0
+          ? "Signed out on this device, but the server could not be reached — the server session may still be active."
+          : "Signed out on this device, but the server did not confirm it — the server session may still be active.";
+    }
+    set({ ...clearSession(), error: failure });
   },
 
   refresh: () => {

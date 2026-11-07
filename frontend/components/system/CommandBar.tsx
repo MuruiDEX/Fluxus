@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowRight, Bot, Globe, Search, Sparkles, X, Zap } from "lucide-react";
 import { useUI } from "@/lib/store/app";
+import { transition } from "@/lib/motion";
+import { goalHref } from "@/lib/intake-goal";
+import { useModalSurface } from "@/lib/use-modal-surface";
 
 const suggestions = [
   { icon: Bot, label: "Launch a fitness studio in Krakow", tab: "Projects" },
@@ -25,6 +28,9 @@ export function CommandBar() {
   const [value, setValue] = useState("");
   const [tab, setTab] = useState("Popular");
   const router = useRouter();
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+
+  useModalSurface(surfaceRef, commandOpen);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -41,7 +47,7 @@ export function CommandBar() {
   const go = (goal: string) => {
     setCommandOpen(false);
     setValue("");
-    router.push(`/projects/new?goal=${encodeURIComponent(goal)}`);
+    router.push(goalHref(goal));
   };
 
   return (
@@ -55,11 +61,15 @@ export function CommandBar() {
           onClick={() => setCommandOpen(false)}
         >
           <motion.div
+            ref={surfaceRef}
             initial={{ opacity: 0, y: 12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.98 }}
-            transition={{ duration: 0.18 }}
+            transition={transition.base}
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command bar"
             className="bg-command-glow w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 shadow-pop"
           >
             <div className="flex items-center gap-2 border-b border-white/10 px-4">
@@ -94,7 +104,7 @@ export function CommandBar() {
                 </button>
               ))}
             </div>
-            <div className="flex flex-col gap-1 p-3">
+            <div className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto p-3">
               {suggestions
                 .filter((s) => (tab === "Popular" || s.tab === tab) && s.label.toLowerCase().includes(value.toLowerCase()))
                 .map((s, i) => (

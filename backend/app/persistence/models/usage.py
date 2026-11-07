@@ -10,10 +10,16 @@ Two cooperating tables:
   represented as zero.
 
 - `budget_reservations` is MUTABLE state (active/consumed/ambiguous/released/
-  written_off) kept OUT of the append-only ledger. A reservation is created
-  before the network call and settled afterwards; `active`+`ambiguous` count
-  against the budget ceiling, `consumed` links to its ledger row (counted
-  once, as confirmed).
+  written_off/reconciled) kept OUT of the append-only ledger. A reservation is
+  created before the network call and settled afterwards; `active`+`ambiguous`
+  count against the budget ceiling, `consumed`/`reconciled` link to one ledger
+  row (counted once, as confirmed).
+
+- `usage_reconciliations` is the append-only audit trail for manual operator
+  confirmation of an ambiguous task-execution hold. It links the reservation,
+  the exact execution scope (task/attempt/generation), the confirmed ledger
+  row and the acting owner. It never stores inferred/fabricated usage: token
+  counts default to zero when the operator does not know them.
 
 Money is NUMERIC(12,2). Contract literals are VARCHAR + CHECK, matching the
 rest of the schema (no native ENUM).
@@ -31,6 +37,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -40,6 +47,7 @@ from app.persistence.enums import (
     ReservationStatus,
     UsageCallKind,
     UsageCostSource,
+    UsageReconciliationOutcome,
     UsageStatus,
     literal_check,
 )
@@ -139,3 +147,84 @@ class BudgetReservation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     # and Team Lead/business-scoped calls (no task generation to record).
     execution_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(256))
+
+
+class UsageReconciliation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
+    """Append-only audit of one manual ambiguous-reservation reconciliation.
+
+    Exactly one row per reservation and one row per confirmed ledger entry. The
+    reservation snapshot is copied here so the audit remains readable even if
+    mutable reservation fields are later touched by unrelated flows. `amount`
+    and `cost_source="provider"` record the operator's explicit confirmation;
+    zero token counts mean "unknown/not supplied", never fabricated usage.
+    """
+
+    __tablename__ = "usage_reconciliations"
+    __table_args__ = (
+        literal_check(
+            "outcome",
+            UsageReconciliationOutcome,
+            "ck_usage_reconciliations_outcome",
+        ),
+        CheckConstraint(
+            "cost_source = 'provider'",
+            name="ck_usage_reconciliations_cost_source",
+        ),
+        CheckConstraint("amount > 0", name="ck_usage_reconciliations_amount_pos"),
+        CheckConstraint(
+            "prompt_tokens >= 0 AND completion_tokens >= 0 AND total_tokens >= 0 "
+            "AND (cached_tokens IS NULL OR cached_tokens >= 0) "
+            "AND (reasoning_tokens IS NULL OR reasoning_tokens >= 0)",
+            name="ck_usage_reconciliations_tokens_nonneg",
+        ),
+        CheckConstraint("attested", name="ck_usage_reconciliations_attested"),
+        UniqueConstraint("reservation_id", name="uq_usage_reconciliations_reservation"),
+        UniqueConstraint("usage_record_id", name="uq_usage_reconciliations_usage_record"),
+        Index(
+            "ix_usage_reconciliations_business_project",
+            "business_id",
+            "project_id",
+        ),
+        Index(
+            "ix_usage_reconciliations_business_task",
+            "business_id",
+            "task_id",
+        ),
+    )
+
+    business_id: Mapped[str] = mapped_column(
+        String(ID_LEN), ForeignKey("businesses.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(ID_LEN), ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    task_id: Mapped[str] = mapped_column(String(ID_LEN), ForeignKey("tasks.id", ondelete="CASCADE"))
+    reservation_id: Mapped[str] = mapped_column(
+        String(ID_LEN), ForeignKey("budget_reservations.id", ondelete="CASCADE")
+    )
+    usage_record_id: Mapped[str] = mapped_column(
+        String(ID_LEN), ForeignKey("usage_records.id", ondelete="CASCADE")
+    )
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    attempt_key: Mapped[str] = mapped_column(String(200))
+    execution_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(
+        String(16), default=UsageReconciliationOutcome.CHARGED.value
+    )
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    cost_source: Mapped[str] = mapped_column(String(16), default=UsageCostSource.PROVIDER.value)
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(200))
+    provider_request_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attested: Mapped[bool] = mapped_column(Boolean, default=True)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(ID_LEN), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_email: Mapped[str] = mapped_column(String(320), default="")

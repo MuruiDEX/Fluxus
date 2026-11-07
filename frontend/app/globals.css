@@ -7,7 +7,10 @@
 
   /* MUSE SPARK — reference-extracted tokens */
   --color-ink-950: #0f1e3d;
+  --color-ink-900: #152446;
+  --color-ink-800: #1c2b4d;
   --color-ink-700: #33415e;
+  --color-ink-600: #46567a;
   --color-ink-500: #5b6b8c;
   --color-ink-400: #8291ad;
 
@@ -19,8 +22,11 @@
   --color-brand-50: #eef4ff;
   --color-brand-100: #e0ecff;
   --color-brand-200: #c3d9ff;
+  --color-brand-300: #9dbfff;
+  --color-brand-400: #6b9bff;
   --color-brand-500: #2563eb;
   --color-brand-600: #1d4ed8;
+  --color-brand-700: #1e40af;
   --color-sky-400: #38bdf8;
   --color-cyan-500: #06b6d4;
   --color-violet-500: #8b5cf6;
@@ -30,20 +36,160 @@
   --color-night-800: #14224a;
 
   --radius-card: 1rem;
-  --radius-panel: 0.875rem;
+  --radius-panel: 0.75rem;
   --radius-control: 0.625rem;
 
   --shadow-card: 0 1px 2px rgba(16, 24, 64, 0.06), 0 8px 24px -12px rgba(37, 99, 235, 0.18);
   --shadow-pop: 0 12px 40px -12px rgba(15, 30, 61, 0.28);
+
+  /*
+   * Typography roles. Each size is the value already used by the shared
+   * primitives, so adopting a role is a rename, not a re-layout. Line heights
+   * are explicit so text does not accidentally inherit a heading's leading;
+   * weight stays at the call site because the same size serves badges (600/700)
+   * and body copy (400).
+   */
+  --text-micro: 10.5px;
+  --text-micro--line-height: 1.5;
+  --text-micro-sm: 10px;
+  --text-micro-sm--line-height: 1.5;
+  --text-label: 11.5px;
+  --text-label--line-height: 1.5;
+  --text-label-sm: 11px;
+  --text-label-sm--line-height: 1.5;
+  --text-caption: 12px;
+  --text-caption--line-height: 1.5;
+  --text-small: 12.5px;
+  --text-small--line-height: 1.5;
+  --text-body-sm: 13px;
+  --text-body-sm--line-height: 1.5;
+  --text-body: 13.5px;
+  --text-body--line-height: 1.5;
+  --text-body-md: 14px;
+  --text-body-md--line-height: 1.5;
+  --text-body-lg: 15px;
+  --text-body-lg--line-height: 1.5;
+  --text-heading-xs: 16px;
+  --text-heading-xs--line-height: 1.5;
+  --text-heading-sm: 18px;
+  --text-heading-sm--line-height: 1.5;
+  --text-heading-md: 20px;
+  /* Fixed 20px role: px keeps inline badges inheriting the 28px title line. */
+  --text-heading-md--line-height: 28px;
+  --text-heading-lg: 22px;
+  --text-heading-lg--line-height: 1.5;
+  --text-display-sm: 26px;
+  --text-display-sm--line-height: 1.3;
+}
+
+/*
+ * Semantic layer. The raw ink/mist/brand/night scales above stay the source
+ * of truth for hue; these tokens name the role so a surface, border or status
+ * has exactly one definition in light and dark mode. `@theme inline` keeps the
+ * utility pointing at the runtime variable, which is what lets `.dark` switch
+ * it without a second set of `dark:` classes at every call site.
+ */
+@theme inline {
+  --color-canvas: var(--flux-canvas);
+  --color-surface: var(--flux-surface);
+  --color-surface-raised: var(--flux-surface-raised);
+  --color-surface-sunken: var(--flux-surface-sunken);
+
+  --color-line: var(--flux-line);
+  --color-line-strong: var(--flux-line-strong);
+
+  --color-fg: var(--flux-fg);
+  --color-fg-muted: var(--flux-fg-muted);
+  --color-fg-subtle: var(--flux-fg-subtle);
+
+  --color-brand: var(--flux-brand);
+  --color-brand-hover: var(--flux-brand-hover);
+  --color-brand-soft: var(--flux-brand-soft);
+
+  --color-success: var(--flux-success);
+  --color-success-soft: var(--flux-success-soft);
+  --color-warning: var(--flux-warning);
+  --color-warning-soft: var(--flux-warning-soft);
+  --color-danger: var(--flux-danger);
+  --color-danger-soft: var(--flux-danger-soft);
+  --color-info: var(--flux-info);
+  --color-info-soft: var(--flux-info-soft);
+
+  --color-focus: var(--flux-focus);
+  --color-disabled-bg: var(--flux-disabled-bg);
+  --color-disabled-fg: var(--flux-disabled-fg);
 }
 
 :root {
-  --background: var(--color-mist-50);
-  --foreground: var(--color-ink-950);
+  --flux-canvas: #f4f7fe;
+  --flux-surface: #ffffff;
+  --flux-surface-raised: #f4f7fe;
+  --flux-surface-sunken: #eaf0fb;
+
+  --flux-line: #e3eaf6;
+  --flux-line-strong: #cdd9ee;
+
+  --flux-fg: #0f1e3d;
+  --flux-fg-muted: #5b6b8c;
+  --flux-fg-subtle: #5f7096;
+
+  --flux-brand: #2563eb;
+  --flux-brand-hover: #1d4ed8;
+  --flux-brand-soft: #eef4ff;
+
+  --flux-success: #047857;
+  --flux-success-soft: #ecfdf5;
+  --flux-warning: #b45309;
+  --flux-warning-soft: #fffbeb;
+  --flux-danger: #dc2626;
+  --flux-danger-soft: #fef2f2;
+  --flux-info: #0369a1;
+  --flux-info-soft: #f0f9ff;
+
+  --flux-focus: #2563eb;
+  --flux-disabled-bg: #eaf0fb;
+  --flux-disabled-fg: #8291ad;
+
+  /* Shell geometry lives in one place; the layout reads these variables. */
+  --flux-sidebar-w: 232px;
+  --flux-topbar-h: 60px;
+  --flux-page-max: 1440px;
+
+  --background: var(--flux-canvas);
+  --foreground: var(--flux-fg);
 }
 
 .dark {
-  --background: var(--color-night-950);
+  --flux-canvas: #070d24;
+  --flux-surface: #0d1730;
+  --flux-surface-raised: #14224a;
+  --flux-surface-sunken: #0a1330;
+
+  --flux-line: rgba(255, 255, 255, 0.1);
+  --flux-line-strong: rgba(255, 255, 255, 0.18);
+
+  --flux-fg: #ffffff;
+  --flux-fg-muted: #94a3b8;
+  --flux-fg-subtle: #8494ad;
+
+  --flux-brand: #7dd3fc;
+  --flux-brand-hover: #a5d8ff;
+  --flux-brand-soft: rgba(37, 99, 235, 0.12);
+
+  --flux-success: #6ee7b7;
+  --flux-success-soft: rgba(16, 185, 129, 0.1);
+  --flux-warning: #fcd34d;
+  --flux-warning-soft: rgba(245, 158, 11, 0.1);
+  --flux-danger: #fca5a5;
+  --flux-danger-soft: rgba(239, 68, 68, 0.1);
+  --flux-info: #7dd3fc;
+  --flux-info-soft: rgba(56, 189, 248, 0.1);
+
+  --flux-focus: #38bdf8;
+  --flux-disabled-bg: rgba(255, 255, 255, 0.06);
+  --flux-disabled-fg: #64748b;
+
+  --background: var(--flux-canvas);
   --foreground: #e8eefc;
 }
 
@@ -56,8 +202,8 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
-  font-size: 13.5px;
-  line-height: 1.5;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -103,4 +249,34 @@ body {
 }
 .animate-pulse-dot {
   animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* Keyboard users get a visible, consistent focus ring everywhere. Pointer
+   presses do not show it, so the dense UI stays calm. */
+:where(a, button, input, select, textarea, summary, [role="button"], [role="tab"], [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Motion recedes, function stays: decorative loops stop, spinners keep
+   spinning because they communicate real work in progress. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-dot {
+    animation: none;
+    opacity: 1;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
+  }
 }

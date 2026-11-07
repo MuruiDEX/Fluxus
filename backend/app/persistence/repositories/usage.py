@@ -24,7 +24,7 @@ from app.persistence.enums import ReservationStatus
 from app.persistence.exceptions import new_id, validate_id
 from app.persistence.models.business import Business
 from app.persistence.models.project import Project
-from app.persistence.models.usage import BudgetReservation, UsageRecord
+from app.persistence.models.usage import BudgetReservation, UsageReconciliation, UsageRecord
 from app.persistence.repositories.base import quantize_money
 
 _PENDING = (ReservationStatus.ACTIVE.value, ReservationStatus.AMBIGUOUS.value)
@@ -93,6 +93,32 @@ class UsageRepository:
             stmt.order_by(UsageRecord.occurred_at.desc(), UsageRecord.id)
             .limit(limit)
             .offset(offset)
+        )
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def list_for_attempt(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        task_id: str,
+        attempt_key: str,
+    ) -> list[UsageRecord]:
+        """All ledger rows for one task attempt, oldest first.
+
+        Manual reconciliation uses this to show the operator the existing
+        provider/model evidence for the exact attempt without touching another
+        tenant or attempt.
+        """
+        stmt = (
+            select(UsageRecord)
+            .where(
+                UsageRecord.business_id == business_id,
+                UsageRecord.task_id == task_id,
+                UsageRecord.attempt_key == attempt_key,
+            )
+            .order_by(UsageRecord.occurred_at.asc(), UsageRecord.id.asc())
         )
         res = await session.execute(stmt)
         return list(res.scalars().all())
@@ -306,6 +332,178 @@ class BudgetReservationRepository:
             )
         )
         return res.scalar_one_or_none()
+
+    async def get_by_id(
+        self, session: AsyncSession, business_id: str, reservation_id: str
+    ) -> BudgetReservation | None:
+        """Tenant-scoped read, always refreshed from the database.
+
+        Manual reconciliation first inspects the row without a lock to identify
+        its task. The refreshed read is also used to diagnose a lost CAS after
+        the canonical task → reservation locks have been acquired.
+        """
+        stmt = (
+            select(BudgetReservation)
+            .where(
+                BudgetReservation.business_id == business_id,
+                BudgetReservation.id == reservation_id,
+            )
+            .execution_options(populate_existing=True)
+        )
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    def _ambiguous_task_execution_scope(self):  # type: ignore[no-untyped-def]
+        return (
+            BudgetReservation.status == ReservationStatus.AMBIGUOUS.value,
+            BudgetReservation.task_id.is_not(None),
+            BudgetReservation.project_id.is_not(None),
+        )
+
+    @staticmethod
+    def _generation_match(stmt, execution_generation: int | None):  # type: ignore[no-untyped-def]
+        """Exact generation match, including the explicit NULL branch.
+
+        `NULL` is its own scope: it never matches an integer (including zero),
+        and an integer never matches a legacy/unknown NULL row.
+        """
+        if execution_generation is None:
+            return stmt.where(BudgetReservation.execution_generation.is_(None))
+        return stmt.where(BudgetReservation.execution_generation == execution_generation)
+
+    async def get_ambiguous_task_execution(
+        self, session: AsyncSession, business_id: str, reservation_id: str
+    ) -> BudgetReservation | None:
+        """One ambiguous, task/project-scoped reservation (read only)."""
+        stmt = select(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+            *self._ambiguous_task_execution_scope(),
+        )
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def list_ambiguous_task_execution(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        project_id: str | None = None,
+        task_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[BudgetReservation]:
+        """Ambiguous holds that belong to a real task execution.
+
+        Taskless Team Lead/project holds are deliberately excluded: they are out
+        of scope for slice 4 and must not appear in this read surface.
+        """
+        stmt = select(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            *self._ambiguous_task_execution_scope(),
+        )
+        if project_id is not None:
+            stmt = stmt.where(BudgetReservation.project_id == project_id)
+        if task_id is not None:
+            stmt = stmt.where(BudgetReservation.task_id == task_id)
+        stmt = (
+            stmt.order_by(BudgetReservation.created_at.asc(), BudgetReservation.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def count_ambiguous_task_execution(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        *,
+        project_id: str | None = None,
+        task_id: str | None = None,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(BudgetReservation)
+            .where(
+                BudgetReservation.business_id == business_id,
+                *self._ambiguous_task_execution_scope(),
+            )
+        )
+        if project_id is not None:
+            stmt = stmt.where(BudgetReservation.project_id == project_id)
+        if task_id is not None:
+            stmt = stmt.where(BudgetReservation.task_id == task_id)
+        res = await session.execute(stmt)
+        return int(res.scalar_one())
+
+    async def lock_ambiguous_task_execution(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        reservation_id: str,
+        *,
+        task_id: str,
+        project_id: str,
+        attempt_key: str,
+        execution_generation: int | None,
+    ) -> BudgetReservation | None:
+        """Lock the exact ambiguous hold after its task row is already locked.
+
+        The caller MUST acquire the task lock first; this method never locks a
+        task. `populate_existing` is mandatory: the pre-lock inspection may have
+        loaded the same identity, and a stale status would defeat the CAS.
+        """
+        stmt = select(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+            BudgetReservation.status == ReservationStatus.AMBIGUOUS.value,
+            BudgetReservation.task_id == task_id,
+            BudgetReservation.project_id == project_id,
+            BudgetReservation.attempt_key == attempt_key,
+        )
+        stmt = self._generation_match(stmt, execution_generation)
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def resolve_ambiguous(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        reservation_id: str,
+        *,
+        task_id: str,
+        project_id: str,
+        attempt_key: str,
+        execution_generation: int | None,
+        usage_record_id: str,
+        reason: str = "manual_provider_charge",
+    ) -> bool:
+        """CAS `ambiguous → reconciled` on the exact execution scope.
+
+        The predicates — not the preceding read/lock — are authoritative. A
+        NULL generation matches only `execution_generation IS NULL`; an integer
+        never matches a NULL/legacy row and vice versa. Returns True iff this
+        caller applied the transition.
+        """
+        stmt = update(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+            BudgetReservation.status == ReservationStatus.AMBIGUOUS.value,
+            BudgetReservation.task_id == task_id,
+            BudgetReservation.project_id == project_id,
+            BudgetReservation.attempt_key == attempt_key,
+        )
+        stmt = self._generation_match(stmt, execution_generation)
+        stmt = stmt.values(
+            status=ReservationStatus.RECONCILED.value,
+            reason=reason,
+            usage_record_id=usage_record_id,
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
 
     async def get_for_task(
         self,
@@ -724,3 +922,34 @@ class BudgetReservationRepository:
         stmt = stmt.group_by(BudgetReservation.status)
         rows = (await session.execute(stmt)).all()
         return {str(status): Decimal(str(total)) for status, total in rows}
+
+
+class UsageReconciliationRepository:
+    """Append-only audit rows for manual ambiguous-reservation reconciliation."""
+
+    model = UsageReconciliation
+
+    async def get_by_reservation(
+        self, session: AsyncSession, business_id: str, reservation_id: str
+    ) -> UsageReconciliation | None:
+        stmt = select(UsageReconciliation).where(
+            UsageReconciliation.business_id == business_id,
+            UsageReconciliation.reservation_id == reservation_id,
+        )
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def create(
+        self, session: AsyncSession, business_id: str, data: dict[str, Any]
+    ) -> UsageReconciliation:
+        payload = dict(data)
+        raw_id = payload.get("id")
+        payload["id"] = raw_id if raw_id is not None else new_id()
+        validate_id(payload["id"])
+        if payload.get("amount") is not None:
+            payload["amount"] = quantize_money(payload["amount"])
+        payload["business_id"] = business_id
+        row = UsageReconciliation(**payload)
+        session.add(row)
+        await session.flush()
+        return row

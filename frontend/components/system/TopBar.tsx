@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bell, LogIn, LogOut, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -9,14 +9,18 @@ import { useRouter } from "next/navigation";
 import { useApprovals, useUI } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveApprovals } from "@/lib/store/live";
+import { runtimeMode } from "@/lib/runtime-config";
 import { BusinessSwitcher } from "./BusinessSwitcher";
 import { SidebarLinks } from "./Sidebar";
 import { Avatar } from "./badges";
+import { transition } from "@/lib/motion";
+import { useModalSurface } from "@/lib/use-modal-surface";
 
 export function TopBar() {
   const { setCommandOpen } = useUI();
   const { theme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
   const { status, user, logout, currentBusinessId } = useSession();
   const demoPending = useApprovals(
     (s) => s.approvals.filter((approval) => approval.status === "pending").length,
@@ -24,13 +28,31 @@ export function TopBar() {
   const livePending = useLiveApprovals(
     (s) => s.approvals.filter((approval) => approval.status === "pending").length,
   );
-  const pending = isLiveContext(status, currentBusinessId) ? livePending : demoPending;
-  const displayName = status === "authenticated" && user ? user.displayName : "Demo operator";
+  // LIVE never borrows seed badge counts while the session is unresolved.
+  const pending =
+    runtimeMode === "live" || isLiveContext(status, currentBusinessId) ? livePending : demoPending;
+  const displayName =
+    status === "authenticated" && user
+      ? user.displayName
+      : runtimeMode === "live"
+        ? "Guest"
+        : "Demo operator";
   const router = useRouter();
+
+  useModalSurface(drawerRef, menuOpen);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   return (
     <>
-      <header className="flex h-[60px] shrink-0 items-center gap-2 border-b border-mist-200 bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 lg:px-6 dark:border-white/10 dark:bg-night-900/80">
+      <header className="flex h-(--flux-topbar-h) shrink-0 items-center gap-2 border-b border-line bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 lg:px-6 dark:bg-night-900/80">
         <button
           onClick={() => setMenuOpen(true)}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 lg:hidden dark:border-white/10 dark:text-slate-300"
@@ -40,11 +62,11 @@ export function TopBar() {
         </button>
         <button
           onClick={() => setCommandOpen(true)}
-          className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-[10px] border border-mist-200 bg-mist-50 px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-200 hover:bg-brand-50 dark:border-white/10 dark:bg-white/5 dark:hover:border-white/20"
+          className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-[10px] border border-mist-200 bg-mist-50 px-3 text-body-sm text-ink-400 transition-colors hover:border-brand-200 hover:bg-brand-50 dark:border-white/10 dark:bg-white/5 dark:hover:border-white/20"
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="flex-1 truncate text-left">What do you want to accomplish?</span>
-          <kbd className="hidden rounded border border-mist-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-ink-500 sm:block dark:border-white/10 dark:bg-white/5">
+          <kbd className="hidden rounded border border-mist-200 bg-white px-1.5 py-0.5 text-micro-sm font-semibold text-ink-500 sm:block dark:border-white/10 dark:bg-white/5">
             Ctrl K
           </kbd>
         </button>
@@ -64,14 +86,14 @@ export function TopBar() {
           >
             <Bell className="h-4 w-4" />
             {pending > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-micro-sm font-bold text-white">
                 {pending}
               </span>
             )}
           </Link>
           <Link
             href="/projects/new"
-            className="hidden h-9 items-center gap-1.5 rounded-[10px] bg-gradient-to-r from-brand-500 to-sky-400 px-3.5 text-[13px] font-semibold text-white shadow-card transition-opacity hover:opacity-90 sm:flex"
+            className="hidden h-9 items-center gap-1.5 rounded-[10px] bg-gradient-to-r from-brand-500 to-sky-400 px-3.5 text-body-sm font-semibold text-white shadow-card transition-opacity hover:opacity-90 sm:flex"
           >
             <Plus className="h-4 w-4" /> New Project
           </Link>
@@ -113,16 +135,20 @@ export function TopBar() {
             onClick={() => setMenuOpen(false)}
           >
             <motion.div
+              ref={drawerRef}
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
-              transition={{ type: "tween", duration: 0.2 }}
+              transition={transition.base}
               onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation"
               className="flex h-full w-[260px] flex-col gap-4 overflow-y-auto bg-white px-3 py-4 dark:bg-night-900"
             >
               <div className="flex items-center justify-between px-2">
-                <span className="text-[13px] font-bold tracking-wide">MUSE SPARK</span>
-                <button onClick={() => setMenuOpen(false)} aria-label="Close navigation">
+                <span className="text-body-sm font-bold tracking-wide">MUSE SPARK</span>
+                <button onClick={() => setMenuOpen(false)} aria-label="Close navigation" className="rounded-md p-1">
                   <X className="h-4 w-4 text-ink-500" />
                 </button>
               </div>

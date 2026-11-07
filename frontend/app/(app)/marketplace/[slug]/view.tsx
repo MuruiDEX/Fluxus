@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { Check, FlaskConical, Star } from "lucide-react";
-import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, GhostButton, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { HireButton, PackInstallButton } from "@/components/system/HireButton";
 import { hireListing, installListing } from "@/lib/hiring";
 import { useSession } from "@/lib/store/auth";
@@ -25,21 +25,30 @@ function DemoMarketplaceDetail({ slug }: { slug: string }) {
   const listings = useMarketplace((s) => s.listings);
   const hiredSlugs = useMarketplace((s) => s.hiredSlugs);
   const installedSlugs = useMarketplace((s) => s.installedSlugs);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
 
-  const item = useMemo(() => listings.find((l) => l.slug === slug) ?? listings[0], [listings, slug]);
+  const item = useMemo(() => listings.find((l) => l.slug === slug), [listings, slug]);
+
+  // No silent fallback to listings[0]: an unknown slug must not show a
+  // different product under the requested URL.
+  if (!item) {
+    return (
+      <>
+        <PageHeader title="Marketplace" sub="Demo catalog" />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">Listing not found</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+            No demo listing has this slug. Nothing is shown in its place.
+          </p>
+          <div className="mt-3 flex justify-center">
+            <GhostLink href="/marketplace">Back to marketplace</GhostLink>
+          </div>
+        </Card>
+      </>
+    );
+  }
+
   const isPack = item.category === "pack";
   const done = isPack ? installedSlugs.includes(item.slug) : hiredSlugs.includes(item.slug);
-
-  const runTest = () => {
-    setTesting(true);
-    setTestResult(null);
-    setTimeout(() => {
-      setTesting(false);
-      setTestResult("Qualified 8/10 sample leads · est. $0.04 · 42s · quality 4.7/5");
-    }, 1400);
-  };
 
   return (
     <>
@@ -65,11 +74,15 @@ function DemoMarketplaceDetail({ slug }: { slug: string }) {
             </div>
           </Card>
           <Card className="p-4">
-            <h3 className="flex items-center gap-2 text-[13px] font-bold"><FlaskConical className="h-4 w-4" /> Sandbox — try before hiring</h3>
-            <p className="mt-1 text-[12.5px] text-ink-500">Give it a realistic task, e.g. “Qualify these 10 sample leads.”</p>
-            <div className="mt-2 flex gap-2">
-              <GhostButton onClick={runTest}>{testing ? "Running…" : "Run test"}</GhostButton>
-              {testResult && <p className="flex items-center gap-1.5 text-[12.5px] font-medium text-emerald-600"><Check className="h-4 w-4" /> {testResult}</p>}
+            <h3 className="flex items-center gap-2 text-[13px] font-bold"><FlaskConical className="h-4 w-4" /> Sandbox — not available</h3>
+            <p className="mt-1 text-[12.5px] leading-5 text-ink-500">
+              Sandbox testing is not implemented in this build. Nothing is run here, and no test
+              result is simulated.
+            </p>
+            <div className="mt-2">
+              <GhostButton disabled title="Sandbox testing is not available in this build">
+                Run test — unavailable
+              </GhostButton>
             </div>
           </Card>
         </div>
@@ -93,7 +106,9 @@ function DemoMarketplaceDetail({ slug }: { slug: string }) {
                 it.
               </p>
             )}
-            <GhostButton>Talk to creator</GhostButton>
+            <GhostButton disabled title="Creator messaging is not available in this build">
+              Talk to creator — unavailable
+            </GhostButton>
           </div>
         </Card>
       </div>
@@ -177,7 +192,16 @@ function LiveMarketplaceDetail({ businessId, slug }: { businessId: string; slug:
           <p className="mt-2 text-[22px] font-bold tabular-nums">{item.price}</p>
           <p className="text-[12px] text-ink-400">One bill through MUSE SPARK. Cancel anytime.</p>
           <div className="mt-3 flex flex-col gap-2">
-            <HireButton businessId={businessId} slug={item.slug} hired={item.hired === true} price={item.price} />
+            {item.category === "employee" ? (
+              <HireButton businessId={businessId} slug={item.slug} hired={item.hired === true} price={item.price} />
+            ) : (
+              <p
+                title="No supported hire or install action exists for this catalog category in this build."
+                className="rounded-[10px] border border-dashed border-mist-200 px-3 py-2 text-[12.5px] text-ink-400 dark:border-white/10"
+              >
+                Not available for this listing type.
+              </p>
+            )}
           </div>
         </Card>
       </div>

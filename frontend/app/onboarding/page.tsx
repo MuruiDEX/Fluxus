@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Cpu } from "lucide-react";
+import { goalHref } from "@/lib/intake-goal";
 
 const steps = ["What are you building?", "Business details", "Location", "Goals", "Connect tools", "Import knowledge", "Build your AI team"];
 
@@ -27,14 +28,14 @@ export default function OnboardingPage() {
           <p className="mt-1 text-[13.5px] text-ink-500">Your AI company will handle the rest.</p>
           <div className="mx-auto mt-5 flex items-center gap-2 rounded-2xl border border-mist-200 bg-white p-2 pl-4 text-left shadow-card focus-within:border-brand-500 dark:border-white/10 dark:bg-night-900">
             <input value={goal} onChange={(e) => setGoal(e.target.value)} className="h-11 flex-1 bg-transparent text-[14px] outline-none" />
-            <Link href={`/projects/new?goal=${encodeURIComponent(goal)}`} className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-r from-brand-500 to-sky-400 text-white" aria-label="Start">
+            <Link href={goalHref(goal)} className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-r from-brand-500 to-sky-400 text-white" aria-label="Start">
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
           <p className="mt-5 text-[12.5px] text-ink-400">Or choose a mission:</p>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {["Launch Business", "Get More Customers", "Build Website", "Automate Business", "Analyze Competitors", "Explore Opportunities"].map((m) => (
-              <Link key={m} href={`/projects/new?goal=${encodeURIComponent(m)}`} className="rounded-xl border border-mist-200 bg-white p-3 text-[12.5px] font-medium hover:border-brand-200 hover:bg-brand-50 dark:border-white/10 dark:bg-night-900">
+              <Link key={m} href={goalHref(m)} className="rounded-xl border border-mist-200 bg-white p-3 text-[12.5px] font-medium hover:border-brand-200 hover:bg-brand-50 dark:border-white/10 dark:bg-night-900">
                 {m}
               </Link>
             ))}

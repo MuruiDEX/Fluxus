@@ -188,6 +188,21 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/usage/ambiguous-reservations",
+      "response": "AmbiguousReservationListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/usage/ambiguous-reservations/{reservation_id}",
+      "response": "AmbiguousReservationDetailResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/usage/ambiguous-reservations/{reservation_id}/confirm-charge",
+      "response": "ConfirmChargeResponse"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/health",
       "response": "HealthResponse"
     },
@@ -345,6 +360,173 @@
         "name",
         "role",
         "status"
+      ]
+    },
+    "AmbiguousReservationDetailResponse": {
+      "properties": {
+        "amount": {
+          "type": "decimal-as-string"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "attemptKey": {
+          "type": "string"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "executionGeneration": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "runSeq": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "usage": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "amount",
+        "attempt",
+        "attemptKey",
+        "businessId",
+        "createdAt",
+        "currency",
+        "id",
+        "mode",
+        "projectId",
+        "runSeq",
+        "status",
+        "taskId",
+        "updatedAt"
+      ]
+    },
+    "AmbiguousReservationListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "items": {
+          "default": [],
+          "type": "array"
+        },
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer"
+        },
+        "total": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": []
+    },
+    "AmbiguousReservationResponse": {
+      "properties": {
+        "amount": {
+          "type": "decimal-as-string"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "attemptKey": {
+          "type": "string"
+        },
+        "businessId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "executionGeneration": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "runSeq": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "attempt",
+        "attemptKey",
+        "businessId",
+        "createdAt",
+        "currency",
+        "id",
+        "mode",
+        "projectId",
+        "runSeq",
+        "status",
+        "taskId",
+        "updatedAt"
       ]
     },
     "ApprovalListResponse": {
@@ -680,6 +862,166 @@
       "required": [
         "id",
         "name"
+      ]
+    },
+    "ConfirmChargeRequest": {
+      "properties": {
+        "amount": {
+          "type": "decimal-as-string"
+        },
+        "attemptKey": {
+          "type": "string"
+        },
+        "attestation": {
+          "type": "Literal"
+        },
+        "cachedTokens": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "completionTokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "currency": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "evidence": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "executionGeneration": {
+          "nullable": true,
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "promptTokens": {
+          "default": 0,
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerRequestId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "reasoningTokens": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "totalTokens": {
+          "default": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "amount",
+        "attemptKey",
+        "attestation",
+        "executionGeneration",
+        "model",
+        "provider",
+        "taskId"
+      ]
+    },
+    "ConfirmChargeResponse": {
+      "properties": {
+        "actorEmail": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "decimal-as-string"
+        },
+        "attemptKey": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "costSource": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "executionGeneration": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "projectSpend": {
+          "type": "decimal-as-string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerRequestId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "reconciledAt": {
+          "type": "string"
+        },
+        "reconciliationId": {
+          "type": "string"
+        },
+        "reservationId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "taskCost": {
+          "type": "decimal-as-string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "usageRecordId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "actorEmail",
+        "amount",
+        "attemptKey",
+        "costSource",
+        "currency",
+        "model",
+        "outcome",
+        "projectId",
+        "projectSpend",
+        "provider",
+        "reconciledAt",
+        "reconciliationId",
+        "reservationId",
+        "status",
+        "taskCost",
+        "taskId",
+        "usageRecordId"
       ]
     },
     "DecisionResponse": {
@@ -1612,7 +1954,7 @@
           "type": "integer"
         },
         "summary": {
-          "default": "confirmed_cost=Decimal('0') estimated_cost=Decimal('0') unknown_count=0 by_call_kind={} reservations=UsageReservationSummary(active=Decimal('0'), ambiguous=Decimal('0'), consumed=Decimal('0'), released=Decimal('0'), written_off=Decimal('0'))",
+          "default": "confirmed_cost=Decimal('0') estimated_cost=Decimal('0') unknown_count=0 by_call_kind={} reservations=UsageReservationSummary(active=Decimal('0'), ambiguous=Decimal('0'), consumed=Decimal('0'), released=Decimal('0'), written_off=Decimal('0'), reconciled=Decimal('0'))",
           "type": "UsageSummary"
         },
         "total": {
@@ -1633,6 +1975,10 @@
           "type": "decimal-as-string"
         },
         "consumed": {
+          "default": "0",
+          "type": "decimal-as-string"
+        },
+        "reconciled": {
           "default": "0",
           "type": "decimal-as-string"
         },
@@ -1662,7 +2008,7 @@
           "type": "decimal-as-string"
         },
         "reservations": {
-          "default": "active=Decimal('0') ambiguous=Decimal('0') consumed=Decimal('0') released=Decimal('0') written_off=Decimal('0')",
+          "default": "active=Decimal('0') ambiguous=Decimal('0') consumed=Decimal('0') released=Decimal('0') written_off=Decimal('0') reconciled=Decimal('0')",
           "type": "UsageReservationSummary"
         },
         "unknownCount": {

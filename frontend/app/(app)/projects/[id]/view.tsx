@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
-import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
 import { PlanDriverPanel } from "@/components/system/PlanDriver";
 import { ProjectEditButton } from "@/components/system/ProjectEdit";
@@ -95,8 +95,8 @@ function ProjectLayout({
                 <p className="font-bold tabular-nums">${project.budget.toLocaleString("en-US")}</p>
               </div>
               <div className="rounded-xl bg-mist-50 p-2.5 dark:bg-white/5">
-                <p className="text-ink-400">Timeline</p>
-                <p className="font-bold">3 months</p>
+                <p className="text-ink-400">Deadline</p>
+                <p className="font-bold">{project.deadline || "Not set"}</p>
               </div>
             </div>
             <h3 className="mb-1.5 mt-4 text-[13px] font-bold">Key milestones</h3>
@@ -195,9 +195,31 @@ function ProjectLayout({
 function DemoProjectDetail({ id }: { id: string }) {
   const { projects, tasks } = useProjects();
   const agents = useAgents((s) => s.agents);
-  const project = useMemo(() => projects.find((p) => p.id === id) ?? projects[0], [projects, id]);
-  const projectTasks = useMemo(() => tasks.filter((t) => t.projectId === project.id), [tasks, project.id]);
   const approvals = useApprovals((s) => s.approvals);
+  const project = useMemo(() => projects.find((p) => p.id === id), [projects, id]);
+  const projectTasks = useMemo(
+    () => (project ? tasks.filter((t) => t.projectId === project.id) : []),
+    [tasks, project],
+  );
+
+  // No silent fallback to projects[0]: an unknown id must not present a
+  // different project under the requested one's URL.
+  if (!project) {
+    return (
+      <>
+        <PageHeader title="Project" sub="Demo projects" />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">Project not found</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+            No demo project has this id. Nothing is shown in its place.
+          </p>
+          <div className="mt-3 flex justify-center">
+            <GhostLink href="/projects">Back to projects</GhostLink>
+          </div>
+        </Card>
+      </>
+    );
+  }
 
   return (
     <ProjectLayout

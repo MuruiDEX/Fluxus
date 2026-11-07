@@ -121,12 +121,17 @@ class UsageCallKind(StrEnum):
 
 
 class ReservationStatus(StrEnum):
-    """Budget reservation lifecycle (Stage 16).
+    """Budget reservation lifecycle (Stage 16, Stage 18 S2.2.4.6).
 
     `active` and `ambiguous` reservations count against the budget ceiling;
-    `consumed` becomes the linked ledger row (counted once as confirmed);
-    `released`/`written_off` no longer count. Ambiguous reservations are
-    NEVER auto-released — only an explicit write-off or proven non-execution.
+    `consumed` and `reconciled` are linked to one confirmed ledger row (counted
+    once as confirmed); `released`/`written_off` no longer count. Ambiguous
+    reservations are NEVER auto-released — only an explicit, audited
+    reconciliation or proven non-execution.
+
+    `reconciled` is reserved for an operator-confirmed provider charge against
+    a previously `ambiguous` task-execution hold. `consumed` remains the normal
+    automated settlement outcome.
     """
 
     ACTIVE = "active"
@@ -134,6 +139,17 @@ class ReservationStatus(StrEnum):
     AMBIGUOUS = "ambiguous"
     RELEASED = "released"
     WRITTEN_OFF = "written_off"
+    RECONCILED = "reconciled"
+
+
+class UsageReconciliationOutcome(StrEnum):
+    """Audited outcome of a manual ambiguous-reservation reconciliation.
+
+    Slice 4 exposes only `charged`. The literal is intentionally narrow: no
+    no-charge/release/refund outcome exists in this slice.
+    """
+
+    CHARGED = "charged"
 
 
 def check_values(enum_cls: type[StrEnum]) -> list[str]:

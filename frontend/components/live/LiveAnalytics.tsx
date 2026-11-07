@@ -1,17 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import dynamic from "next/dynamic";
+import { Card, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
 import { ProgressBar } from "@/components/system/badges";
 import {
   useLiveAgentsList,
@@ -19,6 +10,12 @@ import {
   useLiveProjects,
   useLiveUsage,
 } from "@/lib/store/live";
+import { metricState, projectTotals, type MetricState } from "@/lib/live/analytics-metrics";
+
+const CostBarChart = dynamic(
+  () => import("@/components/charts/cost-bar-chart").then((mod) => mod.CostBarChart),
+  { ssr: false, loading: () => <Skeleton className="h-full w-full" /> },
+);
 
 const CALL_KIND_LABELS: Record<string, string> = {
   task_execution: "Task execution",
@@ -31,6 +28,26 @@ const CALL_KIND_LABELS: Record<string, string> = {
 
 function money(value: number): string {
   return `$${value.toFixed(2)}`;
+}
+
+/**
+ * Renders a server figure, a loading skeleton, or an explicit "—". A failed
+ * request is never rendered as $0.00 — that is a balance the server did not
+ * report.
+ */
+function MoneyValue({ state, value }: { state: MetricState; value: number }) {
+  if (state === "pending") return <Skeleton className="h-7 w-24" />;
+  if (state === "unavailable") {
+    return (
+      <span
+        className="text-ink-400"
+        title="This request failed — the server reported no value, so none is shown."
+      >
+        —
+      </span>
+    );
+  }
+  return <>{money(value)}</>;
 }
 
 export function LiveAnalytics({ businessId }: { businessId: string }) {
@@ -62,9 +79,14 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
     confirmed: entry.confirmedCost,
     estimated: entry.estimatedCost,
   }));
-  const totalBudget = projects.reduce((sum, project) => sum + project.aiBudget, 0);
-  const totalSpent = projects.reduce((sum, project) => sum + project.aiSpent, 0);
+  const totals = projectTotals(projects);
   const totalCommitted = summary.confirmedCost + summary.estimatedCost;
+  // Pending shows a skeleton; a failed load shows "—". It must never fall
+  // through to the empty summary as $0.00.
+  const usageState = metricState(usageSlice.status);
+  const projectsState = metricState(projectsSlice.status);
+  const usageFailed = usageState === "unavailable";
+  const projectsFailed = projectsState === "unavailable";
 
   return (
     <>
@@ -84,13 +106,29 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
         </Card>
       ) : (
         <>
+          {(usageFailed || projectsFailed) && (
+            <Card className="flex flex-wrap items-center gap-3 border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              <span className="min-w-0 flex-1 leading-5">
+                Some analytics could not be loaded. Dependent figures show “—” rather than a
+                balance the server never reported.
+              </span>
+              <PrimaryButton
+                onClick={() => {
+                  if (usageFailed) void usageSlice.load({ businessId });
+                  if (projectsFailed) void projectsSlice.load(businessId);
+                }}
+              >
+                Retry
+              </PrimaryButton>
+            </Card>
+          )}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="p-4">
               <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">
                 Confirmed AI spend
               </p>
               <p className="mt-1 text-[22px] font-bold tabular-nums">
-                {money(summary.confirmedCost)}
+                <MoneyValue state={usageState} value={summary.confirmedCost} />
               </p>
               <p className="mt-1 text-[11.5px] text-ink-400">Provider-reported or tariff-priced</p>
             </Card>
@@ -98,27 +136,41 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
               <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">
                 Estimated + confirmed
               </p>
-              <p className="mt-1 text-[22px] font-bold tabular-nums">{money(totalCommitted)}</p>
+              <p className="mt-1 text-[22px] font-bold tabular-nums">
+                <MoneyValue state={usageState} value={totalCommitted} />
+              </p>
               <p className="mt-1 text-[11.5px] text-ink-400">{summary.unknownCount} unpriced calls</p>
             </Card>
             <Card className="p-4">
               <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">
                 Project AI budgets
               </p>
-              <p className="mt-1 text-[22px] font-bold tabular-nums">{money(totalSpent)}</p>
-              <p className="mt-1 text-[11.5px] text-ink-400">of {money(totalBudget)} allocated</p>
+              <p className="mt-1 text-[22px] font-bold tabular-nums">
+                <MoneyValue state={projectsState} value={totals.spent} />
+              </p>
+              <p className="mt-1 text-[11.5px] text-ink-400">
+                {projectsState === "pending"
+                  ? "Loading budgets…"
+                  : projectsState === "unavailable"
+                    ? "Budget data unavailable"
+                    : `of ${money(totals.budget)} allocated`}
+              </p>
             </Card>
             <Card className="p-4">
               <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">
                 Active reservations
               </p>
               <p className="mt-1 text-[22px] font-bold tabular-nums">
-                {money(summary.reservations.active)}
+                <MoneyValue state={usageState} value={summary.reservations.active} />
               </p>
               <p className="mt-1 text-[11.5px] text-ink-400">
-                {summary.reservations.ambiguous > 0
-                  ? `${money(summary.reservations.ambiguous)} ambiguous`
-                  : "No ambiguous reservations"}
+                {usageState === "pending"
+                  ? "Loading reservations…"
+                  : usageState === "unavailable"
+                    ? "Reservation data unavailable"
+                    : summary.reservations.ambiguous > 0
+                      ? `${money(summary.reservations.ambiguous)} ambiguous`
+                      : "No ambiguous reservations"}
               </p>
             </Card>
           </div>
@@ -133,23 +185,24 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
               </div>
               {usageSlice.status === "error" ? (
                 <p className="text-[13px] text-red-500">{usageSlice.error}</p>
+              ) : usageSlice.status !== "ready" ? (
+                <p className="text-[13px] text-ink-400">Loading cost data…</p>
               ) : byKind.length === 0 ? (
                 <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
                   No billable AI calls recorded yet.
                 </p>
               ) : (
                 <div className="h-56">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={byKind}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                      <XAxis dataKey="name" fontSize={10} interval={0} angle={-15} height={50} />
-                      <YAxis fontSize={11} />
-                      <Tooltip formatter={(value) => money(Number(value))} />
-                      <Legend />
-                      <Bar dataKey="confirmed" name="Confirmed" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="estimated" name="Estimated" fill="#93c5fd" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <CostBarChart
+                    data={byKind}
+                    angled
+                    showLegend
+                    formatValue={money}
+                    bars={[
+                      { key: "confirmed", name: "Confirmed", color: "#2563eb" },
+                      { key: "estimated", name: "Estimated", color: "#93c5fd" },
+                    ]}
+                  />
                 </div>
               )}
             </Card>

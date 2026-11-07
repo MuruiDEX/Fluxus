@@ -15,6 +15,7 @@ from app.api.v1 import (
     recovery,
     tasks,
     usage,
+    usage_reconciliation,
     writes,
 )
 
@@ -29,6 +30,7 @@ v1_router.include_router(tasks.router, tags=["tasks"])
 v1_router.include_router(recovery.router, tags=["recovery"])
 v1_router.include_router(reads.router, tags=["reads"])
 v1_router.include_router(usage.router, tags=["usage"])
+v1_router.include_router(usage_reconciliation.router, tags=["usage"])
 v1_router.include_router(marketplace.router, tags=["marketplace"])
 v1_router.include_router(packs.router, tags=["packs"])
 v1_router.include_router(writes.router, tags=["writes"])

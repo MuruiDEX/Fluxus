@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AgentStatusBadge, Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
-import { Card, PageHeader } from "@/components/system/ui";
+import { Card, DemoBadge, PageHeader } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
 import { LiveOffice } from "@/components/live/LiveOffice";
 import { startLoop } from "@/lib/sim/engine";
@@ -21,10 +21,14 @@ function DemoOfficePage() {
   const { currentBusinessId } = useBusiness();
   const activeProjectId = useProjects((s) => s.activeProjectId);
   const allTasks = useProjects((s) => s.tasks);
+  const projects = useProjects((s) => s.projects);
   const tasks = useMemo(() => allTasks.filter((t) => t.projectId === activeProjectId), [allTasks, activeProjectId]);
+  const activeProject = projects.find((p) => p.id === activeProjectId);
   const [view, setView] = useState<(typeof views)[number]>("Live");
-  const working = agents.filter((a) => a.hired).length;
   const hiredAgents = agents.filter((a) => a.hired);
+  const workingNow = hiredAgents.filter(
+    (a) => a.status === "working" || a.status === "thinking",
+  ).length;
 
   // The office comes alive on open; the guarded engine ignores duplicate starts.
   useEffect(() => {
@@ -35,7 +39,8 @@ function DemoOfficePage() {
     <>
       <PageHeader
         title="AI Office"
-        sub={`${working} AI employees working`}
+        badge={<DemoBadge />}
+        sub={`${workingNow} of ${hiredAgents.length} simulated AI employee${hiredAgents.length === 1 ? "" : "s"} working`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <EngineControls scope={{ businessId: currentBusinessId, projectId: activeProjectId }} compact />
@@ -62,10 +67,10 @@ function DemoOfficePage() {
         <Card className="bg-office-grid overflow-hidden p-4 dark:bg-night-900">
           <div className="mb-1 flex items-center justify-between">
             <p className="text-[13px] font-semibold">
-              {view === "Timeline" ? "Execution timeline" : view === "Whiteboard" ? "Plan whiteboard" : "Floor — Kraków launch team"}
+              {view === "Timeline" ? "Execution timeline" : view === "Whiteboard" ? "Plan whiteboard" : `Floor — ${activeProject?.title ?? "demo team"}`}
             </p>
-            <span className="flex items-center gap-1.5 text-[12px] text-emerald-600">
-              <span className="animate-pulse-dot h-2 w-2 rounded-full bg-emerald-500" /> Live
+            <span className="flex items-center gap-1.5 text-[12px] text-ink-500 dark:text-slate-400">
+              <span className="h-2 w-2 rounded-full bg-brand-400" /> Simulated
             </span>
           </div>
 

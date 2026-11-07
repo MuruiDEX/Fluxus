@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2, CircleAlert, Lightbulb, TrendingUp } from "lucide-react";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, DemoBadge, MetricCard, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, DemoBadge, MetricCard, PageHeader, PrimaryLink } from "@/components/system/ui";
+import { StaggerGroup, StaggerItem } from "@/components/system/motion";
 import { LiveHome } from "@/components/live/LiveHome";
+import { goalHref } from "@/lib/intake-goal";
 import { useActivity, useAgents, useApprovals, useBusiness, useProjects } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext } from "@/lib/store/live";
@@ -34,17 +36,22 @@ function DemoHomePage() {
         badge={<DemoBadge />}
         sub={`Your AI company is working on ${projects.length} project${projects.length === 1 ? "" : "s"}. Here's what's happening.`}
         actions={
-          <Link href="/projects/new">
-            <PrimaryButton>+ New Project</PrimaryButton>
-          </Link>
+          <PrimaryLink href="/projects/new">+ New Project</PrimaryLink>
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <MetricCard label="Revenue" value={`$${business.metrics.revenue.toLocaleString("en-US")}`} delta={m.revenueDelta} spark={business.revenueSeries.map((r) => r.value)} />
-        <MetricCard label="New Customers" value={String(m.customers)} delta={m.customersDelta} spark={[42, 55, 51, 66, 74, 88]} />
-        <MetricCard label="Conversion" value={`${m.conversion}%`} delta={m.conversionDelta} invert spark={[62, 58, 60, 52, 55, 51]} />
-        <Card className="flex items-center gap-3 p-4">
+      <StaggerGroup className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StaggerItem>
+          <MetricCard label="Revenue" value={`$${business.metrics.revenue.toLocaleString("en-US")}`} delta={m.revenueDelta} spark={business.revenueSeries.map((r) => r.value)} />
+        </StaggerItem>
+        <StaggerItem>
+          <MetricCard label="New Customers" value={String(m.customers)} delta={m.customersDelta} />
+        </StaggerItem>
+        <StaggerItem>
+          <MetricCard label="Conversion" value={`${m.conversion}%`} delta={m.conversionDelta} invert />
+        </StaggerItem>
+        <StaggerItem>
+        <Card className="flex h-full items-center gap-3 p-4">
           <div className="relative h-14 w-14 shrink-0">
             <svg viewBox="0 0 36 36" className="h-14 w-14 -rotate-90">
               <circle cx="18" cy="18" r="15.5" fill="none" strokeWidth="4" className="stroke-mist-200 dark:stroke-white/10" />
@@ -56,7 +63,8 @@ function DemoHomePage() {
                 strokeWidth="4"
                 strokeLinecap="round"
                 stroke="url(#health)"
-                strokeDasharray={`${business.healthScore}, 100`}
+                pathLength={100}
+                strokeDasharray={`${business.healthScore} 100`}
               />
               <defs>
                 <linearGradient id="health" x1="0" y1="0" x2="1" y2="1">
@@ -74,21 +82,25 @@ function DemoHomePage() {
             <p className="text-[15px] font-bold">{business.healthScore}/100</p>
           </div>
         </Card>
-      </div>
+        </StaggerItem>
+      </StaggerGroup>
 
       <div className="grid gap-3 xl:grid-cols-3">
         <Card className="p-4">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-[15px] font-bold">CEO Briefing</h2>
-            <span className="text-[11px] text-ink-400">Today</span>
+            <span className="text-[11px] text-ink-400">Sample signals</span>
           </div>
+          <p className="mb-1 text-[11.5px] leading-4 text-ink-400">
+            Illustrative demo scenarios — not live measurements of your business.
+          </p>
           <div className="flex flex-col">
             {briefing.map((b, i) => (
               <div key={i} className="flex items-start gap-2.5 border-b border-mist-100 py-2.5 last:border-0 dark:border-white/5">
                 <b.icon className={`mt-0.5 h-4 w-4 shrink-0 ${b.tone}`} />
                 <p className="flex-1 text-[13px] leading-5">{b.text}</p>
                 <button
-                  onClick={() => router.push(`/projects/new?goal=${encodeURIComponent(b.goal)}`)}
+                  onClick={() => router.push(goalHref(b.goal))}
                   className="shrink-0 text-[12px] font-semibold text-brand-500 hover:underline"
                 >
                   {b.action}
@@ -115,14 +127,11 @@ function DemoHomePage() {
                 <ProgressBar value={p.progress} />
               </Link>
             ))}
-            <div className="rounded-xl bg-mist-50 p-3 text-[12.5px] dark:bg-white/5">
-              <p className="font-semibold">Marketing Campaign <span className="float-right tabular-nums text-ink-500">42%</span></p>
-              <ProgressBar value={42} className="mt-1.5" />
-            </div>
-            <div className="rounded-xl bg-mist-50 p-3 text-[12.5px] dark:bg-white/5">
-              <p className="font-semibold">Website Development <span className="float-right tabular-nums text-ink-500">76%</span></p>
-              <ProgressBar value={76} className="mt-1.5" />
-            </div>
+            {projects.length === 0 && (
+              <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
+                No demo projects yet. Start one to give the team work.
+              </p>
+            )}
           </div>
         </Card>
 

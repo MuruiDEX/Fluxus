@@ -4,8 +4,18 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, LiveBadge, MetricCard, PageHeader, PrimaryButton } from "@/components/system/ui";
+import {
+  Card,
+  LiveBadge,
+  MetricCard,
+  PageHeader,
+  PrimaryButton,
+  PrimaryLink,
+  Skeleton,
+  SkeletonCard,
+} from "@/components/system/ui";
 import { formatWhen } from "@/lib/live/datetime";
+import { StaggerGroup, StaggerItem } from "@/components/system/motion";
 import {
   useLiveActivity,
   useLiveAgentsList,
@@ -67,9 +77,21 @@ export function LiveHome({ businessId }: { businessId: string }) {
     return (
       <>
         <PageHeader title="Workspace" badge={<LiveBadge />} sub="Loading server data…" />
-        <Card className="p-8 text-center text-[13px] text-ink-400">
-          Loading business profile…
-        </Card>
+        {/* Shape-matched placeholders: the page does not jump when data lands. */}
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" role="status" aria-label="Loading workspace">
+          {[0, 1, 2, 3].map((i) => (
+            <Card key={i} className="flex flex-col gap-2 p-4">
+              <Skeleton className="h-3 w-1/2" />
+              <Skeleton className="h-6 w-1/3" />
+              <Skeleton className="h-3 w-2/3" />
+            </Card>
+          ))}
+        </div>
+        <div className="grid gap-3 xl:grid-cols-3">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       </>
     );
   }
@@ -85,31 +107,36 @@ export function LiveHome({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
         sub={`${activeProjects.length} active project${activeProjects.length === 1 ? "" : "s"} · ${agents.length} AI employee${agents.length === 1 ? "" : "s"} on the team.`}
         actions={
-          <Link href="/projects/new">
-            <PrimaryButton>+ New Project</PrimaryButton>
-          </Link>
+          <PrimaryLink href="/projects/new">+ New Project</PrimaryLink>
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <StaggerGroup className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StaggerItem>
         <MetricCard
           label="Revenue"
           value={`$${metrics.revenue.toLocaleString("en-US")}`}
           delta={metrics.revenueDelta}
           spark={revenueSpark}
         />
+        </StaggerItem>
+        <StaggerItem>
         <MetricCard
           label="Customers"
           value={metrics.customers.toLocaleString("en-US")}
           delta={metrics.customersDelta}
         />
+        </StaggerItem>
+        <StaggerItem>
         <MetricCard
           label="Conversion"
           value={`${metrics.conversion}%`}
           delta={metrics.conversionDelta}
           invert
         />
-        <Card className="flex items-center gap-3 p-4">
+        </StaggerItem>
+        <StaggerItem>
+        <Card className="flex h-full items-center gap-3 p-4">
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 border-brand-100 text-[14px] font-bold tabular-nums dark:border-brand-500/20">
             {business.healthScore}
           </div>
@@ -124,7 +151,8 @@ export function LiveHome({ businessId }: { businessId: string }) {
             </p>
           </div>
         </Card>
-      </div>
+        </StaggerItem>
+      </StaggerGroup>
 
       <div className="grid gap-3 xl:grid-cols-3">
         <Card className="p-4">

@@ -189,6 +189,37 @@ Rules:
   `ai_estimated` is reported separately and never added to `ai_spent`. The
   `note` documents exactly that. Repeating a completed finalization returns the
   stored result without another provider call.
+- **Manual reconciliation — read (v1.24):** authenticated business members may
+  list and inspect ambiguous *task-execution* reservations via
+  `GET /api/v1/businesses/{business_id}/usage/ambiguous-reservations`
+  (optional `?project_id` / `?task_id`, `limit`/`offset`) and
+  `GET .../{reservation_id}` (the detail additionally returns the attempt's
+  `usage` ledger rows). Taskless Team Lead/project holds are excluded by
+  construction; a reservation from another business, or an out-of-scope
+  project/task filter, is a uniform non-disclosing `404`.
+- **Manual reconciliation — confirm actual charge (v1.24):** owner-only
+  `POST .../{reservation_id}/confirm-charge` (CSRF required) records an ACTUAL
+  provider charge for one ambiguous hold. The request requires the exact
+  `taskId`, `attemptKey` and `executionGeneration` (explicitly `null` for a
+  legacy null-generation hold; `0` never matches `null`), plus `provider`,
+  `model`, `amount > 0` and `attestation: true`; `currency`, a provider request
+  ID, operator-reported token counts and free-text evidence are optional. The
+  server never calls the provider, never invents usage/tokens, and never
+  records a second charge. One transaction locks `Task → Reservation →
+  Project`, revalidates the full scope by compare-and-set, appends one
+  `confirmed` `costSource: "provider"` ledger row (`call_kind:
+  task_execution`), appends one `usage_reconciliations` audit row (the only
+  allowed outcome is `charged`), flips the reservation
+  `ambiguous → reconciled`, and recomputes task cost plus project spend. The
+  canonical ledger key is `usage:{reservation.idempotency_key}`; when that key
+  is already occupied by an `unknown` row the confirmed row uses
+  `usage:reconcile:{reservation_id}:charge`. A repeat confirmation is
+  idempotent (200, no second row); a stale scope or a hold already settled some
+  other way is `409` and writes nothing. `reconciled` is terminal and is
+  counted once as confirmed spend; it is never released, retried or re-settled,
+  and settlement/compensation paths that require `active` hold are no-ops.
+  Taskless Team Lead/project accounting is unchanged. No provider call, no
+  release, no no-charge outcome and no refund behavior exists in this slice.
 
 ## 6. Error envelope (all API errors)
 
@@ -295,3 +326,4 @@ SaaS without reshaping `businessId` scoping:
 | 2026-11-04 | v1.21 | Stage 18 S2.2.4.6 slice 1: removed age-based automatic release of `ambiguous` reservations. No recovery, executor, scheduler or background path may transition `ambiguous → released` because of age; such holds are potentially billable, stay included in pending budget, and are resolved only by an explicitly authorized, audited reconciliation. The repository timer and its tests were deleted. `usage_ambiguous_release_minutes` is retained only as a deprecated, ignored compatibility setting (a non-zero value has no runtime effect). No request/response shape, schema or migration change |
 | 2026-11-05 | v1.23 | Stage 18 S2.2.4.6 slice 3: an HTTP 408 provider response is classified as an ambiguous, non-retryable, potentially billable outcome. It uses the existing provider error taxonomy (`provider_error`) with `ambiguous=true`/`retryable=false`; no new exception type or retry path. The executor converts the attempt's `active` reservation to `ambiguous` and Slice 2 stale-ownership compensation preserves that classification for the exact old-generation hold. No ledger row, token count, cost, task cost, project spend or `aiSpent` change is written; the hold remains pending budget. HTTP 429, definitive 4xx, 401/403, 5xx and transport classifications are unchanged; an HTTP 408 is distinct from a client-side connect/pool timeout. No request/response shape, schema or migration change |
 | 2026-11-05 | v1.22 | Stage 18 S2.2.4.6 slice 2: stale ownership-loss compensation. When an executor loses ownership (heartbeat loss, failed task fence, stale cancellation, heartbeat store failure), it no longer leaves its own `active` reservation behind forever. It settles ONLY that exact reservation by full identity (business, reservation id, task, attempt key, exact integer generation) using the existing CAS; NULL never matches an integer. Provider evidence classifies the outcome: `released` only for a proven pre-send failure, otherwise `ambiguous` (including provider response received, unknown outcome and cancellation). No ledger row, task cost, estimated cost, project spend or `aiSpent` change is written; ambiguous remains pending budget. Newer-generation holds, already `ambiguous`/`released`/`consumed`/`written_off` holds and missing reservations are safe no-ops. No request/response shape, schema or migration change |
+| 2026-11-06 | v1.24 | Stage 18 S2.2.4.6 slice 4: owner-only manual confirmation of an actual provider charge for one ambiguous task-execution reservation. Additive member read endpoints (`GET .../usage/ambiguous-reservations` and `.../{reservation_id}`; taskless Team Lead/project holds excluded, out-of-scope uniform `404`) and owner-only `POST .../{reservation_id}/confirm-charge` (CSRF; exact task/attempt/generation scope, `attestation: true`, `amount > 0`; no provider call, no invented usage, no release/no-charge/refund path). Migration 0011 adds the `reconciled` reservation status and the append-only `usage_reconciliations` audit table (UNIQUE reservation and usage-record links). One transaction locks `Task → Reservation → Project`, CAS-revalidates scope, appends one `confirmed`/`costSource: provider` ledger row, appends one `outcome: charged` audit row, flips `ambiguous → reconciled` and recomputes task cost/project spend exactly once; repeats are idempotent, stale/already-settled scopes are `409` with no partial write. Taskless Team Lead accounting is unchanged; new `AmbiguousReservation*`/`ConfirmCharge*` shapes only, existing shapes, codes and wire `v1` unchanged |

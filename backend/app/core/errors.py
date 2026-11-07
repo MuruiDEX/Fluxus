@@ -30,6 +30,22 @@ def _trace_id(request: Request) -> str:
 _STATUS_CODES = {404: "not_found", 401: "unauthorized", 403: "forbidden", 429: "rate_limited"}
 
 
+def _json_safe(value: Any) -> Any:
+    """Make pydantic validation details JSON-serializable.
+
+    `RequestValidationError.errors()` can carry non-JSON values in `ctx`
+    (notably `Decimal` from numeric bounds). The envelope must never fail to
+    serialize just because it is reporting a rejected request.
+    """
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     detail = exc.detail
     if isinstance(detail, dict) and isinstance(detail.get("code"), str):
@@ -55,7 +71,7 @@ async def validation_exception_handler(
             # Installed pydantic has no `include_url` kwarg; plain errors()
             # carries no URLs there. Stage 7.0 query validation exercises
             # this path for the first time (pinned by test_reads.py).
-            details=exc.errors(),
+            details=_json_safe(exc.errors()),
         ),
     )
 

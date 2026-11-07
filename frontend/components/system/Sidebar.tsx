@@ -31,6 +31,7 @@ import { cn } from "@/lib/cn";
 import { useAgents, useApprovals, useBusiness } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgentsList, useLiveApprovals } from "@/lib/store/live";
+import { runtimeMode } from "@/lib/runtime-config";
 
 interface NavItem {
   href: string;
@@ -96,7 +97,10 @@ function OfficeBadge() {
         (agent) => agent.hired && (agent.status === "working" || agent.status === "thinking"),
       ).length,
   );
-  const working = isLiveContext(status, currentBusinessId) ? liveWorking : demoWorking;
+  // In a LIVE deployment the seed counts must never stand in for an unloaded
+  // or unreachable server: fall back to zero, not to demo data.
+  const working =
+    runtimeMode === "live" || isLiveContext(status, currentBusinessId) ? liveWorking : demoWorking;
   if (working === 0) return null;
   return <BadgePill label={`${working} working`} />;
 }
@@ -109,14 +113,15 @@ function ApprovalsBadge() {
   const livePending = useLiveApprovals(
     (s) => s.approvals.filter((approval) => approval.status === "pending").length,
   );
-  const pending = isLiveContext(status, currentBusinessId) ? livePending : demoPending;
+  const pending =
+    runtimeMode === "live" || isLiveContext(status, currentBusinessId) ? livePending : demoPending;
   if (pending === 0) return null;
   return <BadgePill label={String(pending)} />;
 }
 
 function BadgePill({ label }: { label: string }) {
   return (
-    <span className="rounded-full bg-mist-100 px-1.5 py-px text-[10px] font-semibold text-ink-500 dark:bg-white/10 dark:text-slate-300">
+    <span className="rounded-full bg-mist-100 px-1.5 py-px text-micro-sm font-semibold text-ink-500 dark:bg-white/10 dark:text-slate-300">
       {label}
     </span>
   );
@@ -129,7 +134,7 @@ export function SidebarLinks() {
       {groups.map((g, gi) => (
         <div key={gi} className="flex flex-col gap-0.5">
           {g.label && (
-            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-400">
+            <p className="px-2 pb-1 text-micro-sm font-semibold uppercase tracking-wider text-ink-400">
               {g.label}
             </p>
           )}
@@ -150,7 +155,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
     <Link
       href={item.href}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-medium transition-colors",
+        "group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-body-sm font-medium transition-colors",
         active
           ? "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-sky-300"
           : "text-ink-700 hover:bg-mist-100 dark:text-slate-300 dark:hover:bg-white/5",
@@ -171,17 +176,36 @@ function WorkspaceFooter() {
     const name = businessNames[currentBusinessId] ?? `${currentBusinessId.slice(0, 8)}…`;
     return (
       <div className="mt-auto rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-        <p className="truncate text-[12px] font-bold">{name}</p>
-        <p className="mt-0.5 text-[11px] leading-4 text-emerald-700 dark:text-emerald-300">
+        <p className="truncate text-caption font-bold">{name}</p>
+        <p className="mt-0.5 text-label-sm leading-4 text-emerald-700 dark:text-emerald-300">
           Live business · server data only.
         </p>
       </div>
     );
   }
+  if (runtimeMode === "live") {
+    // Never show the seed business name in a LIVE deployment, not even while
+    // the session is unresolved or the backend is unreachable.
+    const note =
+      status === "unreachable"
+        ? "Backend unreachable · no business data shown."
+        : status === "authenticated"
+          ? "No business access on this account."
+          : status === "anonymous"
+            ? "Signed out · sign in to load a business."
+            : "Checking session…";
+    return (
+      <div className="mt-auto rounded-xl border border-dashed border-mist-200 p-2.5 dark:border-white/10">
+        <p className="truncate text-caption font-bold">Live workspace</p>
+        <p className="mt-0.5 text-label-sm leading-4 text-ink-400">{note}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="mt-auto rounded-xl border border-dashed border-mist-200 p-2.5 dark:border-white/10">
-      <p className="truncate text-[12px] font-bold">{business.name}</p>
-      <p className="mt-0.5 text-[11px] leading-4 text-ink-400">
+      <p className="truncate text-caption font-bold">{business.name}</p>
+      <p className="mt-0.5 text-label-sm leading-4 text-ink-400">
         Demo business · figures & AI activity are simulated.
       </p>
     </div>
@@ -190,12 +214,12 @@ function WorkspaceFooter() {
 
 export function Sidebar() {
   return (
-    <aside className="hidden w-[232px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-mist-200 bg-white px-3 py-4 lg:flex dark:border-white/10 dark:bg-night-900">
+    <aside className="hidden w-(--flux-sidebar-w) shrink-0 flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 py-4 lg:flex">
       <Link href="/" className="flex items-center gap-2 px-2">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-cyan-500 text-white">
           <Cpu className="h-4 w-4" />
         </span>
-        <span className="text-[13px] font-bold tracking-wide text-ink-950 dark:text-white">
+        <span className="text-body-sm font-bold tracking-wide text-ink-950 dark:text-white">
           MUSE SPARK
         </span>
       </Link>

@@ -4,16 +4,28 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, LiveBadge, PageHeader, PrimaryButton, PrimaryLink } from "@/components/system/ui";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveProjects } from "@/lib/store/live";
 import { useAgents, useProjects } from "@/lib/store/app";
+import { newProjectHref } from "@/lib/new-project";
+import { projectStatusView, type ProjectStatusTone } from "@/lib/project-status";
+import { cn } from "@/lib/cn";
 import type { Agent, Project } from "@/lib/domain/types";
+
+const STATUS_CLASS: Record<ProjectStatusTone, string> = {
+  planning: "bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300",
+  active: "bg-blue-50 text-brand-600 dark:bg-brand-500/15 dark:text-sky-300",
+  review: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+  done: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+};
 
 function ProjectGrid({ projects, agents }: { projects: Project[]; agents: Agent[] }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {projects.map((p) => (
+      {projects.map((p) => {
+        const status = projectStatusView(p.status);
+        return (
         <Link key={p.id} href={`/projects/${p.id}`}>
           <Card className="p-4 transition-transform hover:-translate-y-0.5">
             <div className="flex items-start justify-between gap-2">
@@ -21,8 +33,13 @@ function ProjectGrid({ projects, agents }: { projects: Project[]; agents: Agent[
                 <p className="text-[15px] font-bold hover:text-brand-500">{p.title}</p>
                 <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-500">{p.goal}</p>
               </div>
-              <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-brand-600 dark:bg-brand-500/15 dark:text-sky-300">
-                In Progress
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                  STATUS_CLASS[status.tone],
+                )}
+              >
+                {status.label}
               </span>
             </div>
             <div className="mt-3 flex items-center gap-2">
@@ -42,7 +59,8 @@ function ProjectGrid({ projects, agents }: { projects: Project[]; agents: Agent[
             </p>
           </Card>
         </Link>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -57,9 +75,9 @@ function DemoProjectsView() {
         title="Projects"
         sub="Every business initiative becomes a project with a team, plan and budget."
         actions={
-          <Link href="/projects/new">
-            <PrimaryButton><Plus className="h-4 w-4" /> New Project</PrimaryButton>
-          </Link>
+          <PrimaryLink href="/projects/new">
+            <Plus className="h-4 w-4" /> New Project
+          </PrimaryLink>
         }
       />
       <ProjectGrid projects={projects} agents={agents} />
@@ -89,11 +107,9 @@ function LiveProjectsView({ businessId }: { businessId: string }) {
         sub="Every business initiative becomes a project with a team, plan and budget."
         badge={<LiveBadge />}
         actions={
-          <span title="Project creation isn't available in LIVE yet — Stage 7.3 is read-only.">
-            <PrimaryButton className="cursor-not-allowed opacity-50">
-              <Plus className="h-4 w-4" /> New Project
-            </PrimaryButton>
-          </span>
+          <PrimaryLink href={newProjectHref()}>
+            <Plus className="h-4 w-4" /> New Project
+          </PrimaryLink>
         }
       />
       {status === "loading" || status === "idle" ? (

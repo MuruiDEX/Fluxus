@@ -6,6 +6,8 @@ import { Loader2, X } from "lucide-react";
 import { GhostButton, PrimaryButton } from "@/components/system/ui";
 import { cn } from "@/lib/cn";
 import type { WritePhase } from "@/lib/store/writes";
+import { useModalSurface } from "@/lib/use-modal-surface";
+import { transition } from "@/lib/motion";
 
 /**
  * Shared management-write modal shell (Stage 7.2) — same overlay language
@@ -120,7 +122,10 @@ export function WriteModal({
   footer: ReactNode;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const saving = phase === "saving";
+  // Scroll lock, focus containment and focus restore are shared by every surface.
+  useModalSurface(surfaceRef, true);
   const requestClose = () => {
     if (saving) return;
     if (dirty && !confirming) {
@@ -154,9 +159,11 @@ export function WriteModal({
         onClick={requestClose}
       >
         <motion.div
+          ref={surfaceRef}
           initial={{ y: 12, scale: 0.98 }}
           animate={{ y: 0, scale: 1 }}
           exit={{ y: 8, scale: 0.98 }}
+          transition={transition.overlay}
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
@@ -221,11 +228,11 @@ export function SaveFooter({
   const saving = phase === "saving";
   return (
     <>
-      <PrimaryButton onClick={onSave} className={cn("flex-1 justify-center", saving && "opacity-70")}>
+        <PrimaryButton onClick={onSave} disabled={saving} className={cn("flex-1 justify-center", saving && "opacity-70")}>
         {saving && <Loader2 className="h-4 w-4 animate-spin" />}
         {saving ? "Saving…" : saveLabel}
       </PrimaryButton>
-      <GhostButton onClick={onClose}>Cancel</GhostButton>
+      <GhostButton onClick={onClose} disabled={saving}>Cancel</GhostButton>
     </>
   );
 }

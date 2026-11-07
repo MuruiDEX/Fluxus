@@ -45,6 +45,10 @@ export function UsagePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId, projectId]);
 
+  const ready = status === "ready";
+  // The empty summary is only a placeholder, not a balance: before the server
+  // answers (or when it fails) money and counts render as "—".
+  const amount = (value: number) => (ready ? money(value) : "—");
   const pending = summary.reservations.active + summary.reservations.ambiguous;
   const kindEntries = Object.entries(summary.byCallKind).sort(([a], [b]) =>
     kindLabel(a).localeCompare(kindLabel(b)),
@@ -57,15 +61,17 @@ export function UsagePanel({
           AI usage ledger{projectId ? "" : " · business-wide"}
         </h3>
         <span className="text-[11.5px] text-ink-400">
-          {total} accounted call{total === 1 ? "" : "s"}
+          {status === "loading" || status === "idle"
+            ? "Loading…"
+            : `${total} accounted call${total === 1 ? "" : "s"}`}
         </span>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 text-[12.5px] sm:grid-cols-4">
-        <Stat label="Confirmed" value={money(summary.confirmedCost)} accent="text-emerald-700 dark:text-emerald-300" />
-        <Stat label="Estimated" value={money(summary.estimatedCost)} accent="text-amber-700 dark:text-amber-300" />
-        <Stat label="Unpriced calls" value={String(summary.unknownCount)} accent="text-ink-500" />
-        <Stat label="Reserved (pending)" value={money(pending)} accent="text-brand-500" />
+        <Stat label="Confirmed" value={amount(summary.confirmedCost)} accent="text-emerald-700 dark:text-emerald-300" />
+        <Stat label="Estimated" value={amount(summary.estimatedCost)} accent="text-amber-700 dark:text-amber-300" />
+        <Stat label="Unpriced calls" value={ready ? String(summary.unknownCount) : "—"} accent="text-ink-500" />
+        <Stat label="Reserved (pending)" value={amount(pending)} accent="text-brand-500" />
       </div>
 
       {kindEntries.length > 0 && (
@@ -91,7 +97,7 @@ export function UsagePanel({
 
       {status === "error" && (
         <p className="mt-3 text-[12.5px] text-amber-700 dark:text-amber-300">
-          Usage unavailable ({error ?? "load failed"}).
+          Usage unavailable ({error ?? "load failed"}). Totals show “—” instead of $0.00.
         </p>
       )}
 

@@ -128,6 +128,7 @@ async def list_usage(
         consumed=reservation_totals.get("consumed", Decimal("0")),
         released=reservation_totals.get("released", Decimal("0")),
         writtenOff=reservation_totals.get("written_off", Decimal("0")),
+        reconciled=reservation_totals.get("reconciled", Decimal("0")),
     )
     by_call_kind: dict[str, UsageCallKindSummary] = {}
     for kind, statuses in kind_totals.items():

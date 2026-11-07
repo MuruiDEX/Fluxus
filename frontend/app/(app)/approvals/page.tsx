@@ -8,17 +8,11 @@ import { DecisionButtons } from "@/components/system/DecisionButtons";
 import { applyApprovalToExecution } from "@/lib/sim/engine";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveApprovals } from "@/lib/store/live";
-import { useActivity, useAgents, useApprovals, useUI } from "@/lib/store/app";
+import { useActivity, useAgents, useApprovals } from "@/lib/store/app";
 import { cn } from "@/lib/cn";
 import type { Agent, Approval } from "@/lib/domain/types";
 
 const tabs = ["Pending", "Approved", "Rejected", "All"] as const;
-const levels = [
-  { id: "manual", label: "Manual" },
-  { id: "assist", label: "Assist" },
-  { id: "semi", label: "Semi-Autopilot" },
-  { id: "full", label: "Full Autopilot" },
-] as const;
 
 function ApprovalCardBody({ approval: a, agent }: { approval: Approval; agent?: Agent }) {
   return (
@@ -60,7 +54,6 @@ function DemoApprovalsView() {
   const updateApproval = useApprovals((s) => s.updateApproval);
   const agents = useAgents((s) => s.agents);
   const push = useActivity((s) => s.log);
-  const { autopilot, setAutopilot } = useUI();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Pending");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [askingId, setAskingId] = useState<string | null>(null);
@@ -84,20 +77,12 @@ function DemoApprovalsView() {
         title="Approval Inbox"
         sub="Nothing spends, publishes or sends without you. Review thetrade-offs, then decide."
         actions={
-          <div className="flex items-center gap-1 rounded-[10px] border border-mist-200 bg-white p-1 text-[12px] dark:border-white/10 dark:bg-night-900">
-            {levels.map((l) => (
-              <button
-                key={l.id}
-                onClick={() => setAutopilot(l.id)}
-                className={cn(
-                  "rounded-lg px-2 py-1 font-medium",
-                  autopilot === l.id ? "bg-brand-500 text-white" : "text-ink-500 hover:text-ink-950",
-                )}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
+          <span
+            title="Autopilot levels are not implemented in this build — approvals always require a human decision."
+            className="rounded-[10px] border border-dashed border-mist-200 px-3 py-1.5 text-[12px] font-medium text-ink-400 dark:border-white/10"
+          >
+            Autopilot — unavailable
+          </span>
         }
       />
       <div className="flex gap-1 border-b border-mist-200 dark:border-white/10">
@@ -125,11 +110,16 @@ function DemoApprovalsView() {
               <ApprovalCardBody approval={a} agent={agent} />
               {askingId === a.id && (
                 <div className="mt-2 rounded-xl border border-brand-200 bg-brand-50/60 p-3 text-[12.5px] leading-5 dark:border-brand-500/30 dark:bg-brand-500/10">
-                  <p className="font-bold text-brand-600 dark:text-sky-300">AI assessment</p>
+                  <p className="font-bold text-brand-600 dark:text-sky-300">
+                    Demo assessment (template)
+                  </p>
                   <p className="mt-0.5">
                     {a.requestedBy} proposes spending {a.cost} affecting {a.affects.toLowerCase()}.
-                    Expected outcome: {a.expectedResult.toLowerCase()}. Timing argument: {a.rationale} Autopilot is {autopilot} —
-                    {autopilot === "manual" || autopilot === "assist" ? " your decision is required." : " low-risk steps may proceed automatically after this."}
+                    Expected outcome: {a.expectedResult.toLowerCase()}. Timing argument: {a.rationale}
+                  </p>
+                  <p className="mt-1 text-[11.5px] text-ink-400">
+                    Assembled from this approval&apos;s own fields — no AI model was called. Your
+                    decision is required either way.
                   </p>
                 </div>
               )}
@@ -151,7 +141,10 @@ function DemoApprovalsView() {
                   <PrimaryButton onClick={() => act(a.id, "approved")}><Check className="h-4 w-4" /> Approve</PrimaryButton>
                   <GhostButton onClick={() => act(a.id, "rejected")}><X className="h-4 w-4" /> Reject</GhostButton>
                   <GhostButton onClick={() => { setDraftCost(a.cost); setDraftResult(a.expectedResult); setEditingId(a.id); }}><Pencil className="h-4 w-4" /> Edit</GhostButton>
-                  <GhostButton onClick={() => setAskingId(askingId === a.id ? null : a.id)}><Sparkles className="h-4 w-4" /> Ask AI</GhostButton>
+                  <GhostButton
+                    title="Template summary of this approval — no AI call is made"
+                    onClick={() => setAskingId(askingId === a.id ? null : a.id)}
+                  ><Sparkles className="h-4 w-4" /> Demo assessment</GhostButton>
                 </div>
               ) : (
                 <p className="mt-3 text-[12.5px] font-medium text-ink-400">Decided — recorded in the audit trail.</p>
@@ -243,7 +236,9 @@ function LiveApprovalsView({ businessId }: { businessId: string }) {
             })}
             {visible.length === 0 && (
               <Card className="p-8 text-center text-[13px] text-ink-400 xl:col-span-2">
-                No approvals in this business.
+                {approvals.length === 0
+                  ? "No approvals in this business yet."
+                  : `No ${tab.toLowerCase()} approvals in this business.`}
               </Card>
             )}
           </div>

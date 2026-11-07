@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, GhostButton, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { AgentToggleButton } from "@/components/system/AgentToggle";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgent, useLiveProjects, useLiveTasks } from "@/lib/store/live";
@@ -76,18 +76,44 @@ function AgentProfile({ agent, mine }: { agent: Agent; mine: Task[] }) {
 function DemoAgentDetail({ id }: { id: string }) {
   const agents = useAgents((s) => s.agents);
   const { tasks } = useProjects();
-  const agent = useMemo(() => agents.find((a) => a.id === id) ?? agents[0], [agents, id]);
-  const mine = useMemo(() => tasks.filter((t) => t.ownerAgentId === agent.id), [tasks, agent.id]);
+  const agent = useMemo(() => agents.find((a) => a.id === id), [agents, id]);
+  const mine = useMemo(
+    () => (agent ? tasks.filter((t) => t.ownerAgentId === agent.id) : []),
+    [tasks, agent],
+  );
+
+  // No silent fallback to agents[0]: a wrong deep link must not show a
+  // different employee as if it were the requested one.
+  if (!agent) {
+    return (
+      <>
+        <PageHeader title="Agent" sub="Demo team" />
+        <Card className="p-8 text-center">
+          <p className="text-[14px] font-semibold">Agent not found</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+            No demo agent has this id. Nothing is shown in its place.
+          </p>
+          <div className="mt-3 flex justify-center">
+            <GhostLink href="/agents">Back to agents</GhostLink>
+          </div>
+        </Card>
+      </>
+    );
+  }
 
   return (
     <>
       <AgentProfile agent={agent} mine={mine} />
-      <Card className="mt-3 flex items-center gap-3 p-4">
-        <div className="flex-1">
-          <p className="text-[13px] font-bold">Operational note</p>
-          <p className="text-[12.5px] text-ink-500">Used competitor pricing data and current product margins to calculate the recommendation.</p>
+      <Card className="mt-3 flex flex-wrap items-center gap-3 p-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-bold">Operational notes</p>
+          <p className="text-[12.5px] text-ink-500">
+            Not available in this demo — no note is generated, so none is shown.
+          </p>
         </div>
-        <GhostButton>Take over</GhostButton>
+        <GhostButton disabled title="Taking over an agent is not implemented in this build">
+          Take over — unavailable
+        </GhostButton>
       </Card>
     </>
   );

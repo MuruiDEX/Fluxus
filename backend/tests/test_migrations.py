@@ -700,3 +700,224 @@ async def test_0010_execution_ownership_round_trip(
         ).scalar_one()
     await engine.dispose()
     assert generation == 0
+
+
+@pytest.mark.asyncio()
+async def test_0011_usage_reconciliation_round_trip(
+    mig_db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0011 adds `reconciled` plus the append-only audit table, without data loss."""
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+    monkeypatch.setenv(
+        "APP_DATABASE_URL", mig_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    )
+    cfg = _alembic_config(mig_db_url)
+
+    command.upgrade(cfg, "0010_execution_ownership")
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO businesses (id, name, tagline, industry, location,"
+                " owner_name, health_score, health_breakdown, metrics,"
+                " revenue_series, notes)"
+                " VALUES ('biz_old', 'Old', '', '', '', '', 0, '[]', '{}', '[]', '')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO agents (id, business_id, name, role, responsibilities,"
+                " tools, permissions, status, cost_per_month, performance, hired,"
+                " avatar_hue)"
+                " VALUES ('ag_old', 'biz_old', 'A', 'Role', '[]', '[]', '[]',"
+                " 'available', 0, '{}', false, 0)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO projects (id, business_id, title, goal, status,"
+                " progress, budget, ai_budget, ai_spent, deadline, team_ids,"
+                " milestones)"
+                " VALUES ('proj_old', 'biz_old', 'P', '', 'in_progress', 0, 0, 0, 0,"
+                " '', '[]', '[]')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO tasks (id, business_id, project_id, title,"
+                " owner_agent_id, status, progress, cost_accrued, eta_minutes,"
+                " summary, attempts, gate_at)"
+                " VALUES ('t_old', 'biz_old', 'proj_old', 'Keep me', 'ag_old',"
+                " 'not_started', 0, 0, 0, '', 0, 100)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO budget_reservations (id, business_id, project_id,"
+                " task_id, attempt_key, amount, idempotency_key)"
+                " VALUES ('res_old', 'biz_old', 'proj_old', 't_old', 'attempt:old',"
+                " 2.00, 'reserve:attempt:old:1')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO usage_records (id, business_id, project_id, task_id,"
+                " attempt_key, provider, model, idempotency_key, occurred_at,"
+                " cost_amount, cost_source, usage_status)"
+                " VALUES ('u_old', 'biz_old', 'proj_old', 't_old', 'attempt:old',"
+                " 'openai', 'gpt-4o', 'usage:confirmed', now(), 2.00, 'provider',"
+                " 'confirmed')"
+            )
+        )
+    await engine.dispose()
+
+    command.upgrade(cfg, "head")
+
+    assert "usage_reconciliations" in await _table_names(mig_db_url)
+    assert {
+        "id",
+        "business_id",
+        "project_id",
+        "task_id",
+        "reservation_id",
+        "usage_record_id",
+        "attempt",
+        "attempt_key",
+        "execution_generation",
+        "outcome",
+        "amount",
+        "currency",
+        "cost_source",
+        "provider",
+        "model",
+        "provider_request_id",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+        "evidence",
+        "attested",
+        "actor_user_id",
+        "actor_email",
+    } <= await _column_names(mig_db_url, "usage_reconciliations")
+    assert {
+        "ck_usage_reconciliations_outcome",
+        "ck_usage_reconciliations_cost_source",
+        "ck_usage_reconciliations_amount_pos",
+        "ck_usage_reconciliations_tokens_nonneg",
+        "ck_usage_reconciliations_attested",
+    } <= await _check_constraint_names(mig_db_url, "usage_reconciliations")
+    index_names = await _index_names(mig_db_url, "usage_reconciliations")
+    assert {
+        "ix_usage_reconciliations_business_id",
+        "ix_usage_reconciliations_business_project",
+        "ix_usage_reconciliations_business_task",
+    } <= index_names
+    indexes = await _index_details(mig_db_url, "usage_reconciliations")
+    assert indexes["uq_usage_reconciliations_reservation"]["unique"] is True
+    assert indexes["uq_usage_reconciliations_usage_record"]["unique"] is True
+
+    checks = await _check_constraint_texts(mig_db_url, "budget_reservations")
+    assert "reconciled" in checks["ck_budget_reservations_status"]
+
+    # Existing data is untouched by the status CHECK replacement.
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        preserved = (
+            await conn.execute(
+                text("SELECT status, amount FROM budget_reservations WHERE id = 'res_old'")
+            )
+        ).one()
+    await engine.dispose()
+    assert preserved == ("active", 2)
+
+    # `reconciled` is accepted; the audit row and its guards behave.
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE budget_reservations SET status = 'reconciled' WHERE id = 'res_old'")
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                " task_id, reservation_id, usage_record_id, attempt_key, amount,"
+                " provider, model, actor_email, evidence)"
+                " VALUES ('rec_old', 'biz_old', 'proj_old', 't_old', 'res_old',"
+                " 'u_old', 'attempt:old', 2.00, 'openai', 'gpt-4o',"
+                " 'op@example.com', 'invoice line 1')"
+            )
+        )
+    await engine.dispose()
+
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, usage_record_id, attempt_key, amount,"
+                    " provider, model)"
+                    " VALUES ('rec_dup', 'biz_old', 'proj_old', 't_old', 'res_old',"
+                    " 'u_old', 'attempt:old', 1.00, 'openai', 'gpt-4o')"
+                )
+            )
+    await engine.dispose()
+
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, usage_record_id, attempt_key, amount,"
+                    " provider, model)"
+                    " VALUES ('rec_zero', 'biz_old', 'proj_old', 't_old', 'res_old',"
+                    " 'u_old', 'attempt:old', 0, 'openai', 'gpt-4o')"
+                )
+            )
+    await engine.dispose()
+
+    # Downgrade must refuse to silently discard confirmed-charge audit state.
+    with pytest.raises(RuntimeError, match="reconciled budget reservations"):
+        command.downgrade(cfg, "0010_execution_ownership")
+    assert "usage_reconciliations" in await _table_names(mig_db_url)
+
+    # After the state is explicitly resolved, downgrade is clean.
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM usage_reconciliations WHERE id = 'rec_old'"))
+        await conn.execute(
+            text("UPDATE budget_reservations SET status = 'active' WHERE id = 'res_old'")
+        )
+    await engine.dispose()
+
+    command.downgrade(cfg, "0010_execution_ownership")
+    assert "usage_reconciliations" not in await _table_names(mig_db_url)
+    checks = await _check_constraint_texts(mig_db_url, "budget_reservations")
+    assert "reconciled" not in checks["ck_budget_reservations_status"]
+
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE budget_reservations SET status = 'reconciled' WHERE id = 'res_old'")
+            )
+    await engine.dispose()
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        kept = (await conn.execute(text("SELECT title FROM tasks WHERE id = 't_old'"))).scalar_one()
+    await engine.dispose()
+    assert kept == "Keep me"
+
+    command.upgrade(cfg, "head")
+    assert "usage_reconciliations" in await _table_names(mig_db_url)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Cpu } from "lucide-react";
 import { useSession } from "@/lib/store/auth";
@@ -9,10 +9,20 @@ import { Card, GhostButton, PrimaryButton } from "@/components/system/ui";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, error, status } = useSession();
+  const { login, refresh, error, sessionError } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (runtimeMode !== "live") return;
+    // This page sits outside AuthGate, so nothing else resolves the session
+    // here. Without this the submit button stayed disabled forever and an
+    // existing session was never detected.
+    void refresh().then(() => {
+      if (useSession.getState().status === "authenticated") router.replace("/");
+    });
+  }, [refresh, router]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,13 +93,13 @@ export default function LoginPage() {
               className="mt-1 h-10 w-full rounded-[10px] border border-mist-200 bg-transparent px-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10"
             />
           </label>
-          {error && (
+          {(error || sessionError) && (
             <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[12.5px] text-red-600 dark:bg-red-500/10 dark:text-red-300">
-              {error}
+              {error ?? sessionError}
             </p>
           )}
-          <PrimaryButton className="justify-center">
-            {busy || status === "unknown" ? "Please wait…" : "Log in"}
+          <PrimaryButton type="submit" disabled={busy} className="justify-center">
+            {busy ? "Signing in…" : "Log in"}
           </PrimaryButton>
         </form>
       </Card>

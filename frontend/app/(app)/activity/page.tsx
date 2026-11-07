@@ -55,6 +55,12 @@ function LiveActivityView({ businessId }: { businessId: string }) {
             <select
               aria-label="Filter activity by project"
               value={projectId}
+              disabled={projectsSlice.status === "error"}
+              title={
+                projectsSlice.status === "error"
+                  ? "Project list unavailable — only All projects can be shown."
+                  : "Filter activity by project"
+              }
               onChange={(e) => setProjectId(e.target.value)}
               className="h-9 max-w-[220px] truncate rounded-[10px] border border-mist-200 bg-white px-2 text-[13px] text-ink-700 outline-none hover:border-brand-200 dark:border-white/10 dark:bg-night-900 dark:text-slate-200"
             >

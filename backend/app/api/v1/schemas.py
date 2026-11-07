@@ -7,6 +7,7 @@ Stage 7.0 adds read shapes for the entities §1 already froze — same rules.
 """
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -253,6 +254,8 @@ class UsageReservationSummary(BaseModel):
     consumed: Decimal = Decimal("0")
     released: Decimal = Decimal("0")
     written_off: Decimal = Field(default=Decimal("0"), alias="writtenOff")
+    # Stage 18 S2.2.4.6: manual provider-charge reconciliation (additive).
+    reconciled: Decimal = Decimal("0")
 
 
 class UsageCallKindSummary(BaseModel):
@@ -278,6 +281,95 @@ class UsageListResponse(Contracted):
     limit: int = 50
     offset: int = 0
     summary: UsageSummary = Field(default_factory=UsageSummary)
+
+
+class AmbiguousReservationResponse(BaseModel):
+    """One ambiguous task-execution reservation (Stage 18 S2.2.4.6).
+
+    Taskless Team Lead/project holds are deliberately absent from this surface.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    business_id: str = Field(alias="businessId")
+    project_id: str = Field(alias="projectId")
+    task_id: str = Field(alias="taskId")
+    attempt: int
+    attempt_key: str = Field(alias="attemptKey")
+    execution_generation: int | None = Field(default=None, alias="executionGeneration")
+    run_seq: int = Field(alias="runSeq")
+    amount: Decimal
+    currency: str
+    status: str
+    reason: str = ""
+    mode: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class AmbiguousReservationDetailResponse(AmbiguousReservationResponse):
+    """Detail plus the ledger evidence already recorded for the exact attempt."""
+
+    usage: list[UsageItemResponse] = Field(default_factory=list)
+    contract: str = "v1"
+
+
+class AmbiguousReservationListResponse(Contracted):
+    items: list[AmbiguousReservationResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class ConfirmChargeRequest(BaseModel):
+    """Owner-only manual confirmation of an ACTUAL provider charge.
+
+    `executionGeneration` is required but may be explicitly `null` for a legacy
+    NULL-generation hold. Token counts default to zero when unknown; they are
+    never inferred. `attestation` must be `true`: it records the operator's
+    explicit confirmation and is persisted in the audit row.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    task_id: str = Field(alias="taskId", min_length=1, max_length=128)
+    attempt_key: str = Field(alias="attemptKey", min_length=1, max_length=200)
+    execution_generation: int | None = Field(alias="executionGeneration", ge=0)
+    provider: str = Field(min_length=1, max_length=64)
+    model: str = Field(min_length=1, max_length=200)
+    amount: Decimal = Field(gt=0)
+    currency: str | None = Field(default=None, min_length=1, max_length=8)
+    provider_request_id: str | None = Field(default=None, alias="providerRequestId", max_length=200)
+    prompt_tokens: int = Field(default=0, alias="promptTokens", ge=0)
+    completion_tokens: int = Field(default=0, alias="completionTokens", ge=0)
+    total_tokens: int = Field(default=0, alias="totalTokens", ge=0)
+    cached_tokens: int | None = Field(default=None, alias="cachedTokens", ge=0)
+    reasoning_tokens: int | None = Field(default=None, alias="reasoningTokens", ge=0)
+    evidence: str | None = Field(default=None, max_length=2000)
+    attestation: Literal[True]
+
+
+class ConfirmChargeResponse(Contracted):
+    outcome: str  # reconciled
+    reservation_id: str = Field(alias="reservationId")
+    status: str
+    usage_record_id: str = Field(alias="usageRecordId")
+    reconciliation_id: str = Field(alias="reconciliationId")
+    task_id: str = Field(alias="taskId")
+    project_id: str = Field(alias="projectId")
+    attempt_key: str = Field(alias="attemptKey")
+    execution_generation: int | None = Field(default=None, alias="executionGeneration")
+    amount: Decimal
+    currency: str
+    cost_source: str = Field(alias="costSource")
+    provider: str
+    model: str
+    provider_request_id: str | None = Field(default=None, alias="providerRequestId")
+    actor_email: str = Field(alias="actorEmail")
+    reconciled_at: str = Field(alias="reconciledAt")
+    task_cost: Decimal = Field(alias="taskCost")
+    project_spend: Decimal = Field(alias="projectSpend")
 
 
 class DecisionResponse(Contracted):

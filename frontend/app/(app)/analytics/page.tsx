@@ -1,35 +1,43 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Card, PageHeader } from "@/components/system/ui";
+import dynamic from "next/dynamic";
+import { Card, DemoBadge, PageHeader, Skeleton } from "@/components/system/ui";
 import { LiveAnalytics } from "@/components/live/LiveAnalytics";
 import { useAgents, useProjects } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext } from "@/lib/store/live";
 
+/** Recharts is ~380 KB of the client bundle — load it only when a chart mounts. */
+const CostBarChart = dynamic(
+  () => import("@/components/charts/cost-bar-chart").then((mod) => mod.CostBarChart),
+  { ssr: false, loading: () => <Skeleton className="h-full w-full" /> },
+);
+
 function DemoAnalyticsPage() {
   const agents = useAgents((s) => s.agents);
   const { tasks, projects } = useProjects();
   const project = projects[0];
-  const costByTask = tasks.map((t) => ({ name: t.title.split(" ")[0], cost: t.costAccrued }));
+  // Chart this project's tasks only: mixing every project's cost under one
+  // project's budget header claimed a total that did not belong to it.
+  const projectTasks = project ? tasks.filter((t) => t.projectId === project.id) : [];
+  const costByTask = projectTasks.map((t) => ({ name: t.title.split(" ")[0], cost: t.costAccrued }));
 
   return (
     <>
-      <PageHeader title="Analytics" sub="Which AI employees actually provide value — cost, speed and completion." />
+      <PageHeader
+        title="Analytics"
+        sub="Which AI employees actually provide value — cost, speed and completion."
+        badge={<DemoBadge />}
+      />
       <p className="-mt-2 text-[12px] text-ink-400">Simulated execution data from the Northstar Fitness demo — not real spend.</p>
       <div className="grid gap-3 xl:grid-cols-2">
         <Card className="p-4">
           <h3 className="mb-2 text-[13px] font-bold">AI cost ledger — ${project.aiSpent.toFixed(2)} of ${project.aiBudget} budget</h3>
           <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={costByTask}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis dataKey="name" fontSize={11} />
-                <YAxis fontSize={11} />
-                <Tooltip />
-                <Bar dataKey="cost" fill="#2563eb" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <CostBarChart
+              data={costByTask}
+              bars={[{ key: "cost", name: "Cost", color: "#2563eb" }]}
+            />
           </div>
         </Card>
         <Card className="p-4">
