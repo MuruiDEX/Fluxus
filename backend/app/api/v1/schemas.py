@@ -372,6 +372,44 @@ class ConfirmChargeResponse(Contracted):
     project_spend: Decimal = Field(alias="projectSpend")
 
 
+class ConfirmNoChargeRequest(BaseModel):
+    """Owner-only attestation that one ambiguous attempt was not charged.
+
+    `executionGeneration` is required but may be explicitly `null` for a legacy
+    NULL-generation hold. `evidence` is required and must be non-empty after
+    trimming (the service revalidates both); `attestation` must be `true`.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    task_id: str = Field(alias="taskId", min_length=1, max_length=128)
+    attempt_key: str = Field(alias="attemptKey", min_length=1, max_length=200)
+    execution_generation: int | None = Field(alias="executionGeneration", ge=0)
+    evidence: str = Field(min_length=1, max_length=2000)
+    currency: str | None = Field(default=None, min_length=1, max_length=8)
+    attestation: Literal[True]
+
+
+class ConfirmNoChargeResponse(Contracted):
+    outcome: str  # no_charge
+    reservation_id: str = Field(alias="reservationId")
+    status: str  # released
+    usage_record_id: str | None = Field(default=None, alias="usageRecordId")
+    reconciliation_id: str = Field(alias="reconciliationId")
+    task_id: str = Field(alias="taskId")
+    project_id: str = Field(alias="projectId")
+    attempt_key: str = Field(alias="attemptKey")
+    execution_generation: int | None = Field(default=None, alias="executionGeneration")
+    amount: Decimal
+    currency: str
+    cost_source: str = Field(alias="costSource")
+    evidence: str
+    actor_email: str = Field(alias="actorEmail")
+    resolved_at: str = Field(alias="resolvedAt")
+    task_cost: Decimal = Field(alias="taskCost")
+    project_spend: Decimal = Field(alias="projectSpend")
+
+
 class DecisionResponse(Contracted):
     # approved|rejected: this call decided. already_*: idempotent repeat (200).
     # conflict: 409 body only — terminal for the other decision, with the

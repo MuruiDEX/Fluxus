@@ -26,6 +26,7 @@ from app.persistence.models.usage import BudgetReservation, UsageRecord
 from app.persistence.repositories.concrete import TaskOwnership, TaskRepository
 from app.persistence.repositories.spend import recalculate_project_spend
 from app.persistence.repositories.usage import BudgetReservationRepository
+from app.usage.settlement import record_success
 from tests.factories import BIZ, BIZ_OTHER, make_task, make_world
 from tests.factories import tasks as tasks_repo
 
@@ -452,7 +453,7 @@ async def test_persist_failure_after_fence_rolls_back_all_effects(
     async def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise RuntimeError("ledger down")
 
-    monkeypatch.setattr(executor_module, "record_success", boom)
+    monkeypatch.setattr(executor_module, "settle_success", boom)
     with pytest.raises(RuntimeError, match="ledger down"):
         await _execute(session, provider, _req())
 
@@ -595,7 +596,7 @@ async def test_duplicate_settlement_does_not_double_charge(session: AsyncSession
         attempts=1,
     )
     async with session.begin():
-        _, won = await executor_module.record_success(
+        _, won = await record_success(
             session,
             BIZ,
             reservation_id=reservation_id,

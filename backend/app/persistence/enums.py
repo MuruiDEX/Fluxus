@@ -145,11 +145,14 @@ class ReservationStatus(StrEnum):
 class UsageReconciliationOutcome(StrEnum):
     """Audited outcome of a manual ambiguous-reservation reconciliation.
 
-    Slice 4 exposes only `charged`. The literal is intentionally narrow: no
-    no-charge/release/refund outcome exists in this slice.
+    `charged` records an operator-confirmed provider charge. `no_charge` records
+    an explicit, attested decision that the provider did not bill the attempt;
+    it releases the reservation without writing a usage row or inventing a zero
+    cost. No refund or credit outcome exists.
     """
 
     CHARGED = "charged"
+    NO_CHARGE = "no_charge"
 
 
 def check_values(enum_cls: type[StrEnum]) -> list[str]:

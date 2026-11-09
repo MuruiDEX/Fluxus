@@ -13,6 +13,7 @@ Deterministic output: sorted keys, indent 2, trailing newline.
 import inspect
 import json
 import sys
+import types
 import typing
 from decimal import Decimal
 from pathlib import Path
@@ -31,7 +32,9 @@ MANIFEST_PATH = BACKEND_DIR.parent / "docs" / "contracts" / "wire-manifest.json"
 def _type_name(annotation: object) -> tuple[str, bool]:
     """Map a Pydantic field annotation to (wire type, nullable)."""
     origin = typing.get_origin(annotation)
-    if origin is typing.Union:
+    # PEP 604 (`X | None`) yields types.UnionType on 3.12/3.13; on 3.14 the
+    # two union spellings share one object, so recognize both explicitly.
+    if origin is typing.Union or origin is types.UnionType:
         args = [a for a in typing.get_args(annotation) if a is not type(None)]
         nullable = len(args) != len(typing.get_args(annotation))
         if len(args) == 1:

@@ -197,29 +197,62 @@ Rules:
   `usage` ledger rows). Taskless Team Lead/project holds are excluded by
   construction; a reservation from another business, or an out-of-scope
   project/task filter, is a uniform non-disclosing `404`.
-- **Manual reconciliation — confirm actual charge (v1.24):** owner-only
-  `POST .../{reservation_id}/confirm-charge` (CSRF required) records an ACTUAL
-  provider charge for one ambiguous hold. The request requires the exact
-  `taskId`, `attemptKey` and `executionGeneration` (explicitly `null` for a
-  legacy null-generation hold; `0` never matches `null`), plus `provider`,
+- **Manual reconciliation — confirm actual charge (v1.24, amended v1.25):**
+  owner-only `POST .../{reservation_id}/confirm-charge` (CSRF required) records
+  an ACTUAL provider charge for one ambiguous hold. The request requires the
+  exact `taskId`, `attemptKey` and `executionGeneration` (explicitly `null` for
+  a legacy null-generation hold; `0` never matches `null`), plus `provider`,
   `model`, `amount > 0` and `attestation: true`; `currency`, a provider request
   ID, operator-reported token counts and free-text evidence are optional. The
   server never calls the provider, never invents usage/tokens, and never
   records a second charge. One transaction locks `Task → Reservation →
   Project`, revalidates the full scope by compare-and-set, appends one
   `confirmed` `costSource: "provider"` ledger row (`call_kind:
-  task_execution`), appends one `usage_reconciliations` audit row (the only
-  allowed outcome is `charged`), flips the reservation
-  `ambiguous → reconciled`, and recomputes task cost plus project spend. The
-  canonical ledger key is `usage:{reservation.idempotency_key}`; when that key
-  is already occupied by an `unknown` row the confirmed row uses
-  `usage:reconcile:{reservation_id}:charge`. A repeat confirmation is
-  idempotent (200, no second row); a stale scope or a hold already settled some
-  other way is `409` and writes nothing. `reconciled` is terminal and is
-  counted once as confirmed spend; it is never released, retried or re-settled,
-  and settlement/compensation paths that require `active` hold are no-ops.
-  Taskless Team Lead/project accounting is unchanged. No provider call, no
-  release, no no-charge outcome and no refund behavior exists in this slice.
+  task_execution`), appends one `usage_reconciliations` audit row (`outcome:
+  charged`), flips the reservation `ambiguous → reconciled`, and recomputes task
+  cost plus project spend. The canonical ledger key is
+  `usage:{reservation.idempotency_key}`. When that key is already occupied by a
+  non-charge historical row — an `unknown` row with NULL cost, or the
+  zero-cost `estimated`/`tariff` row from the F-I1 zero-bound path in the exact
+  reservation scope — the confirmed row uses
+  `usage:reconcile:{reservation_id}:charge`, and the historical row is left
+  unchanged. The first successful confirmation returns `200`. A repeat
+  confirmation of an already-reconciled hold is `409 already_reconciled`; no
+  second `UsageRecord`, ledger row or `usage_reconciliations` audit row is
+  written. A stale scope or a hold already settled some other way is also
+  `409` and writes nothing.
+  `reconciled` is terminal and is counted once as confirmed spend; it is never
+  released, retried or re-settled, and settlement/compensation paths that
+  require an `active` hold are no-ops. Taskless Team Lead/project accounting is
+  unchanged. No provider call, no release and no refund/credit behavior exists
+  in this endpoint.
+- **Manual reconciliation — confirm no charge (v1.25):** owner-only
+  `POST .../{reservation_id}/confirm-no-charge` (CSRF required) records an
+  explicit, attested decision that one ambiguous task-execution attempt was not
+  billed. The request requires the exact `taskId`, `attemptKey` and
+  `executionGeneration` (`0` never matches `null`), non-empty trimmed
+  `evidence` (max 2000 characters), and `attestation: true`; optional
+  `currency` must match the reservation. The service independently validates
+  attestation and evidence and refuses attempts whose ledger evidence already
+  contains a real charge (`409 ledger_evidence_conflict`): only an `unknown`
+  row with NULL cost, or a zero-cost `estimated`/`tariff` row in the exact
+  scope, is accepted as non-charge evidence. One transaction locks `Task →
+  Reservation → Project`, revalidates scope, CAS-transitions
+  `ambiguous → released` with reason `manual_no_charge`, appends one
+  `usage_reconciliations` row (`outcome: no_charge`, `usageRecordId: null`,
+  `amount: 0`, `costSource: none`, empty provider/model, zero tokens,
+  `attested: true`, preserved evidence and actor), and recomputes task
+  cost/project spend. No provider call, no `UsageRecord`, and no artificial
+  confirmed zero-cost row is written. The reservation CAS moves the hold
+  `ambiguous → released`, which removes that reservation's amount from the
+  pending budget exposure (`pending_total` counts only `active` and `ambiguous`
+  holds) and restores budget headroom by exactly that amount. The release itself
+  records no provider charge and creates no ledger row; historical
+  `unknown`/`estimated` rows remain append-only evidence and are not
+  independently counted as monetary exposure. Repeating a no-charge is `409
+  already_no_charge`; no-charge after a charge is `409 already_reconciled`;
+  charge after no-charge is `409 already_no_charge`. All no-charge writes roll
+  back together.
 
 ## 6. Error envelope (all API errors)
 
@@ -326,4 +359,5 @@ SaaS without reshaping `businessId` scoping:
 | 2026-11-04 | v1.21 | Stage 18 S2.2.4.6 slice 1: removed age-based automatic release of `ambiguous` reservations. No recovery, executor, scheduler or background path may transition `ambiguous → released` because of age; such holds are potentially billable, stay included in pending budget, and are resolved only by an explicitly authorized, audited reconciliation. The repository timer and its tests were deleted. `usage_ambiguous_release_minutes` is retained only as a deprecated, ignored compatibility setting (a non-zero value has no runtime effect). No request/response shape, schema or migration change |
 | 2026-11-05 | v1.23 | Stage 18 S2.2.4.6 slice 3: an HTTP 408 provider response is classified as an ambiguous, non-retryable, potentially billable outcome. It uses the existing provider error taxonomy (`provider_error`) with `ambiguous=true`/`retryable=false`; no new exception type or retry path. The executor converts the attempt's `active` reservation to `ambiguous` and Slice 2 stale-ownership compensation preserves that classification for the exact old-generation hold. No ledger row, token count, cost, task cost, project spend or `aiSpent` change is written; the hold remains pending budget. HTTP 429, definitive 4xx, 401/403, 5xx and transport classifications are unchanged; an HTTP 408 is distinct from a client-side connect/pool timeout. No request/response shape, schema or migration change |
 | 2026-11-05 | v1.22 | Stage 18 S2.2.4.6 slice 2: stale ownership-loss compensation. When an executor loses ownership (heartbeat loss, failed task fence, stale cancellation, heartbeat store failure), it no longer leaves its own `active` reservation behind forever. It settles ONLY that exact reservation by full identity (business, reservation id, task, attempt key, exact integer generation) using the existing CAS; NULL never matches an integer. Provider evidence classifies the outcome: `released` only for a proven pre-send failure, otherwise `ambiguous` (including provider response received, unknown outcome and cancellation). No ledger row, task cost, estimated cost, project spend or `aiSpent` change is written; ambiguous remains pending budget. Newer-generation holds, already `ambiguous`/`released`/`consumed`/`written_off` holds and missing reservations are safe no-ops. No request/response shape, schema or migration change |
-| 2026-11-06 | v1.24 | Stage 18 S2.2.4.6 slice 4: owner-only manual confirmation of an actual provider charge for one ambiguous task-execution reservation. Additive member read endpoints (`GET .../usage/ambiguous-reservations` and `.../{reservation_id}`; taskless Team Lead/project holds excluded, out-of-scope uniform `404`) and owner-only `POST .../{reservation_id}/confirm-charge` (CSRF; exact task/attempt/generation scope, `attestation: true`, `amount > 0`; no provider call, no invented usage, no release/no-charge/refund path). Migration 0011 adds the `reconciled` reservation status and the append-only `usage_reconciliations` audit table (UNIQUE reservation and usage-record links). One transaction locks `Task → Reservation → Project`, CAS-revalidates scope, appends one `confirmed`/`costSource: provider` ledger row, appends one `outcome: charged` audit row, flips `ambiguous → reconciled` and recomputes task cost/project spend exactly once; repeats are idempotent, stale/already-settled scopes are `409` with no partial write. Taskless Team Lead accounting is unchanged; new `AmbiguousReservation*`/`ConfirmCharge*` shapes only, existing shapes, codes and wire `v1` unchanged |
+| 2026-11-06 | v1.24 | Stage 18 S2.2.4.6 slice 4: owner-only manual confirmation of an actual provider charge for one ambiguous task-execution reservation. Additive member read endpoints (`GET .../usage/ambiguous-reservations` and `.../{reservation_id}`; taskless Team Lead/project holds excluded, out-of-scope uniform `404`) and owner-only `POST .../{reservation_id}/confirm-charge` (CSRF; exact task/attempt/generation scope, `attestation: true`, `amount > 0`; no provider call, no invented usage, no release/no-charge/refund path). Migration 0011 adds the `reconciled` reservation status and the append-only `usage_reconciliations` audit table (UNIQUE reservation and usage-record links). One transaction locks `Task → Reservation → Project`, CAS-revalidates scope, appends one `confirmed`/`costSource: provider` ledger row, appends one `outcome: charged` audit row, flips `ambiguous → reconciled` and recomputes task cost/project spend exactly once; a repeat confirmation of an already-reconciled hold is `409 already_reconciled` with no second ledger or audit row, and stale/already-settled scopes are `409` with no partial write. Taskless Team Lead accounting is unchanged; new `AmbiguousReservation*`/`ConfirmCharge*` shapes only, existing shapes, codes and wire `v1` unchanged |
+| 2026-11-08 | v1.25 | Stage 18.1 F-I1 corrective: add owner-only `POST .../{reservation_id}/confirm-no-charge` (CSRF; exact task/attempt/generation scope including the NULL branch, `attestation: true`, required non-empty trimmed evidence max 2000, optional currency must match; no provider call, no `UsageRecord`, no artificial zero-cost charge). A no-charge CAS-transitions `ambiguous → released` with reason `manual_no_charge` and appends one `usage_reconciliations` row (`outcome: no_charge`, `usage_record_id: NULL`, `amount: 0`, `cost_source: none`, empty provider/model, zero tokens, `attested: true`). The released hold stops counting as pending exposure, restoring budget headroom by exactly its amount; historical `unknown`/`estimated` ledger rows remain unchanged and are not themselves monetary budget components. Also fixes the zero-cost manual-charge path: `_ledger_key` now accepts the exact-scope historical zero-cost `estimated`/`tariff` canonical row (in addition to an `unknown` NULL-cost row), preserving it and writing the confirmed correction under `usage:reconcile:{reservation_id}:charge`. Migration 0012 makes `usage_record_id` nullable, adds the `no_charge` outcome and conditional charged/no-charge CHECKs, preserves the UNIQUE reservation/usage-record constraints, and refuses downgrade while no-charge audit rows or `released`/`manual_no_charge` reservations exist. Additive `ConfirmNoCharge*` shapes only; existing shapes, codes and wire `v1` unchanged |

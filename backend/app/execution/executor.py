@@ -76,11 +76,12 @@ from app.persistence.repositories.spend import recalculate_project_spend
 from app.persistence.repositories.usage import BudgetReservationRepository
 from app.usage import pricing
 from app.usage.settlement import (
+    SettlementRejected,
     mark_ambiguous,
     price_response,
-    record_estimated_failure,
-    record_success,
     release_reservation,
+    settle_estimated_failure,
+    settle_success,
 )
 
 _budget_reservations = BudgetReservationRepository()
@@ -1008,25 +1009,36 @@ async def _execute_inner(
                     envelope_text,
                     event_cost,
                 )
-                if reservation_id is not None:
-                    # Ledger row + reservation consume + task-cost recompute, atomic.
-                    await record_success(
-                        session,
-                        business_id,
-                        reservation_id=reservation_id,
-                        reservation_key=reservation_key or attempt_key,
-                        task_id=task_id,
-                        project_id=project_id,
-                        agent_id=agent_id,
-                        call_kind=UsageCallKind.TASK_EXECUTION.value,
-                        attempt=pre_attempts,
-                        attempt_key=attempt_key,
-                        execution_generation=ownership.execution_generation,
-                        provider=provider_name,
-                        model=model_name,
-                        response=response,
-                        input_bound_tokens=input_bound,
-                        max_output_tokens=settings.llm_max_tokens,
+                # Ledger row + reservation consume + task-cost recompute, atomic.
+                # A successful task must never commit without a valid
+                # settlement: `skipped` is escalated to a rejection so the
+                # whole persist transaction rolls back and compensation runs.
+                settlement = await settle_success(
+                    session,
+                    business_id,
+                    reservation_id=reservation_id,
+                    reservation_key=reservation_key or attempt_key,
+                    task_id=task_id,
+                    project_id=project_id,
+                    agent_id=agent_id,
+                    call_kind=UsageCallKind.TASK_EXECUTION.value,
+                    attempt=pre_attempts,
+                    attempt_key=attempt_key,
+                    execution_generation=ownership.execution_generation,
+                    provider=provider_name,
+                    model=model_name,
+                    response=response,
+                    input_bound_tokens=input_bound,
+                    max_output_tokens=settings.llm_max_tokens,
+                )
+                if settlement.outcome == "skipped":
+                    raise SettlementRejected(
+                        "settlement_skipped",
+                        (
+                            f"successful task settlement was skipped "
+                            f"({settlement.reason}); refusing to complete"
+                        ),
+                        wrote=True,
                     )
                 await recalculate_project_spend(session, business_id, project_id)
     except asyncio.CancelledError:
@@ -1174,7 +1186,10 @@ async def _record_failure(
                 )
                 await _append_event(session, business_id, project_id, agent_name, "system", text)
                 if reservation_id is not None and estimate is not None:
-                    await record_estimated_failure(
+                    # A valid or skipped settlement keeps the task FAILED (the
+                    # approved post-send contract). A rejection propagates and
+                    # rolls back through the existing compensation path.
+                    settlement = await settle_estimated_failure(
                         session,
                         business_id,
                         reservation_id=reservation_id,
@@ -1191,7 +1206,8 @@ async def _record_failure(
                         input_bound_tokens=estimate[0],
                         max_output_tokens=estimate[1],
                     )
-                    await recalculate_project_spend(session, business_id, project_id)
+                    if settlement.outcome != "skipped":
+                        await recalculate_project_spend(session, business_id, project_id)
                 elif reservation_id is not None and settle == "ambiguous":
                     await mark_ambiguous(
                         session,

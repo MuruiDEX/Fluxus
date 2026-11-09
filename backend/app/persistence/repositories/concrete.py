@@ -162,6 +162,25 @@ class AgentRepository(BaseRepository[Agent]):
 class ProjectRepository(BaseRepository[Project]):
     model = Project
 
+    async def lock_for_update(
+        self, session: AsyncSession, business_id: str, project_id: str
+    ) -> Project | None:
+        """Tenant-scoped project row lock, refreshed from the database.
+
+        Team Lead settlement must acquire this BEFORE the reservation lock so the
+        order stays Project → Reservation, matching Team Lead reservation and
+        removing the reserve/settlement deadlock cycle. `populate_existing`
+        prevents a stale identity-map instance from hiding a concurrent change.
+        """
+        stmt = (
+            select(Project)
+            .where(Project.business_id == business_id, Project.id == project_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
     async def create(
         self, session: AsyncSession, business_id: str, data: dict[str, Any]
     ) -> Project:

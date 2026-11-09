@@ -202,6 +202,11 @@
       "response": "ConfirmChargeResponse"
     },
     {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/usage/ambiguous-reservations/{reservation_id}/confirm-no-charge",
+      "response": "ConfirmNoChargeResponse"
+    },
+    {
       "method": "GET",
       "path": "/api/v1/health",
       "response": "HealthResponse"
@@ -1022,6 +1027,118 @@
         "taskCost",
         "taskId",
         "usageRecordId"
+      ]
+    },
+    "ConfirmNoChargeRequest": {
+      "properties": {
+        "attemptKey": {
+          "type": "string"
+        },
+        "attestation": {
+          "type": "Literal"
+        },
+        "currency": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "executionGeneration": {
+          "nullable": true,
+          "type": "integer"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attemptKey",
+        "attestation",
+        "evidence",
+        "executionGeneration",
+        "taskId"
+      ]
+    },
+    "ConfirmNoChargeResponse": {
+      "properties": {
+        "actorEmail": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "decimal-as-string"
+        },
+        "attemptKey": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "costSource": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "executionGeneration": {
+          "default": null,
+          "nullable": true,
+          "type": "integer"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "projectSpend": {
+          "type": "decimal-as-string"
+        },
+        "reconciliationId": {
+          "type": "string"
+        },
+        "reservationId": {
+          "type": "string"
+        },
+        "resolvedAt": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "taskCost": {
+          "type": "decimal-as-string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "usageRecordId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        }
+      },
+      "required": [
+        "actorEmail",
+        "amount",
+        "attemptKey",
+        "costSource",
+        "currency",
+        "evidence",
+        "outcome",
+        "projectId",
+        "projectSpend",
+        "reconciliationId",
+        "reservationId",
+        "resolvedAt",
+        "status",
+        "taskCost",
+        "taskId"
       ]
     },
     "DecisionResponse": {

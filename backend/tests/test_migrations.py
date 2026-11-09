@@ -810,7 +810,8 @@ async def test_0011_usage_reconciliation_round_trip(
     assert {
         "ck_usage_reconciliations_outcome",
         "ck_usage_reconciliations_cost_source",
-        "ck_usage_reconciliations_amount_pos",
+        "ck_usage_reconciliations_amount",
+        "ck_usage_reconciliations_usage_record",
         "ck_usage_reconciliations_tokens_nonneg",
         "ck_usage_reconciliations_attested",
     } <= await _check_constraint_names(mig_db_url, "usage_reconciliations")
@@ -921,3 +922,398 @@ async def test_0011_usage_reconciliation_round_trip(
 
     command.upgrade(cfg, "head")
     assert "usage_reconciliations" in await _table_names(mig_db_url)
+
+
+@pytest.mark.asyncio()
+async def test_0012_no_charge_reconciliation_round_trip(
+    mig_db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0012 adds the attested no-charge outcome, constraints and downgrade guards."""
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+    monkeypatch.setenv(
+        "APP_DATABASE_URL", mig_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    )
+    cfg = _alembic_config(mig_db_url)
+
+    command.upgrade(cfg, "0011_usage_reconciliation")
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO businesses (id, name, tagline, industry, location,"
+                " owner_name, health_score, health_breakdown, metrics,"
+                " revenue_series, notes)"
+                " VALUES ('biz_nc', 'NC', '', '', '', '', 0, '[]', '{}', '[]', '')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO agents (id, business_id, name, role, responsibilities,"
+                " tools, permissions, status, cost_per_month, performance, hired,"
+                " avatar_hue)"
+                " VALUES ('ag_nc', 'biz_nc', 'A', 'Role', '[]', '[]', '[]',"
+                " 'available', 0, '{}', false, 0)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO projects (id, business_id, title, goal, status,"
+                " progress, budget, ai_budget, ai_spent, deadline, team_ids,"
+                " milestones)"
+                " VALUES ('proj_nc', 'biz_nc', 'P', '', 'in_progress', 0, 0, 0, 0,"
+                " '', '[]', '[]')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO tasks (id, business_id, project_id, title,"
+                " owner_agent_id, status, progress, cost_accrued, eta_minutes,"
+                " summary, attempts, gate_at)"
+                " VALUES ('t_nc', 'biz_nc', 'proj_nc', 'NC task', 'ag_nc',"
+                " 'not_started', 0, 0, 0, '', 0, 100)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO budget_reservations (id, business_id, project_id,"
+                " task_id, attempt_key, amount, idempotency_key, status, reason)"
+                " VALUES ('res_nc', 'biz_nc', 'proj_nc', 't_nc', 'attempt:nc',"
+                " 0.00, 'reserve:nc', 'ambiguous', 'timeout')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO budget_reservations (id, business_id, project_id,"
+                " task_id, attempt_key, amount, idempotency_key)"
+                " VALUES ('res_chg', 'biz_nc', 'proj_nc', 't_nc', 'attempt:chg',"
+                " 1.00, 'reserve:chg')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO usage_records (id, business_id, project_id, task_id,"
+                " attempt_key, provider, model, idempotency_key, occurred_at,"
+                " cost_amount, cost_source, usage_status)"
+                " VALUES ('u_nc', 'biz_nc', 'proj_nc', 't_nc', 'attempt:chg',"
+                " 'openai', 'gpt-4o', 'usage:nc', now(), 1.00, 'provider',"
+                " 'confirmed')"
+            )
+        )
+    await engine.dispose()
+
+    command.upgrade(cfg, "0012_no_charge_reconciliation")
+
+    columns = await _column_details(mig_db_url, "usage_reconciliations")
+    assert columns["usage_record_id"]["nullable"] is True
+    checks = await _check_constraint_names(mig_db_url, "usage_reconciliations")
+    assert {
+        "ck_usage_reconciliations_amount",
+        "ck_usage_reconciliations_usage_record",
+    } <= checks
+    assert "ck_usage_reconciliations_amount_pos" not in checks
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                " task_id, reservation_id, attempt_key, outcome, amount,"
+                " cost_source, provider, model, evidence, attested, actor_email)"
+                " VALUES ('rec_nc', 'biz_nc', 'proj_nc', 't_nc', 'res_nc',"
+                " 'attempt:nc', 'no_charge', 0, 'none', '', '', 'operator says free',"
+                " true, 'op@example.com')"
+            )
+        )
+    await engine.dispose()
+
+    from sqlalchemy.exc import IntegrityError
+
+    # A charged row still requires its usage link.
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, attempt_key, amount, provider, model)"
+                    " VALUES ('rec_chg_null', 'biz_nc', 'proj_nc', 't_nc', 'res_chg',"
+                    " 'attempt:chg', 1.00, 'openai', 'gpt-4o')"
+                )
+            )
+    await engine.dispose()
+
+    # A no-charge row cannot carry a positive amount.
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, attempt_key, outcome, amount,"
+                    " cost_source, provider, model)"
+                    " VALUES ('rec_nc_paid', 'biz_nc', 'proj_nc', 't_nc', 'res_chg',"
+                    " 'attempt:chg', 'no_charge', 1.00, 'none', '', '')"
+                )
+            )
+    await engine.dispose()
+
+    # A no-charge row cannot link a usage record.
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, usage_record_id, attempt_key, outcome,"
+                    " amount, cost_source, provider, model)"
+                    " VALUES ('rec_nc_link', 'biz_nc', 'proj_nc', 't_nc', 'res_chg',"
+                    " 'u_nc', 'attempt:chg', 'no_charge', 0, 'none', '', '')"
+                )
+            )
+    await engine.dispose()
+
+    # A charged row cannot claim the no-charge cost source.
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, usage_record_id, attempt_key, outcome,"
+                    " amount, cost_source, provider, model)"
+                    " VALUES ('rec_chg_none', 'biz_nc', 'proj_nc', 't_nc', 'res_chg',"
+                    " 'u_nc', 'attempt:chg', 'charged', 1.00, 'none', 'openai',"
+                    " 'gpt-4o')"
+                )
+            )
+    await engine.dispose()
+
+    # A no-charge row cannot claim the provider cost source.
+    engine = create_engine_from_url(mig_db_url)
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                    " task_id, reservation_id, attempt_key, outcome, amount,"
+                    " cost_source, provider, model)"
+                    " VALUES ('rec_nc_provider', 'biz_nc', 'proj_nc', 't_nc',"
+                    " 'res_chg', 'attempt:chg', 'no_charge', 0, 'provider', '', '')"
+                )
+            )
+    await engine.dispose()
+
+    # Downgrade refuses while an attested no-charge audit row exists.
+    with pytest.raises(RuntimeError, match="no-charge reconciliation audit rows"):
+        command.downgrade(cfg, "0011_usage_reconciliation")
+    assert "usage_reconciliations" in await _table_names(mig_db_url)
+
+    # And refuses while a released/manual_no_charge reservation exists.
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM usage_reconciliations WHERE id = 'rec_nc'"))
+        await conn.execute(
+            text(
+                "UPDATE budget_reservations SET status = 'released',"
+                " reason = 'manual_no_charge' WHERE id = 'res_nc'"
+            )
+        )
+    await engine.dispose()
+    with pytest.raises(RuntimeError, match="released/manual_no_charge reservations"):
+        command.downgrade(cfg, "0011_usage_reconciliation")
+
+    # Once the no-charge state is resolved, the downgrade is clean.
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE budget_reservations SET status = 'active', reason = 'timeout'"
+                " WHERE id = 'res_nc'"
+            )
+        )
+    await engine.dispose()
+
+    command.downgrade(cfg, "0011_usage_reconciliation")
+    columns = await _column_details(mig_db_url, "usage_reconciliations")
+    assert columns["usage_record_id"]["nullable"] is False
+    checks = await _check_constraint_names(mig_db_url, "usage_reconciliations")
+    assert "ck_usage_reconciliations_amount_pos" in checks
+    assert "ck_usage_reconciliations_amount" not in checks
+    assert "ck_usage_reconciliations_usage_record" not in checks
+
+    command.upgrade(cfg, "head")
+    assert "usage_reconciliations" in await _table_names(mig_db_url)
+
+
+@pytest.mark.asyncio()
+async def test_0012_upgrade_preserves_existing_charged_audit_row(
+    mig_db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """0012's DDL must not rewrite or reject a pre-existing charged audit row."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+    monkeypatch.setenv(
+        "APP_DATABASE_URL", mig_db_url.replace("postgresql+asyncpg://", "postgresql://")
+    )
+    cfg = _alembic_config(mig_db_url)
+
+    command.upgrade(cfg, "0011_usage_reconciliation")
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO businesses (id, name, tagline, industry, location,"
+                " owner_name, health_score, health_breakdown, metrics,"
+                " revenue_series, notes)"
+                " VALUES ('biz_hist', 'Hist', '', '', '', '', 0, '[]', '{}', '[]', '')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO agents (id, business_id, name, role, responsibilities,"
+                " tools, permissions, status, cost_per_month, performance, hired,"
+                " avatar_hue)"
+                " VALUES ('ag_hist', 'biz_hist', 'A', 'Role', '[]', '[]', '[]',"
+                " 'available', 0, '{}', false, 0)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO projects (id, business_id, title, goal, status,"
+                " progress, budget, ai_budget, ai_spent, deadline, team_ids,"
+                " milestones)"
+                " VALUES ('proj_hist', 'biz_hist', 'P', '', 'in_progress', 0, 0, 0,"
+                " 0, '', '[]', '[]')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO tasks (id, business_id, project_id, title,"
+                " owner_agent_id, status, progress, cost_accrued, eta_minutes,"
+                " summary, attempts, gate_at, execution_generation)"
+                " VALUES ('t_hist', 'biz_hist', 'proj_hist', 'Hist task', 'ag_hist',"
+                " 'not_started', 0, 0, 0, '', 0, 100, 7)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO usage_records (id, business_id, project_id, task_id,"
+                " attempt_key, attempt, provider, model,"
+                " idempotency_key, occurred_at, cost_amount, currency, cost_source,"
+                " usage_status)"
+                " VALUES ('u_hist', 'biz_hist', 'proj_hist', 't_hist',"
+                " 'attempt:hist', 4, 'openai', 'gpt-4o', 'usage:hist', now(),"
+                " 12.34, 'USD', 'provider', 'confirmed')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO budget_reservations (id, business_id, project_id,"
+                " task_id, attempt, attempt_key, execution_generation, amount,"
+                " currency, status, reason, idempotency_key, usage_record_id)"
+                " VALUES ('res_hist', 'biz_hist', 'proj_hist', 't_hist', 4,"
+                " 'attempt:hist', 7, 12.34, 'USD', 'reconciled',"
+                " 'manual_provider_charge', 'reserve:hist', 'u_hist')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO usage_reconciliations (id, business_id, project_id,"
+                " task_id, reservation_id, usage_record_id, attempt, attempt_key,"
+                " execution_generation, outcome, amount, currency, cost_source,"
+                " provider, model, provider_request_id, prompt_tokens,"
+                " completion_tokens, total_tokens, cached_tokens, reasoning_tokens,"
+                " evidence, attested, actor_user_id, actor_email, created_at,"
+                " updated_at)"
+                " VALUES ('rec_hist', 'biz_hist', 'proj_hist', 't_hist', 'res_hist',"
+                " 'u_hist', 4, 'attempt:hist', 7, 'charged', 12.34, 'USD',"
+                " 'provider', 'openai', 'gpt-4o', 'req_hist', 11, 7, 18, 2, 3,"
+                " 'invoice 42', true, NULL, 'auditor@example.com',"
+                " '2026-01-02 03:04:05+00', '2026-01-03 04:05:06+00')"
+            )
+        )
+    await engine.dispose()
+
+    command.upgrade(cfg, "0012_no_charge_reconciliation")
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        row = (
+            (await conn.execute(text("SELECT * FROM usage_reconciliations WHERE id = 'rec_hist'")))
+            .mappings()
+            .one()
+        )
+    await engine.dispose()
+
+    assert row["id"] == "rec_hist"
+    assert row["business_id"] == "biz_hist"
+    assert row["project_id"] == "proj_hist"
+    assert row["task_id"] == "t_hist"
+    assert row["reservation_id"] == "res_hist"
+    assert row["usage_record_id"] == "u_hist"
+    assert row["attempt"] == 4
+    assert row["attempt_key"] == "attempt:hist"
+    assert row["execution_generation"] == 7
+    assert row["outcome"] == "charged"
+    assert row["amount"] == Decimal("12.34")
+    assert row["currency"] == "USD"
+    assert row["cost_source"] == "provider"
+    assert row["provider"] == "openai"
+    assert row["model"] == "gpt-4o"
+    assert row["provider_request_id"] == "req_hist"
+    assert row["prompt_tokens"] == 11
+    assert row["completion_tokens"] == 7
+    assert row["total_tokens"] == 18
+    assert row["cached_tokens"] == 2
+    assert row["reasoning_tokens"] == 3
+    assert row["evidence"] == "invoice 42"
+    assert row["attested"] is True
+    assert row["actor_user_id"] is None
+    assert row["actor_email"] == "auditor@example.com"
+    assert row["created_at"] == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    assert row["updated_at"] == datetime(2026, 1, 3, 4, 5, 6, tzinfo=UTC)
+
+    # The new conditional CHECKs are present, and a self-update forces the
+    # database to re-evaluate every constraint against the preserved row.
+    checks = await _check_constraint_names(mig_db_url, "usage_reconciliations")
+    assert {
+        "ck_usage_reconciliations_outcome",
+        "ck_usage_reconciliations_cost_source",
+        "ck_usage_reconciliations_amount",
+        "ck_usage_reconciliations_usage_record",
+    } <= checks
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            text("UPDATE usage_reconciliations SET amount = amount WHERE id = 'rec_hist'")
+        )
+        assert result.rowcount == 1
+    await engine.dispose()
+
+    engine = create_engine_from_url(mig_db_url)
+    async with engine.connect() as conn:
+        still_there = (
+            await conn.execute(
+                text(
+                    "SELECT id, outcome, amount, usage_record_id"
+                    " FROM usage_reconciliations WHERE id = 'rec_hist'"
+                )
+            )
+        ).one()
+    await engine.dispose()
+    assert still_there == ("rec_hist", "charged", Decimal("12.34"), "u_hist")

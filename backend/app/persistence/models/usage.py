@@ -152,11 +152,13 @@ class BudgetReservation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
 class UsageReconciliation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     """Append-only audit of one manual ambiguous-reservation reconciliation.
 
-    Exactly one row per reservation and one row per confirmed ledger entry. The
-    reservation snapshot is copied here so the audit remains readable even if
-    mutable reservation fields are later touched by unrelated flows. `amount`
-    and `cost_source="provider"` record the operator's explicit confirmation;
-    zero token counts mean "unknown/not supplied", never fabricated usage.
+    Exactly one row per reservation and, for a charge, one row per confirmed
+    ledger entry. The reservation snapshot is copied here so the audit remains
+    readable even if mutable reservation fields are later touched by unrelated
+    flows. `charged` requires a confirmed ledger link and positive provider
+    amount; `no_charge` requires no ledger link, zero amount and cost_source
+    "none". Zero token counts mean "unknown/not supplied", never fabricated
+    usage.
     """
 
     __tablename__ = "usage_reconciliations"
@@ -167,10 +169,19 @@ class UsageReconciliation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
             "ck_usage_reconciliations_outcome",
         ),
         CheckConstraint(
-            "cost_source = 'provider'",
+            "(outcome = 'charged' AND usage_record_id IS NOT NULL) "
+            "OR (outcome = 'no_charge' AND usage_record_id IS NULL)",
+            name="ck_usage_reconciliations_usage_record",
+        ),
+        CheckConstraint(
+            "(outcome = 'charged' AND cost_source = 'provider') "
+            "OR (outcome = 'no_charge' AND cost_source = 'none')",
             name="ck_usage_reconciliations_cost_source",
         ),
-        CheckConstraint("amount > 0", name="ck_usage_reconciliations_amount_pos"),
+        CheckConstraint(
+            "(outcome = 'charged' AND amount > 0) OR (outcome = 'no_charge' AND amount = 0)",
+            name="ck_usage_reconciliations_amount",
+        ),
         CheckConstraint(
             "prompt_tokens >= 0 AND completion_tokens >= 0 AND total_tokens >= 0 "
             "AND (cached_tokens IS NULL OR cached_tokens >= 0) "
@@ -202,8 +213,8 @@ class UsageReconciliation(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     reservation_id: Mapped[str] = mapped_column(
         String(ID_LEN), ForeignKey("budget_reservations.id", ondelete="CASCADE")
     )
-    usage_record_id: Mapped[str] = mapped_column(
-        String(ID_LEN), ForeignKey("usage_records.id", ondelete="CASCADE")
+    usage_record_id: Mapped[str | None] = mapped_column(
+        String(ID_LEN), ForeignKey("usage_records.id", ondelete="CASCADE"), nullable=True
     )
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     attempt_key: Mapped[str] = mapped_column(String(200))

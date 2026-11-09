@@ -1,12 +1,13 @@
-"""Manual ambiguous-reservation reconciliation (Stage 18 S2.2.4.6 slice 4).
+"""Manual ambiguous-reservation reconciliation (Stage 18 S2.2.4.6).
 
 Read surface: any authenticated member of the path business can list and
 inspect ambiguous *task-execution* reservations. Taskless Team Lead/project
 holds and every other tenant are excluded by construction.
 
-Write surface: business owners only. The endpoint confirms an ACTUAL provider
-charge; it never releases a hold or records a no-charge outcome, never calls the
-provider, and never writes a second charge.
+Write surface: business owners only. One endpoint confirms an ACTUAL provider
+charge. Another records an attested no-charge decision: it releases the hold,
+never calls the provider, never writes a usage row and never fabricates a
+zero-cost charge.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -19,6 +20,8 @@ from app.api.v1.schemas import (
     AmbiguousReservationResponse,
     ConfirmChargeRequest,
     ConfirmChargeResponse,
+    ConfirmNoChargeRequest,
+    ConfirmNoChargeResponse,
 )
 from app.api.v1.usage import _item as _usage_item
 from app.core.auth import check_client_contract
@@ -31,9 +34,11 @@ from app.persistence.repositories.concrete import (
 )
 from app.usage.manual_reconciliation import (
     ChargeCommand,
+    NoChargeCommand,
     ReconciliationConflict,
     ReconciliationInvalid,
     ReconciliationNotFound,
+    confirm_no_charge,
     confirm_provider_charge,
     get_ambiguous,
     list_ambiguous,
@@ -215,6 +220,76 @@ async def confirm_charge(
                     providerRequestId=reconciliation.provider_request_id,
                     actorEmail=reconciliation.actor_email,
                     reconciledAt=_at_iso(record.occurred_at),
+                    taskCost=result.task_cost,
+                    projectSpend=result.project_spend,
+                    contract=settings.contract_version,
+                )
+    except ReconciliationNotFound as exc:
+        raise _not_found() from exc
+    except ReconciliationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except ReconciliationInvalid as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "validation_error", "message": str(exc)},
+        ) from exc
+
+
+@router.post(
+    "/businesses/{business_id}/usage/ambiguous-reservations/{reservation_id}/confirm-no-charge",
+    response_model=ConfirmNoChargeResponse,
+    dependencies=_GUARD,
+)
+async def confirm_no_charge_resolution(
+    business_id: str,
+    reservation_id: str,
+    body: ConfirmNoChargeRequest,
+    request: Request,
+    identity: Identity = Depends(require_business_owner),  # noqa: B008 - FastAPI idiom
+):
+    settings = _settings(request)
+    factory = _factory(request)
+    command = NoChargeCommand(
+        task_id=body.task_id,
+        attempt_key=body.attempt_key,
+        execution_generation=body.execution_generation,
+        evidence=body.evidence,
+        attestation=body.attestation,
+        currency=body.currency,
+    )
+    try:
+        async with factory() as session:
+            async with session.begin():
+                actor_email = await _actor_email(session, identity)
+                result = await confirm_no_charge(
+                    session,
+                    business_id,
+                    reservation_id,
+                    command,
+                    actor_user_id=identity.user_id,
+                    actor_email=actor_email,
+                )
+                reservation = result.reservation
+                reconciliation = result.reconciliation
+                return ConfirmNoChargeResponse(
+                    outcome="no_charge",
+                    reservationId=reservation.id,
+                    status=ReservationStatus.RELEASED.value,
+                    usageRecordId=None,
+                    reconciliationId=reconciliation.id,
+                    taskId=reservation.task_id,
+                    projectId=reservation.project_id,
+                    attemptKey=reservation.attempt_key,
+                    executionGeneration=reservation.execution_generation,
+                    amount=reconciliation.amount,
+                    currency=reconciliation.currency,
+                    costSource=reconciliation.cost_source,
+                    evidence=reconciliation.evidence or "",
+                    actorEmail=reconciliation.actor_email,
+                    resolvedAt=_at_iso(reconciliation.created_at),
                     taskCost=result.task_cost,
                     projectSpend=result.project_spend,
                     contract=settings.contract_version,

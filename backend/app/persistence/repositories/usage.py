@@ -505,6 +505,43 @@ class BudgetReservationRepository:
         await session.flush()
         return (result.rowcount or 0) == 1
 
+    async def resolve_ambiguous_no_charge(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        reservation_id: str,
+        *,
+        task_id: str,
+        project_id: str,
+        attempt_key: str,
+        execution_generation: int | None,
+        reason: str = "manual_no_charge",
+    ) -> bool:
+        """CAS `ambiguous → released` for an explicitly attested no-charge.
+
+        Requires the same exact execution scope as ``resolve_ambiguous`` and,
+        additionally, an unlinked hold (``usage_record_id IS NULL``). That
+        proves no confirmed ledger row was already attached. The predicates are
+        authoritative: a NULL generation matches only NULL, never an integer.
+        """
+        stmt = update(BudgetReservation).where(
+            BudgetReservation.business_id == business_id,
+            BudgetReservation.id == reservation_id,
+            BudgetReservation.status == ReservationStatus.AMBIGUOUS.value,
+            BudgetReservation.task_id == task_id,
+            BudgetReservation.project_id == project_id,
+            BudgetReservation.attempt_key == attempt_key,
+            BudgetReservation.usage_record_id.is_(None),
+        )
+        stmt = self._generation_match(stmt, execution_generation)
+        stmt = stmt.values(
+            status=ReservationStatus.RELEASED.value,
+            reason=reason,
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return (result.rowcount or 0) == 1
+
     async def get_for_task(
         self,
         session: AsyncSession,
@@ -573,7 +610,11 @@ class BudgetReservationRepository:
             stmt = stmt.where(BudgetReservation.attempt_key == attempt_key)
         if execution_generation is not None:
             stmt = stmt.where(BudgetReservation.execution_generation == execution_generation)
-        stmt = stmt.with_for_update()
+        # Always refresh the locked row: session identity maps may carry a stale
+        # status from the claiming transaction (`expire_on_commit=False`). The
+        # settlement decision must observe the committed state under this lock,
+        # exactly like the manual-reconciliation lock does.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
         res = await session.execute(stmt)
         return res.scalar_one_or_none()
 

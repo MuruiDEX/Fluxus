@@ -297,6 +297,16 @@ class TeamLeadMeter:
     ) -> None:
         async with self.factory() as session:
             async with session.begin():
+                # Lock the project BEFORE the reservation so this transaction
+                # matches reserve's Project → Reservation order. Otherwise a
+                # concurrent reserve can hold the project while waiting on this
+                # reservation, and settlement waits on the project: a real cycle.
+                if self.project_id is not None:
+                    await _projects.lock_for_update(
+                        session,
+                        self.business_id,
+                        self.project_id,
+                    )
                 await record_success(
                     session,
                     self.business_id,
@@ -330,6 +340,14 @@ class TeamLeadMeter:
     ) -> None:
         async with self.factory() as session:
             async with session.begin():
+                # Same Project → Reservation order as reserve; see
+                # `_settle_success`.
+                if self.project_id is not None:
+                    await _projects.lock_for_update(
+                        session,
+                        self.business_id,
+                        self.project_id,
+                    )
                 record, _won, status = await record_estimated_failure(
                     session,
                     self.business_id,
