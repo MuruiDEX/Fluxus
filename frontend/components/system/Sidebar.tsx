@@ -28,6 +28,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Badge } from "./badges";
 import { useAgents, useApprovals, useBusiness } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgentsList, useLiveApprovals } from "@/lib/store/live";
@@ -121,9 +122,9 @@ function ApprovalsBadge() {
 
 function BadgePill({ label }: { label: string }) {
   return (
-    <span className="rounded-full bg-mist-100 px-1.5 py-px text-micro-sm font-semibold text-ink-500 dark:bg-white/10 dark:text-slate-300">
+    <Badge tone="neutral" size="sm" className="shrink-0 tabular-nums">
       {label}
-    </span>
+    </Badge>
   );
 }
 
@@ -134,7 +135,7 @@ export function SidebarLinks() {
       {groups.map((g, gi) => (
         <div key={gi} className="flex flex-col gap-0.5">
           {g.label && (
-            <p className="px-2 pb-1 text-micro-sm font-semibold uppercase tracking-wider text-ink-400">
+            <p className="px-2 pb-1 text-micro font-semibold uppercase tracking-wider text-fg-subtle">
               {g.label}
             </p>
           )}
@@ -154,11 +155,12 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   return (
     <Link
       href={item.href}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-body-sm font-medium transition-colors",
+        "group flex items-center gap-2.5 rounded-control px-2.5 py-[7px] text-body-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
         active
-          ? "bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-sky-300"
-          : "text-ink-700 hover:bg-mist-100 dark:text-slate-300 dark:hover:bg-white/5",
+          ? "bg-surface-selected text-brand"
+          : "text-fg-muted hover:bg-surface-hover hover:text-fg",
       )}
     >
       <item.icon className="h-4 w-4 shrink-0 opacity-80" />
@@ -175,9 +177,9 @@ function WorkspaceFooter() {
   if (status === "authenticated" && currentBusinessId) {
     const name = businessNames[currentBusinessId] ?? `${currentBusinessId.slice(0, 8)}…`;
     return (
-      <div className="mt-auto rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-500/30 dark:bg-emerald-500/10">
-        <p className="truncate text-caption font-bold">{name}</p>
-        <p className="mt-0.5 text-label-sm leading-4 text-emerald-700 dark:text-emerald-300">
+      <div className="mt-auto rounded-card border border-success-line bg-success-soft p-2.5">
+        <p className="truncate text-caption font-bold text-fg">{name}</p>
+        <p className="mt-0.5 text-label leading-4 text-success-fg">
           Live business · server data only.
         </p>
       </div>
@@ -194,18 +196,33 @@ function WorkspaceFooter() {
           : status === "anonymous"
             ? "Signed out · sign in to load a business."
             : "Checking session…";
+    const unreachable = status === "unreachable";
     return (
-      <div className="mt-auto rounded-xl border border-dashed border-mist-200 p-2.5 dark:border-white/10">
-        <p className="truncate text-caption font-bold">Live workspace</p>
-        <p className="mt-0.5 text-label-sm leading-4 text-ink-400">{note}</p>
+      <div
+        className={cn(
+          "mt-auto rounded-card border p-2.5",
+          unreachable
+            ? "border-warning-line bg-warning-soft"
+            : "border-dashed border-line bg-surface-sunken/60",
+        )}
+      >
+        <p className="truncate text-caption font-bold text-fg">Live workspace</p>
+        <p
+          className={cn(
+            "mt-0.5 text-label leading-4",
+            unreachable ? "text-warning-fg" : "text-fg-subtle",
+          )}
+        >
+          {note}
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="mt-auto rounded-xl border border-dashed border-mist-200 p-2.5 dark:border-white/10">
-      <p className="truncate text-caption font-bold">{business.name}</p>
-      <p className="mt-0.5 text-label-sm leading-4 text-ink-400">
+    <div className="mt-auto rounded-card border border-dashed border-line bg-surface-sunken/60 p-2.5">
+      <p className="truncate text-caption font-bold text-fg">{business.name}</p>
+      <p className="mt-0.5 text-label leading-4 text-fg-subtle">
         Demo business · figures & AI activity are simulated.
       </p>
     </div>
@@ -219,7 +236,7 @@ export function Sidebar() {
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-cyan-500 text-white">
           <Cpu className="h-4 w-4" />
         </span>
-        <span className="text-body-sm font-bold tracking-wide text-ink-950 dark:text-white">
+        <span className="text-body-sm font-bold tracking-wide text-fg">
           MUSE SPARK
         </span>
       </Link>

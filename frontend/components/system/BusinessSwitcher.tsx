@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useSession } from "@/lib/store/auth";
+import { Select } from "./controls";
 
 /**
  * Authenticated business context switcher (Stage 7.2).
@@ -37,7 +38,7 @@ export function BusinessSwitcher() {
       <span
         role="status"
         title="Your account has no business memberships"
-        className="hidden max-w-[220px] truncate px-2 text-[12px] text-ink-400 sm:block dark:text-slate-400"
+        className="hidden max-w-[220px] truncate px-2 text-caption text-fg-subtle sm:block"
       >
         No business access — ask an operator for a grant.
       </span>
@@ -50,7 +51,7 @@ export function BusinessSwitcher() {
     return (
       <span
         title={businesses[0]}
-        className="hidden max-w-[220px] truncate px-2 text-[13px] font-medium text-ink-700 sm:block dark:text-slate-200"
+        className="hidden max-w-[220px] truncate px-2 text-body-sm font-medium text-fg sm:block"
       >
         {label(businesses[0])}
       </span>
@@ -58,18 +59,18 @@ export function BusinessSwitcher() {
   }
 
   return (
-    <select
+    <Select
       aria-label="Select business"
       title="Select business"
       value={currentBusinessId ?? ""}
       onChange={(e) => selectBusiness(e.target.value)}
-      className="h-9 max-w-[220px] truncate rounded-[10px] border border-mist-200 bg-mist-50 px-2 text-[13px] text-ink-700 outline-none hover:border-brand-200 dark:border-white/10 dark:bg-white/5 dark:text-slate-200"
+      className="h-9 w-auto max-w-[220px] truncate bg-surface-sunken text-body-sm text-fg hover:border-brand/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
     >
       {businesses.map((id) => (
         <option key={id} value={id}>
           {label(id)}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

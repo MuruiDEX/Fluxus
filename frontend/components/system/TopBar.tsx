@@ -12,7 +12,9 @@ import { isLiveContext, useLiveApprovals } from "@/lib/store/live";
 import { runtimeMode } from "@/lib/runtime-config";
 import { BusinessSwitcher } from "./BusinessSwitcher";
 import { SidebarLinks } from "./Sidebar";
-import { Avatar } from "./badges";
+import { Avatar, Badge } from "./badges";
+import { buttonClass, IconButton } from "./controls";
+import { PrimaryLink } from "./ui";
 import { transition } from "@/lib/motion";
 import { useModalSurface } from "@/lib/use-modal-surface";
 
@@ -52,71 +54,73 @@ export function TopBar() {
 
   return (
     <>
-      <header className="flex h-(--flux-topbar-h) shrink-0 items-center gap-2 border-b border-line bg-white/80 px-3 backdrop-blur sm:gap-3 sm:px-4 lg:px-6 dark:bg-night-900/80">
-        <button
+      <header className="flex h-(--flux-topbar-h) shrink-0 items-center gap-2 border-b border-line bg-surface/80 px-3 backdrop-blur sm:gap-3 sm:px-4 lg:px-6">
+        <IconButton
+          variant="outline"
+          label="Open navigation"
           onClick={() => setMenuOpen(true)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 lg:hidden dark:border-white/10 dark:text-slate-300"
-          aria-label="Open navigation"
+          className="shrink-0 lg:hidden"
         >
           <Menu className="h-4 w-4" />
-        </button>
+        </IconButton>
         <button
           onClick={() => setCommandOpen(true)}
-          className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-[10px] border border-mist-200 bg-mist-50 px-3 text-body-sm text-ink-400 transition-colors hover:border-brand-200 hover:bg-brand-50 dark:border-white/10 dark:bg-white/5 dark:hover:border-white/20"
+          className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-control border border-line bg-surface-sunken px-3 text-body-sm text-fg-muted transition-colors hover:border-brand/40 hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
           <Search className="h-4 w-4 shrink-0" />
           <span className="flex-1 truncate text-left">What do you want to accomplish?</span>
-          <kbd className="hidden rounded border border-mist-200 bg-white px-1.5 py-0.5 text-micro-sm font-semibold text-ink-500 sm:block dark:border-white/10 dark:bg-white/5">
+          <kbd className="hidden rounded border border-line bg-surface px-1.5 py-0.5 text-micro font-semibold text-fg-muted sm:block">
             Ctrl K
           </kbd>
         </button>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <button
+          <IconButton
+            variant="outline"
+            label="Toggle theme"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
-            aria-label="Toggle theme"
           >
             <Sun className="hidden h-4 w-4 dark:block" />
             <Moon className="h-4 w-4 dark:hidden" />
-          </button>
+          </IconButton>
           <Link
             href="/approvals"
-            className="relative flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+            className={buttonClass({ variant: "outline", iconOnly: true })}
             aria-label="Approvals"
           >
             <Bell className="h-4 w-4" />
             {pending > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-micro-sm font-bold text-white">
+              <Badge
+                tone="danger"
+                size="xs"
+                className="absolute -right-1 -top-1 h-4 min-w-4 justify-center px-1 py-0 leading-none shadow-card"
+              >
                 {pending}
-              </span>
+              </Badge>
             )}
           </Link>
-          <Link
-            href="/projects/new"
-            className="hidden h-9 items-center gap-1.5 rounded-[10px] bg-gradient-to-r from-brand-500 to-sky-400 px-3.5 text-body-sm font-semibold text-white shadow-card transition-opacity hover:opacity-90 sm:flex"
-          >
+          <PrimaryLink href="/projects/new" className="hidden sm:inline-flex">
             <Plus className="h-4 w-4" /> New Project
-          </Link>
+          </PrimaryLink>
           <Avatar name={displayName} hue={217} />
           <BusinessSwitcher />
           {status === "authenticated" && user ? (
-            <button
+            <IconButton
+              variant="outline"
+              label="Log out"
+              title={`Log out ${user.email}`}
               onClick={async () => {
                 await logout();
                 router.push("/login");
               }}
-              title={`Log out ${user.email}`}
-              aria-label="Log out"
-              className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
             >
               <LogOut className="h-4 w-4" />
-            </button>
+            </IconButton>
           ) : (
             status !== "unknown" && (
               <Link
                 href="/login"
                 aria-label="Log in"
-                className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-mist-200 text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:text-slate-300 dark:hover:bg-white/5"
+                className={buttonClass({ variant: "outline", iconOnly: true })}
               >
                 <LogIn className="h-4 w-4" />
               </Link>
@@ -131,7 +135,7 @@ export function TopBar() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-night-950/50 lg:hidden"
+            className="fixed inset-0 z-50 bg-overlay lg:hidden"
             onClick={() => setMenuOpen(false)}
           >
             <motion.div
@@ -144,13 +148,18 @@ export function TopBar() {
               role="dialog"
               aria-modal="true"
               aria-label="Navigation"
-              className="flex h-full w-[260px] flex-col gap-4 overflow-y-auto bg-white px-3 py-4 dark:bg-night-900"
+              className="flex h-full w-[260px] flex-col gap-4 overflow-y-auto bg-surface px-3 py-4"
             >
               <div className="flex items-center justify-between px-2">
-                <span className="text-body-sm font-bold tracking-wide">MUSE SPARK</span>
-                <button onClick={() => setMenuOpen(false)} aria-label="Close navigation" className="rounded-md p-1">
-                  <X className="h-4 w-4 text-ink-500" />
-                </button>
+                <span className="text-body-sm font-bold tracking-wide text-fg">MUSE SPARK</span>
+                <IconButton
+                  variant="ghost"
+                  size="sm"
+                  label="Close navigation"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <X className="h-4 w-4" />
+                </IconButton>
               </div>
               <div onClick={() => setMenuOpen(false)}>
                 <SidebarLinks />

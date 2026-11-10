@@ -57,7 +57,7 @@ export function CommandBar() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-start justify-center bg-night-950/60 px-4 pt-[12vh] backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-overlay px-4 pt-[12vh] backdrop-blur-sm"
           onClick={() => setCommandOpen(false)}
         >
           <motion.div
@@ -72,7 +72,7 @@ export function CommandBar() {
             aria-label="Command bar"
             className="bg-command-glow w-full max-w-xl overflow-hidden rounded-2xl border border-white/10 shadow-pop"
           >
-            <div className="flex items-center gap-2 border-b border-white/10 px-4">
+            <div className="flex items-center gap-2 border-b border-white/10 px-4 focus-within:ring-1 focus-within:ring-inset focus-within:ring-sky-400/40">
               <Search className="h-4 w-4 text-slate-400" />
               <input
                 autoFocus
@@ -82,13 +82,17 @@ export function CommandBar() {
                   if (e.key === "Enter" && value.trim()) go(value.trim());
                 }}
                 placeholder="What do you want to accomplish?"
-                className="h-12 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-slate-400"
+                className="h-12 flex-1 bg-transparent text-body text-white outline-none placeholder:text-slate-400"
               />
-              <kbd className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+              <kbd className="rounded border border-white/15 px-1.5 py-0.5 text-micro font-semibold text-slate-300">
                 Ctrl K
               </kbd>
-              <button onClick={() => setCommandOpen(false)} aria-label="Close">
-                <X className="h-4 w-4 text-slate-400 hover:text-white" />
+              <button
+                onClick={() => setCommandOpen(false)}
+                aria-label="Close"
+                className="rounded-control p-1 text-slate-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300"
+              >
+                <X className="h-4 w-4" />
               </button>
             </div>
             <div className="flex gap-1.5 overflow-x-auto px-4 pt-3">
@@ -96,7 +100,7 @@ export function CommandBar() {
                 <button
                   key={t}
                   onClick={() => setTab(t)}
-                  className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors ${
+                  className={`whitespace-nowrap rounded-full px-2.5 py-1 text-caption font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300 ${
                     tab === t ? "bg-sky-400/20 text-sky-200" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
@@ -111,22 +115,22 @@ export function CommandBar() {
                   <button
                     key={s.label}
                     onClick={() => go(s.label)}
-                    className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                    className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300 ${
                       i === 0 ? "bg-brand-500/90 text-white" : "text-slate-200 hover:bg-white/5"
                     }`}
                   >
                     <s.icon className="h-4 w-4 shrink-0 opacity-80" />
-                    <span className="flex-1 text-[13.5px] font-medium">{s.label}</span>
-                    <ArrowRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70" />
+                    <span className="flex-1 text-body-sm font-medium">{s.label}</span>
+                    <ArrowRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
                   </button>
                 ))}
               {value.trim() && (
                 <button
                   onClick={() => go(value.trim())}
-                  className="flex items-center gap-3 rounded-xl border border-dashed border-white/20 px-3 py-2.5 text-left text-sky-200 hover:bg-white/5"
+                  className="flex items-center gap-3 rounded-xl border border-dashed border-white/20 px-3 py-2.5 text-left text-sky-200 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300"
                 >
                   <Sparkles className="h-4 w-4" />
-                  <span className="text-[13px]">Start Team Lead flow for “{value.trim()}”</span>
+                  <span className="text-body-sm">Start Team Lead flow for “{value.trim()}”</span>
                 </button>
               )}
             </div>
