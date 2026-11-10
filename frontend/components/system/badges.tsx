@@ -1,16 +1,85 @@
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import type { AgentStatus, TaskStatus } from "@/lib/domain/types";
 
-const agentStyles: Record<AgentStatus, string> = {
-  available: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  thinking: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300",
-  working: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-sky-300",
-  waiting_dependency: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  waiting_approval: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
-  reviewing: "bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300",
-  completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  failed: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
-  escalated: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+/**
+ * Generic semantic badge.
+ *
+ * Tones are the only status palette the app needs: every colour resolves
+ * through the Slice 1 semantic tokens, so light and dark mode stay in one
+ * definition. `xs` is the micro uppercase pill (environment badges) and `sm`
+ * is the label-size status pill used by the domain badges below.
+ */
+export type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info" | "brand";
+export type BadgeSize = "xs" | "sm";
+
+const badgeTones: Record<BadgeTone, string> = {
+  neutral: "border-line bg-surface-sunken text-fg-muted",
+  success: "border-success-line bg-success-soft text-success-fg",
+  warning: "border-warning-line bg-warning-soft text-warning-fg",
+  danger: "border-danger-line bg-danger-soft text-danger-fg",
+  info: "border-info-line bg-info-soft text-info-fg",
+  brand: "border-brand-soft-hover bg-brand-soft text-brand",
+};
+
+const badgeSizes: Record<BadgeSize, string> = {
+  xs: "px-2 py-0.5 text-micro font-bold uppercase tracking-wide",
+  sm: "px-2 py-0.5 text-label font-medium",
+};
+
+export function badgeClass({
+  tone = "neutral",
+  size = "sm",
+  className,
+}: {
+  tone?: BadgeTone;
+  size?: BadgeSize;
+  className?: string;
+} = {}) {
+  return cn(
+    "inline-flex items-center gap-1.5 rounded-full border",
+    badgeSizes[size],
+    badgeTones[tone],
+    className,
+  );
+}
+
+export function Badge({
+  tone = "neutral",
+  size = "sm",
+  className,
+  title,
+  style,
+  children,
+}: {
+  tone?: BadgeTone;
+  size?: BadgeSize;
+  className?: string;
+  title?: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <span title={title} style={style} className={badgeClass({ tone, size, className })}>
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Domain statuses map onto the shared tones. Labels stay visible, so colour is
+ * never the only cue; the mapping only replaces the old raw palette classes.
+ */
+const agentTones: Record<AgentStatus, BadgeTone> = {
+  available: "success",
+  thinking: "brand",
+  working: "info",
+  waiting_dependency: "warning",
+  waiting_approval: "warning",
+  reviewing: "info",
+  completed: "success",
+  failed: "danger",
+  escalated: "danger",
 };
 
 const agentLabels: Record<AgentStatus, string> = {
@@ -25,14 +94,14 @@ const agentLabels: Record<AgentStatus, string> = {
   escalated: "Escalated",
 };
 
-const taskStyles: Record<TaskStatus, string> = {
-  not_started: "bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300",
-  working: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-sky-300",
-  waiting_dependency: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  waiting_assets: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  waiting_approval: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
-  completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  failed: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+const taskTones: Record<TaskStatus, BadgeTone> = {
+  not_started: "neutral",
+  working: "info",
+  waiting_dependency: "warning",
+  waiting_assets: "warning",
+  waiting_approval: "warning",
+  completed: "success",
+  failed: "danger",
 };
 
 const taskLabels: Record<TaskStatus, string> = {
@@ -48,29 +117,20 @@ const taskLabels: Record<TaskStatus, string> = {
 export function AgentStatusBadge({ status, live }: { status: AgentStatus; live?: boolean }) {
   const active = status === "working" || status === "thinking";
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-label-sm font-medium",
-        agentStyles[status],
+    <Badge tone={agentTones[status]}>
+      {live && active && (
+        <span
+          aria-hidden="true"
+          className="animate-pulse-dot h-1.5 w-1.5 rounded-full bg-current"
+        />
       )}
-    >
-      {live && active && <span className="animate-pulse-dot h-1.5 w-1.5 rounded-full bg-current" />}
       {agentLabels[status]}
-    </span>
+    </Badge>
   );
 }
 
 export function TaskStatusBadge({ status }: { status: TaskStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-label-sm font-medium",
-        taskStyles[status],
-      )}
-    >
-      {taskLabels[status]}
-    </span>
-  );
+  return <Badge tone={taskTones[status]}>{taskLabels[status]}</Badge>;
 }
 
 export function Avatar({ name, hue, size = 28 }: { name: string; hue: number; size?: number }) {

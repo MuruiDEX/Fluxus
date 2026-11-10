@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { Badge } from "@/components/system/badges";
 import { Button, buttonClass, type ButtonBaseProps } from "@/components/system/controls";
 
 /**
@@ -40,35 +41,60 @@ export function PageHeader({
 
 export function DemoBadge() {
   return (
-    <span
+    <Badge
+      tone="brand"
+      size="xs"
       title="Demo business: figures and AI activity are simulated, not real business activity or integrations."
       // The size token owns font-size; leading must follow the surrounding line box.
       style={{ lineHeight: "inherit" }}
-      className="rounded-full border border-dashed border-brand-200 bg-brand-50 px-2 py-0.5 text-micro font-bold uppercase tracking-wide text-brand-600 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-sky-300"
+      className="border-dashed"
     >
       Demo · simulated
-    </span>
+    </Badge>
   );
 }
 
 export function LiveBadge() {
   return (
-    <span
+    <Badge
+      tone="success"
+      size="xs"
       title="Live business: data comes from the connected backend for your selected business."
       // The size token owns font-size; leading must follow the surrounding line box.
       style={{ lineHeight: "inherit" }}
-      className="rounded-full border border-emerald-200 bg-success-soft px-2 py-0.5 text-micro font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-300"
     >
       Live · server
-    </span>
+    </Badge>
   );
 }
 
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
+export type CardVariant = "default" | "interactive";
+
+/**
+ * `default` keeps the historical surface every page already relies on.
+ * `interactive` adds the hover lift the linked project/agent/marketplace grids
+ * applied by hand; the wrapping `<Link>` still owns focus and navigation.
+ * Variant classes come before `className`, so caller overrides keep winning.
+ */
+const cardVariants: Record<CardVariant, string> = {
+  default: "",
+  interactive: "transition-transform duration-200 hover:-translate-y-0.5",
+};
+
+export function Card({
+  variant = "default",
+  className,
+  children,
+}: {
+  variant?: CardVariant;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <div
       className={cn(
         "rounded-card border border-line bg-surface shadow-card",
+        cardVariants[variant],
         className,
       )}
     >

@@ -12,6 +12,18 @@ import {
   buttonClass,
 } from "@/components/system/controls";
 import {
+  AgentStatusBadge,
+  Badge,
+  TaskStatusBadge,
+  badgeClass,
+  type BadgeTone,
+} from "@/components/system/badges";
+import {
+  Card,
+  DemoBadge,
+  LiveBadge,
+} from "@/components/system/ui";
+import {
   FieldError,
   FieldGroup,
   FieldHelp,
@@ -363,5 +375,193 @@ describe("cn() merging for controls", () => {
     expect(merged).not.toContain("h-10");
     expect(cn("text-body-sm", "text-fg")).toBe("text-body-sm text-fg");
     expect(cn("border border-line", "border-danger")).toBe("border border-danger");
+  });
+});
+
+describe("Card", () => {
+  const classesOf = (markup: string) => markup.match(/class="([^"]*)"/)?.[1] ?? "";
+
+  it("preserves the historical default surface", () => {
+    const markup = html(<Card>Body</Card>);
+    const classes = classesOf(markup);
+    expect(classes).toContain("rounded-card");
+    expect(classes).toContain("border border-line");
+    expect(classes).toContain("bg-surface");
+    expect(classes).toContain("shadow-card");
+    expect(classes).not.toContain("hover:-translate-y-0.5");
+    expect(markup).toContain("Body");
+  });
+
+  it("adds the hover lift only for the interactive variant", () => {
+    const markup = html(<Card variant="interactive">Body</Card>);
+    expect(markup).toContain("transition-transform");
+    expect(markup).toContain("hover:-translate-y-0.5");
+    // Interaction still belongs to the wrapping link, not the surface.
+    expect(markup).not.toContain("tabindex");
+    expect(markup).not.toContain("role=");
+  });
+
+  it("applies variant classes before caller overrides", () => {
+    const markup = html(
+      <Card variant="interactive" className="bg-office-grid p-4">
+        Body
+      </Card>,
+    );
+    expect(markup).toContain("bg-office-grid");
+    expect(markup).toContain("p-4");
+    expect(markup).toContain("hover:-translate-y-0.5");
+    expect(markup).toContain("rounded-card");
+
+    const merged = cn("rounded-card border border-line bg-surface shadow-card", "", "bg-office-grid p-4");
+    expect(merged).toContain("bg-office-grid");
+    expect(merged).not.toContain("bg-surface");
+    expect(merged).toContain("shadow-card");
+  });
+});
+
+describe("Badge", () => {
+  const tonePairs: Record<BadgeTone, [string, string]> = {
+    neutral: ["bg-surface-sunken", "text-fg-muted"],
+    success: ["bg-success-soft", "text-success-fg"],
+    warning: ["bg-warning-soft", "text-warning-fg"],
+    danger: ["bg-danger-soft", "text-danger-fg"],
+    info: ["bg-info-soft", "text-info-fg"],
+    brand: ["bg-brand-soft", "text-brand"],
+  };
+
+  for (const tone of Object.keys(tonePairs) as BadgeTone[]) {
+    it(`renders the ${tone} tone on semantic tokens`, () => {
+      const [surface, ink] = tonePairs[tone];
+      const markup = html(<Badge tone={tone}>{tone}</Badge>);
+      expect(markup).toContain(surface);
+      expect(markup).toContain(ink);
+      expect(markup).toContain("rounded-full");
+      expect(markup).toContain(tone);
+    });
+  }
+
+  it("exposes the micro and label size contracts", () => {
+    const xs = html(<Badge size="xs">Tag</Badge>);
+    expect(xs).toContain("text-micro");
+    expect(xs).not.toContain("text-label");
+
+    const sm = html(<Badge size="sm">Tag</Badge>);
+    expect(sm).toContain("text-label");
+    expect(sm).not.toContain("text-micro");
+  });
+
+  it("lets callers override the tone without losing the shape", () => {
+    const markup = html(
+      <Badge tone="danger" className="bg-surface">
+        Tag
+      </Badge>,
+    );
+    expect(markup).toContain("bg-surface");
+    expect(markup).not.toContain("bg-danger-soft");
+    expect(markup).toContain("border-danger-line");
+    expect(markup).toContain("rounded-full");
+  });
+
+  it("forwards a tooltip and inline style without becoming interactive", () => {
+    const markup = html(
+      <Badge tone="brand" title="Context" style={{ lineHeight: "inherit" }}>
+        Tag
+      </Badge>,
+    );
+    expect(markup).toContain('title="Context"');
+    expect(markup).toContain("line-height:inherit");
+    expect(markup).not.toContain("tabindex");
+    expect(markup).not.toContain("role=");
+  });
+
+  it("builds the same class list through badgeClass", () => {
+    const merged = badgeClass({ tone: "success", size: "xs", className: "border-dashed" });
+    expect(merged).toContain("bg-success-soft");
+    expect(merged).toContain("text-micro");
+    expect(merged).toContain("border-dashed");
+  });
+});
+
+describe("domain status badges", () => {
+  const agentCases = [
+    ["available", "Available", "bg-success-soft"],
+    ["thinking", "Thinking", "bg-brand-soft"],
+    ["working", "Working", "bg-info-soft"],
+    ["waiting_dependency", "Waiting for dependency", "bg-warning-soft"],
+    ["waiting_approval", "Waiting for approval", "bg-warning-soft"],
+    ["reviewing", "Reviewing", "bg-info-soft"],
+    ["completed", "Completed", "bg-success-soft"],
+    ["failed", "Failed", "bg-danger-soft"],
+    ["escalated", "Escalated", "bg-danger-soft"],
+  ] as const;
+
+  const taskCases = [
+    ["not_started", "Not started", "bg-surface-sunken"],
+    ["working", "Working", "bg-info-soft"],
+    ["waiting_dependency", "Waiting for dependency", "bg-warning-soft"],
+    ["waiting_assets", "Waiting for assets", "bg-warning-soft"],
+    ["waiting_approval", "Waiting for approval", "bg-warning-soft"],
+    ["completed", "Completed", "bg-success-soft"],
+    ["failed", "Failed", "bg-danger-soft"],
+  ] as const;
+
+  it("keeps every agent label visible on its semantic tone", () => {
+    for (const [status, label, tone] of agentCases) {
+      const markup = html(<AgentStatusBadge status={status} />);
+      expect(markup).toContain(label);
+      expect(markup).toContain(tone);
+      expect(markup).not.toMatch(/\b(?:emerald|violet|blue|amber|orange|cyan|red|slate)-\d/);
+    }
+  });
+
+  it("keeps every task label visible on its semantic tone", () => {
+    for (const [status, label, tone] of taskCases) {
+      const markup = html(<TaskStatusBadge status={status} />);
+      expect(markup).toContain(label);
+      expect(markup).toContain(tone);
+      expect(markup).not.toMatch(/\b(?:emerald|violet|blue|amber|orange|cyan|red|slate)-\d/);
+    }
+  });
+
+  it("marks the live pulse dot decorative and only for active agent states", () => {
+    const working = html(<AgentStatusBadge status="working" live />);
+    expect(working).toContain("animate-pulse-dot");
+    expect(working).toContain('aria-hidden="true"');
+
+    expect(html(<AgentStatusBadge status="available" live />)).not.toContain("animate-pulse-dot");
+    expect(html(<AgentStatusBadge status="working" />)).not.toContain("animate-pulse-dot");
+  });
+});
+
+describe("environment badges", () => {
+  it("keeps the demo and live labels, tooltips and micro size", () => {
+    const demo = html(<DemoBadge />);
+    expect(demo).toContain("Demo · simulated");
+    expect(demo).toContain("Demo business:");
+    expect(demo).toContain("border-dashed");
+    expect(demo).toContain("text-micro");
+    expect(demo).toContain("line-height:inherit");
+
+    const live = html(<LiveBadge />);
+    expect(live).toContain("Live · server");
+    expect(live).toContain("Live business:");
+    expect(live).toContain("bg-success-soft");
+    expect(live).toContain("text-micro");
+    expect(live).toContain("line-height:inherit");
+  });
+});
+
+describe("card and badge primitives stay Server-Component friendly", () => {
+  const read = (file: string) => readFileSync(path.join(process.cwd(), file), "utf8");
+
+  it("does not declare a client boundary, import hooks or create a cycle", () => {
+    for (const file of ["components/system/ui.tsx", "components/system/badges.tsx"]) {
+      const source = read(file);
+      expect(source, file).not.toContain('"use client"');
+      expect(source, file).not.toContain("useId");
+      expect(source, file).not.toContain("useState");
+      expect(source, file).not.toContain("useEffect");
+    }
+    expect(read("components/system/badges.tsx")).not.toContain("@/components/system/ui");
   });
 });

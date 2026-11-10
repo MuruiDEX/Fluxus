@@ -208,3 +208,63 @@ describe("typography tokens", () => {
     }
   });
 });
+
+describe("card and badge primitives", () => {
+  it("maps every badge tone onto the semantic status tokens", () => {
+    const badges = read("components/system/badges.tsx");
+    const start = badges.indexOf("const badgeTones");
+    const end = badges.indexOf("const badgeSizes", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const toneBlock = badges.slice(start, end);
+    const tonePairs: Record<string, [string, string]> = {
+      neutral: ["bg-surface-sunken", "text-fg-muted"],
+      success: ["bg-success-soft", "text-success-fg"],
+      warning: ["bg-warning-soft", "text-warning-fg"],
+      danger: ["bg-danger-soft", "text-danger-fg"],
+      info: ["bg-info-soft", "text-info-fg"],
+      brand: ["bg-brand-soft", "text-brand"],
+    };
+    for (const [tone, [surface, ink]] of Object.entries(tonePairs)) {
+      expect(toneBlock, tone).toContain(surface);
+      expect(toneBlock, tone).toContain(ink);
+    }
+  });
+
+  it("removes the raw status palette from the badge module", () => {
+    expect(read("components/system/badges.tsx")).not.toMatch(
+      /\b(?:emerald|violet|blue|amber|orange|cyan|red|slate)-\d{2,3}\b/,
+    );
+  });
+
+  it("keeps Card on the historical surface with only the accepted variants", () => {
+    const ui = read("components/system/ui.tsx");
+    expect(ui).toContain('"rounded-card border border-line bg-surface shadow-card"');
+
+    const start = ui.indexOf("const cardVariants");
+    const end = ui.indexOf("export function Card", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const variantBlock = ui.slice(start, end);
+    expect(variantBlock).toContain("default:");
+    expect(variantBlock).toContain("interactive:");
+    for (const deferred of ["elevated", "subtle", "outlined"]) {
+      expect(variantBlock, deferred).not.toContain(deferred);
+    }
+  });
+
+  it("keeps variant classes ahead of caller overrides", () => {
+    const ui = read("components/system/ui.tsx");
+    const cardStart = ui.indexOf("export function Card");
+    const callStart = ui.indexOf("cn(", cardStart);
+    const callEnd = ui.indexOf(")", callStart);
+    const classCall = ui.slice(callStart, callEnd);
+
+    expect(classCall.indexOf("cardVariants[variant]")).toBeGreaterThan(-1);
+    expect(classCall.indexOf("cardVariants[variant]")).toBeLessThan(
+      classCall.indexOf("className"),
+    );
+  });
+});
