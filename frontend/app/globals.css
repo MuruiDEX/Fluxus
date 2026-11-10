@@ -4,6 +4,7 @@
 
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
   /* MUSE SPARK — reference-extracted tokens */
   --color-ink-950: #0f1e3d;
@@ -36,161 +37,250 @@
   --color-night-800: #14224a;
 
   --radius-card: 1rem;
-  --radius-panel: 0.75rem;
   --radius-control: 0.625rem;
 
   --shadow-card: 0 1px 2px rgba(16, 24, 64, 0.06), 0 8px 24px -12px rgba(37, 99, 235, 0.18);
   --shadow-pop: 0 12px 40px -12px rgba(15, 30, 61, 0.28);
 
   /*
-   * Typography roles. Each size is the value already used by the shared
-   * primitives, so adopting a role is a rename, not a re-layout. Line heights
-   * are explicit so text does not accidentally inherit a heading's leading;
-   * weight stays at the call site because the same size serves badges (600/700)
-   * and body copy (400).
+   * Canonical typography roles (10). These are the only sizes new code should
+   * use. Line heights are explicit so text never accidentally inherits a
+   * heading's leading.
    */
   --text-micro: 10.5px;
-  --text-micro--line-height: 1.5;
-  --text-micro-sm: 10px;
-  --text-micro-sm--line-height: 1.5;
+  --text-micro--line-height: 1.4;
   --text-label: 11.5px;
-  --text-label--line-height: 1.5;
-  --text-label-sm: 11px;
-  --text-label-sm--line-height: 1.5;
+  --text-label--line-height: 1.4;
   --text-caption: 12px;
   --text-caption--line-height: 1.5;
-  --text-small: 12.5px;
-  --text-small--line-height: 1.5;
   --text-body-sm: 13px;
   --text-body-sm--line-height: 1.5;
-  --text-body: 13.5px;
-  --text-body--line-height: 1.5;
-  --text-body-md: 14px;
-  --text-body-md--line-height: 1.5;
+  --text-body: 14px;
+  --text-body--line-height: 1.55;
   --text-body-lg: 15px;
   --text-body-lg--line-height: 1.5;
-  --text-heading-xs: 16px;
-  --text-heading-xs--line-height: 1.5;
-  --text-heading-sm: 18px;
-  --text-heading-sm--line-height: 1.5;
+  --text-heading-sm: 17px;
+  --text-heading-sm--line-height: 1.35;
   --text-heading-md: 20px;
-  /* Fixed 20px role: px keeps inline badges inheriting the 28px title line. */
+  /* Fixed 28px role: inline badges inherit this line box next to a title. */
   --text-heading-md--line-height: 28px;
-  --text-heading-lg: 22px;
-  --text-heading-lg--line-height: 1.5;
-  --text-display-sm: 26px;
-  --text-display-sm--line-height: 1.3;
+  --text-heading-lg: 24px;
+  --text-heading-lg--line-height: 1.25;
+  --text-display: 32px;
+  --text-display--line-height: 1.15;
+
+  /*
+   * Deprecated aliases. They keep every existing utility working while call
+   * sites migrate to the canonical roles above. Do not add new consumers.
+   */
+  --text-micro-sm: var(--text-micro);
+  --text-micro-sm--line-height: var(--text-micro--line-height);
+  --text-label-sm: var(--text-label);
+  --text-label-sm--line-height: var(--text-label--line-height);
+  --text-small: var(--text-caption);
+  --text-small--line-height: var(--text-caption--line-height);
+  --text-body-md: var(--text-body);
+  --text-body-md--line-height: var(--text-body--line-height);
+  --text-heading-xs: var(--text-heading-sm);
+  --text-heading-xs--line-height: var(--text-heading-sm--line-height);
+  --text-display-sm: var(--text-display);
+  --text-display-sm--line-height: var(--text-display--line-height);
 }
 
 /*
- * Semantic layer. The raw ink/mist/brand/night scales above stay the source
- * of truth for hue; these tokens name the role so a surface, border or status
- * has exactly one definition in light and dark mode. `@theme inline` keeps the
- * utility pointing at the runtime variable, which is what lets `.dark` switch
- * it without a second set of `dark:` classes at every call site.
+ * Semantic layer. The raw ink/mist/brand/night scales above stay the source of
+ * truth for hue; these tokens name the role so a surface, border or status has
+ * exactly one definition in light and dark mode. `@theme inline` keeps the
+ * utility pointing at the runtime variable, which lets `.dark` switch it
+ * without a second set of `dark:` classes at every call site.
  */
 @theme inline {
   --color-canvas: var(--flux-canvas);
   --color-surface: var(--flux-surface);
   --color-surface-raised: var(--flux-surface-raised);
   --color-surface-sunken: var(--flux-surface-sunken);
+  --color-surface-hover: var(--flux-surface-hover);
+  --color-surface-selected: var(--flux-surface-selected);
+  --color-surface-inverse: var(--flux-surface-inverse);
+  --color-overlay: var(--flux-overlay);
 
+  --color-line-subtle: var(--flux-line-subtle);
   --color-line: var(--flux-line);
   --color-line-strong: var(--flux-line-strong);
 
   --color-fg: var(--flux-fg);
   --color-fg-muted: var(--flux-fg-muted);
   --color-fg-subtle: var(--flux-fg-subtle);
+  --color-fg-inverse: var(--flux-fg-inverse);
 
+  /* Brand split: `brand` is text/icon ink, `brand-solid` is an action fill. */
   --color-brand: var(--flux-brand);
   --color-brand-hover: var(--flux-brand-hover);
+  --color-brand-solid: var(--flux-brand-solid);
+  --color-brand-solid-hover: var(--flux-brand-solid-hover);
   --color-brand-soft: var(--flux-brand-soft);
+  --color-brand-soft-hover: var(--flux-brand-soft-hover);
+  --color-on-brand: var(--flux-on-brand);
 
   --color-success: var(--flux-success);
   --color-success-soft: var(--flux-success-soft);
+  --color-success-fg: var(--flux-success-fg);
+  --color-success-bg: var(--flux-success-bg);
+  --color-success-line: var(--flux-success-line);
   --color-warning: var(--flux-warning);
   --color-warning-soft: var(--flux-warning-soft);
+  --color-warning-fg: var(--flux-warning-fg);
+  --color-warning-bg: var(--flux-warning-bg);
+  --color-warning-line: var(--flux-warning-line);
   --color-danger: var(--flux-danger);
   --color-danger-soft: var(--flux-danger-soft);
+  --color-danger-fg: var(--flux-danger-fg);
+  --color-danger-bg: var(--flux-danger-bg);
+  --color-danger-line: var(--flux-danger-line);
   --color-info: var(--flux-info);
   --color-info-soft: var(--flux-info-soft);
+  --color-info-fg: var(--flux-info-fg);
+  --color-info-bg: var(--flux-info-bg);
+  --color-info-line: var(--flux-info-line);
 
   --color-focus: var(--flux-focus);
   --color-disabled-bg: var(--flux-disabled-bg);
   --color-disabled-fg: var(--flux-disabled-fg);
+  --color-disabled-line: var(--flux-disabled-line);
+  --color-selection: var(--flux-selection);
 }
 
 :root {
+  color-scheme: light;
+
   --flux-canvas: #f4f7fe;
   --flux-surface: #ffffff;
-  --flux-surface-raised: #f4f7fe;
+  --flux-surface-raised: #f8faff;
   --flux-surface-sunken: #eaf0fb;
+  --flux-surface-hover: #f7f9ff;
+  --flux-surface-selected: #eef4ff;
+  --flux-surface-inverse: #0f1e3d;
+  --flux-overlay: rgba(7, 13, 36, 0.48);
 
+  --flux-line-subtle: #edf2fb;
   --flux-line: #e3eaf6;
   --flux-line-strong: #cdd9ee;
 
   --flux-fg: #0f1e3d;
   --flux-fg-muted: #5b6b8c;
-  --flux-fg-subtle: #5f7096;
+  --flux-fg-subtle: #57688f;
+  --flux-fg-inverse: #ffffff;
 
-  --flux-brand: #2563eb;
-  --flux-brand-hover: #1d4ed8;
+  --flux-brand: #1d4ed8;
+  --flux-brand-hover: #1e40af;
+  --flux-brand-solid: #2563eb;
+  --flux-brand-solid-hover: #1d4ed8;
   --flux-brand-soft: #eef4ff;
+  --flux-brand-soft-hover: #e0ecff;
+  --flux-on-brand: #ffffff;
 
-  --flux-success: #047857;
-  --flux-success-soft: #ecfdf5;
-  --flux-warning: #b45309;
-  --flux-warning-soft: #fffbeb;
-  --flux-danger: #dc2626;
-  --flux-danger-soft: #fef2f2;
-  --flux-info: #0369a1;
-  --flux-info-soft: #f0f9ff;
+  --flux-success-fg: #047857;
+  --flux-success-bg: #ecfdf5;
+  --flux-success-line: #a7f3d0;
+  --flux-success: var(--flux-success-fg);
+  --flux-success-soft: var(--flux-success-bg);
 
-  --flux-focus: #2563eb;
+  --flux-warning-fg: #b45309;
+  --flux-warning-bg: #fffbeb;
+  --flux-warning-line: #fde68a;
+  --flux-warning: var(--flux-warning-fg);
+  --flux-warning-soft: var(--flux-warning-bg);
+
+  --flux-danger-fg: #b91c1c;
+  --flux-danger-bg: #fef2f2;
+  --flux-danger-line: #fecaca;
+  --flux-danger: var(--flux-danger-fg);
+  --flux-danger-soft: var(--flux-danger-bg);
+
+  --flux-info-fg: #0369a1;
+  --flux-info-bg: #f0f9ff;
+  --flux-info-line: #bae6fd;
+  --flux-info: var(--flux-info-fg);
+  --flux-info-soft: var(--flux-info-bg);
+
+  --flux-focus: #1d4ed8;
   --flux-disabled-bg: #eaf0fb;
   --flux-disabled-fg: #8291ad;
+  --flux-disabled-line: #dbe4f2;
+  --flux-selection: rgba(37, 99, 235, 0.18);
 
   /* Shell geometry lives in one place; the layout reads these variables. */
   --flux-sidebar-w: 232px;
   --flux-topbar-h: 60px;
   --flux-page-max: 1440px;
 
+  /*
+   * Compatibility aliases for the body element. They deliberately resolve to
+   * the semantic tokens above, so there is no second foreground definition
+   * that can drift from `text-fg`.
+   */
   --background: var(--flux-canvas);
   --foreground: var(--flux-fg);
 }
 
 .dark {
-  --flux-canvas: #070d24;
-  --flux-surface: #0d1730;
-  --flux-surface-raised: #14224a;
-  --flux-surface-sunken: #0a1330;
+  color-scheme: dark;
 
-  --flux-line: rgba(255, 255, 255, 0.1);
+  --flux-canvas: #070d24;
+  --flux-surface: #0c1631;
+  --flux-surface-raised: #121f42;
+  --flux-surface-sunken: #0a1330;
+  --flux-surface-hover: #14224a;
+  --flux-surface-selected: #16264f;
+  --flux-surface-inverse: #f2f6ff;
+  --flux-overlay: rgba(0, 0, 0, 0.62);
+
+  --flux-line-subtle: rgba(255, 255, 255, 0.06);
+  --flux-line: rgba(255, 255, 255, 0.09);
   --flux-line-strong: rgba(255, 255, 255, 0.18);
 
-  --flux-fg: #ffffff;
-  --flux-fg-muted: #94a3b8;
-  --flux-fg-subtle: #8494ad;
+  --flux-fg: #f2f6ff;
+  --flux-fg-muted: #9fb0c9;
+  --flux-fg-subtle: #8b9bb8;
+  --flux-fg-inverse: #0f1e3d;
 
-  --flux-brand: #7dd3fc;
+  --flux-brand: #8ccbff;
   --flux-brand-hover: #a5d8ff;
-  --flux-brand-soft: rgba(37, 99, 235, 0.12);
+  --flux-brand-solid: #2563eb;
+  --flux-brand-solid-hover: #1d4ed8;
+  --flux-brand-soft: #102349;
+  --flux-brand-soft-hover: #16305f;
+  --flux-on-brand: #ffffff;
 
-  --flux-success: #6ee7b7;
-  --flux-success-soft: rgba(16, 185, 129, 0.1);
-  --flux-warning: #fcd34d;
-  --flux-warning-soft: rgba(245, 158, 11, 0.1);
-  --flux-danger: #fca5a5;
-  --flux-danger-soft: rgba(239, 68, 68, 0.1);
-  --flux-info: #7dd3fc;
-  --flux-info-soft: rgba(56, 189, 248, 0.1);
+  --flux-success-fg: #6ee7b7;
+  --flux-success-bg: #0b2a22;
+  --flux-success-line: rgba(16, 185, 129, 0.32);
+  --flux-success: var(--flux-success-fg);
+  --flux-success-soft: var(--flux-success-bg);
 
-  --flux-focus: #38bdf8;
-  --flux-disabled-bg: rgba(255, 255, 255, 0.06);
-  --flux-disabled-fg: #64748b;
+  --flux-warning-fg: #fcd34d;
+  --flux-warning-bg: #2a210c;
+  --flux-warning-line: rgba(245, 158, 11, 0.32);
+  --flux-warning: var(--flux-warning-fg);
+  --flux-warning-soft: var(--flux-warning-bg);
 
-  --background: var(--flux-canvas);
-  --foreground: #e8eefc;
+  --flux-danger-fg: #fca5a5;
+  --flux-danger-bg: #2a1214;
+  --flux-danger-line: rgba(239, 68, 68, 0.32);
+  --flux-danger: var(--flux-danger-fg);
+  --flux-danger-soft: var(--flux-danger-bg);
+
+  --flux-info-fg: #7dd3fc;
+  --flux-info-bg: #0b2233;
+  --flux-info-line: rgba(56, 189, 248, 0.32);
+  --flux-info: var(--flux-info-fg);
+  --flux-info-soft: var(--flux-info-bg);
+
+  --flux-focus: #7dd3fc;
+  --flux-disabled-bg: #0f1a35;
+  --flux-disabled-fg: #6b7a94;
+  --flux-disabled-line: #1b2845;
+  --flux-selection: rgba(125, 211, 252, 0.22);
 }
 
 html,
@@ -205,6 +295,11 @@ body {
   font-size: var(--text-body);
   line-height: var(--text-body--line-height);
   -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--flux-selection);
+  color: var(--flux-fg);
 }
 
 /* thin scrollbars for dense OS panels */
@@ -252,9 +347,10 @@ body {
 }
 
 /* Keyboard users get a visible, consistent focus ring everywhere. Pointer
-   presses do not show it, so the dense UI stays calm. */
+   presses do not show it, so the dense UI stays calm. The ring follows the
+   theme-aware semantic focus token instead of a raw palette step. */
 :where(a, button, input, select, textarea, summary, [role="button"], [role="tab"], [tabindex]):focus-visible {
-  outline: 2px solid var(--color-brand-500);
+  outline: 2px solid var(--flux-focus);
   outline-offset: 2px;
 }
 
