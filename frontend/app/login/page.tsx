@@ -6,6 +6,8 @@ import { Cpu } from "lucide-react";
 import { useSession } from "@/lib/store/auth";
 import { runtimeMode } from "@/lib/runtime-config";
 import { Card, GhostButton, PrimaryButton } from "@/components/system/ui";
+import { Input } from "@/components/system/controls";
+import { FormField } from "@/components/system/form-field";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -71,28 +73,32 @@ export default function LoginPage() {
           Sign in to your business workspace.
         </p>
         <form onSubmit={submit} className="mt-4 flex flex-col gap-3">
-          <label className="text-[12.5px] font-medium">
-            Email
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 h-10 w-full rounded-[10px] border border-mist-200 bg-transparent px-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10"
-            />
-          </label>
-          <label className="text-[12.5px] font-medium">
-            Password
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 h-10 w-full rounded-[10px] border border-mist-200 bg-transparent px-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10"
-            />
-          </label>
+          <FormField id="login-email" label="Email" required>
+            {(control) => (
+              <Input
+                id="login-email"
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                {...control}
+              />
+            )}
+          </FormField>
+          <FormField id="login-password" label="Password" required>
+            {(control) => (
+              <Input
+                id="login-password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                {...control}
+              />
+            )}
+          </FormField>
           {(error || sessionError) && (
             <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[12.5px] text-red-600 dark:bg-red-500/10 dark:text-red-300">
               {error ?? sessionError}

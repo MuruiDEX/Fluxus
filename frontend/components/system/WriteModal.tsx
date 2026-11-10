@@ -4,6 +4,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, X } from "lucide-react";
 import { GhostButton, PrimaryButton } from "@/components/system/ui";
+import {
+  inputClass as canonicalInputClass,
+  textareaClass as canonicalTextareaClass,
+} from "@/components/system/controls";
+import {
+  FieldError,
+  fieldHelpClass,
+  fieldLabelClass,
+} from "@/components/system/form-field";
 import { cn } from "@/lib/cn";
 import type { WritePhase } from "@/lib/store/writes";
 import { useModalSurface } from "@/lib/use-modal-surface";
@@ -18,11 +27,12 @@ import { transition } from "@/lib/motion";
  * While `phase === "saving"` the modal cannot be dismissed at all.
  */
 
-export const inputClass =
-  "h-10 w-full rounded-[10px] border border-mist-200 bg-transparent px-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10";
-
-export const areaClass =
-  "w-full rounded-[10px] border border-mist-200 bg-transparent p-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10";
+/**
+ * Compatibility aliases for existing modal forms. The control styling itself
+ * lives in `controls.tsx`, so these cannot drift from standalone inputs.
+ */
+export const inputClass = canonicalInputClass;
+export const areaClass = canonicalTextareaClass;
 
 export function Field({
   label,
@@ -35,20 +45,16 @@ export function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[12px] font-semibold text-ink-700 dark:text-slate-200">{label}</span>
+      <span className={fieldLabelClass}>{label}</span>
       {children}
-      {hint && <span className="text-[11.5px] text-ink-400">{hint}</span>}
+      {hint && <span className={fieldHelpClass}>{hint}</span>}
     </label>
   );
 }
 
 export function FormError({ message }: { message: string | null }) {
   if (!message) return null;
-  return (
-    <p role="alert" className="text-[12.5px] leading-5 text-red-600 dark:text-red-300">
-      {message}
-    </p>
-  );
+  return <FieldError>{message}</FieldError>;
 }
 
 export function PhaseMessage({ phase, message }: { phase: WritePhase; message: string | null }) {

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 /**
- * Form field scaffolding (Slice 3A).
+ * Shared form field scaffolding.
  *
  * The association contract is explicit rather than injected: the caller owns
  * the control `id` (so it is stable across server and client renders) and
@@ -17,9 +17,9 @@ export type FieldControlAria = {
   "aria-invalid"?: true;
 };
 
-const labelClass = "text-caption font-semibold text-fg";
-const helpClass = "text-label text-fg-muted";
-const errorClass = "text-label font-medium text-danger";
+export const fieldLabelClass = "text-caption font-semibold text-fg";
+export const fieldHelpClass = "text-label text-fg-muted";
+export const fieldErrorClass = "text-label font-medium text-danger";
 
 /** Empty strings and `false` are "no content", not a rendered helper/error. */
 function hasContent(value: ReactNode): boolean {
@@ -34,6 +34,63 @@ function RequiredMark() {
       </span>
       <span className="sr-only"> (required)</span>
     </>
+  );
+}
+
+/**
+ * Canonical field label. Standalone forms (including label-wrapped controls)
+ * can share the exact label/required treatment used by `FormField`.
+ */
+export function FieldLabel({
+  htmlFor,
+  children,
+  required = false,
+  className,
+}: {
+  htmlFor?: string;
+  children: ReactNode;
+  required?: boolean;
+  className?: string;
+}) {
+  return (
+    <label htmlFor={htmlFor} className={cn(fieldLabelClass, className)}>
+      {children}
+      {required && <RequiredMark />}
+    </label>
+  );
+}
+
+/** Help text associated with a control through its `id`. */
+export function FieldHelp({
+  id,
+  children,
+  className,
+}: {
+  id?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <p id={id} className={cn(fieldHelpClass, className)}>
+      {children}
+    </p>
+  );
+}
+
+/** Validation text announced to assistive technology as soon as it appears. */
+export function FieldError({
+  id,
+  children,
+  className,
+}: {
+  id?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <p id={id} role="alert" className={cn(fieldErrorClass, className)}>
+      {children}
+    </p>
   );
 }
 
@@ -72,24 +129,15 @@ export function FormField({
 
   return (
     <div className={cn("flex flex-col gap-1", className)}>
-      <label htmlFor={id} className={labelClass}>
+      <FieldLabel htmlFor={id} required={required}>
         {label}
-        {required && <RequiredMark />}
-      </label>
+      </FieldLabel>
       {children({
         "aria-describedby": describedBy,
         "aria-invalid": showError ? true : undefined,
       })}
-      {showDescription && (
-        <p id={descriptionId} className={helpClass}>
-          {description}
-        </p>
-      )}
-      {showError && (
-        <p id={errorId} role="alert" className={errorClass}>
-          {error}
-        </p>
-      )}
+      {showDescription && <FieldHelp id={descriptionId}>{description}</FieldHelp>}
+      {showError && <FieldError id={errorId}>{error}</FieldError>}
     </div>
   );
 }
@@ -130,21 +178,13 @@ export function FieldGroup({
       aria-describedby={describedBy}
       className={cn("flex min-w-0 flex-col gap-1", className)}
     >
-      <legend className={labelClass}>
+      <legend className={fieldLabelClass}>
         {legend}
         {required && <RequiredMark />}
       </legend>
       <div className="flex flex-col gap-1.5">{children}</div>
-      {showDescription && (
-        <p id={descriptionId} className={helpClass}>
-          {description}
-        </p>
-      )}
-      {showError && (
-        <p id={errorId} role="alert" className={errorClass}>
-          {error}
-        </p>
-      )}
+      {showDescription && <FieldHelp id={descriptionId}>{description}</FieldHelp>}
+      {showError && <FieldError id={errorId}>{error}</FieldError>}
     </fieldset>
   );
 }

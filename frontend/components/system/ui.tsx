@@ -7,6 +7,9 @@ import { Button, buttonClass, type ButtonBaseProps } from "@/components/system/c
 /**
  * Button visuals live in `controls.tsx`; these wrappers keep the historical
  * `PrimaryButton` / `GhostButton` / link API so existing pages are untouched.
+ * `GhostButton` keeps its previous bordered-surface look through the canonical
+ * `secondary` variant; the `ghost` variant is the lower-emphasis, borderless
+ * action for new call sites.
  */
 type ActionButtonProps = Omit<ButtonBaseProps, "variant"> & { children?: ReactNode };
 
@@ -192,7 +195,7 @@ export function PrimaryButton(props: ActionButtonProps) {
 }
 
 export function GhostButton(props: ActionButtonProps) {
-  return <Button variant="ghost" {...props} />;
+  return <Button variant="secondary" {...props} />;
 }
 
 /**
@@ -228,7 +231,7 @@ export function GhostLink({
   className?: string;
 }) {
   return (
-    <Link href={href} className={cn(buttonClass({ variant: "ghost" }), className)}>
+    <Link href={href} className={cn(buttonClass({ variant: "secondary" }), className)}>
       {children}
     </Link>
   );

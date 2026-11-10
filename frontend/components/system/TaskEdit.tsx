@@ -8,10 +8,9 @@ import {
   PhaseMessage,
   SaveFooter,
   WriteModal,
-  areaClass,
-  inputClass,
   parseIntInput,
 } from "@/components/system/WriteModal";
+import { Input, Select, Textarea } from "@/components/system/controls";
 import { PrimaryButton } from "@/components/system/ui";
 import { useLiveAgents } from "@/lib/store/live";
 import { useLiveWrites } from "@/lib/store/writes";
@@ -120,42 +119,31 @@ function TaskEditForm({
       }
     >
       <Field label="Title">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} />
       </Field>
       <Field label="Summary">
-        <textarea
-          value={summary}
-          onChange={(e) => setSummary(e.target.value)}
-          rows={3}
-          className={areaClass}
-        />
+        <Textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={3} />
       </Field>
       <div className="grid grid-cols-2 gap-2.5">
         <Field label="ETA (minutes)" hint="Whole number, 0 or more.">
-          <input
+          <Input
             value={etaMinutes}
             onChange={(e) => setEtaMinutes(e.target.value)}
             inputMode="numeric"
-            className={inputClass}
           />
         </Field>
         <Field label="Gate at (%)" hint="0–100. Empty keeps the server value.">
-          <input
+          <Input
             value={gateAt}
             onChange={(e) => setGateAt(e.target.value)}
             inputMode="numeric"
             placeholder="100"
-            className={inputClass}
           />
         </Field>
       </div>
       <Field label="Owner">
         {agentsReady ? (
-          <select
-            value={ownerAgentId}
-            onChange={(e) => setOwnerAgentId(e.target.value)}
-            className={inputClass}
-          >
+          <Select value={ownerAgentId} onChange={(e) => setOwnerAgentId(e.target.value)}>
             <option value="">Select an agent…</option>
             {agentsSlice.agents
               .filter((a) => a.hired || a.id === task.ownerAgentId)
@@ -165,7 +153,7 @@ function TaskEditForm({
                   {!a.hired ? " (disabled)" : ""}
                 </option>
               ))}
-          </select>
+          </Select>
         ) : agentsSlice.status === "error" ? (
           <p className="text-[12.5px] text-amber-700 dark:text-amber-300">
             Agent list unavailable ({agentsSlice.error ?? "load failed"}) — the current owner is

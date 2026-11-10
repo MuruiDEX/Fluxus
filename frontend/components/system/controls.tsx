@@ -3,43 +3,52 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /**
- * Shared control primitives (Slice 3A).
+ * Shared control primitives.
  *
  * One visual definition per control, so buttons and links cannot drift apart.
- * Every class here stays on the existing design tokens: brand gradients for
- * primary actions, `line`/`surface`/`fg*` for form chrome, and the global
- * focus-visible rule in `app/globals.css` for keyboard focus. Nothing in this
- * file is interactive stateful code, so it renders in Server Components too.
+ * Every class here stays on the Slice 1 semantic tokens: `brand-solid` for
+ * action fills, `fg*` for text, `line*` for borders, `focus` for keyboard
+ * focus, `disabled-*` for inactive controls, and the canonical type scale.
+ * Nothing in this file is interactive stateful code, so it renders in Server
+ * Components too.
  */
 
-export type ButtonVariant = "primary" | "ghost" | "destructive";
-export type ButtonSize = "sm" | "md";
+export type ButtonVariant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
+export type ButtonSize = "sm" | "md" | "lg";
 
 /** Shape shared by every button variant; variant classes add the identity. */
 const buttonBaseClass =
-  "relative inline-flex items-center justify-center gap-1.5 rounded-control text-body-sm transition duration-150 disabled:cursor-not-allowed disabled:opacity-60";
+  "relative inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-control text-body-sm transition-[background-color,border-color,color,box-shadow] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:opacity-60 disabled:shadow-none";
 
 const buttonVariantClass: Record<ButtonVariant, string> = {
-  // Existing primary identity: brand → sky gradient, white label, soft shadow.
+  // Solid action fill. Brand text/accent tokens are intentionally not used
+  // here: text ink and action fill are separate semantic roles.
   primary:
-    "bg-gradient-to-r from-brand-500 to-sky-400 font-semibold text-white shadow-card hover:opacity-90 active:opacity-80",
-  // Existing secondary/ghost identity, unchanged from the pre-slice buttons.
+    "border border-transparent bg-brand-solid font-semibold text-on-brand shadow-card hover:bg-brand-solid-hover active:bg-brand-solid-hover",
+  // The historical GhostButton look: an elevated neutral surface.
+  secondary:
+    "border border-line bg-surface font-medium text-fg hover:bg-surface-hover active:bg-surface-sunken",
+  // Outlined neutral action for secondary placement without a filled surface.
+  outline:
+    "border border-line bg-transparent font-medium text-fg hover:bg-surface-hover active:bg-surface-sunken",
+  // Lowest-emphasis action: no border or fill until hover/focus.
   ghost:
-    "border border-line bg-surface font-medium text-ink-700 hover:bg-mist-100 active:bg-mist-200 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10",
-  // A destructive action needs its own identity; token-based so it follows
-  // both themes instead of hard-coding red values.
+    "border border-transparent bg-transparent font-medium text-fg-muted hover:bg-surface-hover hover:text-fg active:bg-surface-sunken",
+  // Destructive actions keep their own status identity in both themes.
   destructive:
-    "border border-danger/40 bg-danger-soft font-semibold text-danger hover:opacity-90 active:opacity-80",
+    "border border-danger-line bg-danger-soft font-semibold text-danger-fg hover:border-danger/60 active:opacity-80",
 };
 
 const buttonSizeClass: Record<ButtonSize, string> = {
   sm: "h-8 px-2.5",
   md: "h-9 px-3.5",
+  lg: "h-11 px-4",
 };
 
 const iconButtonSizeClass: Record<ButtonSize, string> = {
   sm: "h-8 w-8 p-0",
   md: "h-9 w-9 p-0",
+  lg: "h-11 w-11 p-0",
 };
 
 export function buttonClass({
@@ -133,18 +142,18 @@ export const IconButton = React.forwardRef<
   return <Button ref={ref} iconOnly label={label} {...props} />;
 });
 
-/** Shared form-chrome base: tokens give light/dark and disabled/invalid states. */
+/** Shared form-chrome base: tokens give light/dark, focus, disabled, read-only and invalid states. */
 const controlBaseClass =
-  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-colors placeholder:text-fg-subtle disabled:cursor-not-allowed disabled:bg-disabled-bg disabled:text-disabled-fg aria-invalid:border-danger";
+  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-focus read-only:cursor-default read-only:bg-surface-sunken read-only:text-fg-muted disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg aria-invalid:border-danger aria-invalid:ring-1 aria-invalid:ring-danger/30";
 
 export const inputClass = cn(controlBaseClass, "h-10 px-3");
 
 export const textareaClass = cn(controlBaseClass, "min-h-20 px-3 py-2");
 
-export const selectClass = cn(controlBaseClass, "h-10 px-3 pr-9");
+export const selectClass = cn(controlBaseClass, "h-10 cursor-pointer px-3 pr-9");
 
 export const checkboxClass =
-  "h-4 w-4 shrink-0 cursor-pointer rounded border-line accent-brand disabled:cursor-not-allowed disabled:opacity-60";
+  "h-4 w-4 shrink-0 cursor-pointer rounded border-line align-middle accent-brand-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:outline aria-invalid:outline-2 aria-invalid:outline-offset-2 aria-invalid:outline-danger";
 
 export type InputProps = React.InputHTMLAttributes<HTMLInputElement>;
 export type TextareaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>;
