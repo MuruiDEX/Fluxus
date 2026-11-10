@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { Check, FlaskConical, Star } from "lucide-react";
+import { Badge } from "@/components/system/badges";
 import { Card, GhostButton, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { HireButton, PackInstallButton } from "@/components/system/HireButton";
 import { hireListing, installListing } from "@/lib/hiring";
@@ -63,7 +64,7 @@ function DemoMarketplaceDetail({ slug }: { slug: string }) {
             <h3 className="text-[13px] font-bold">Capabilities</h3>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {item.capabilities.map((c) => (
-                <span key={c} className="rounded-full bg-mist-100 px-2.5 py-1 text-[12.5px] font-medium dark:bg-white/10">{c}</span>
+                <Badge key={c} tone="neutral" size="sm">{c}</Badge>
               ))}
             </div>
             <h3 className="mb-1.5 mt-4 text-[13px] font-bold">Permissions</h3>
@@ -176,7 +177,7 @@ function LiveMarketplaceDetail({ businessId, slug }: { businessId: string; slug:
             <h3 className="text-[13px] font-bold">Capabilities</h3>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {item.capabilities.map((c) => (
-                <span key={c} className="rounded-full bg-mist-100 px-2.5 py-1 text-[12.5px] font-medium dark:bg-white/10">{c}</span>
+                <Badge key={c} tone="neutral" size="sm">{c}</Badge>
               ))}
             </div>
             <h3 className="mb-1.5 mt-4 text-[13px] font-bold">Permissions</h3>
@@ -220,17 +221,12 @@ function PackAgentsCard({ pack }: { pack: Pack }) {
               <p className="text-[13px] font-semibold">{a.name}</p>
               <p className="text-[12px] text-ink-400">{a.role}</p>
             </div>
-            <span
-              className={
-                a.action === "blocked"
-                  ? "rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 dark:bg-red-500/15 dark:text-red-300"
-                  : a.action === "reuse"
-                    ? "rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
-                    : "rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-              }
+            <Badge
+              size="sm"
+              tone={a.action === "blocked" ? "danger" : a.action === "reuse" ? "info" : "success"}
             >
               {a.action === "reuse" ? "Existing" : a.action === "blocked" ? "Disabled" : "Install"}
-            </span>
+            </Badge>
           </div>
         ))}
       </div>
@@ -318,9 +314,9 @@ function LivePackDetail({ businessId, slug }: { businessId: string; slug: string
             <p className="mt-1 text-[12.5px] leading-5 text-ink-500">{pack.description}</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {pack.agents.flatMap((a) => a.capabilities).map((c) => (
-                <span key={c} className="rounded-full bg-mist-100 px-2.5 py-1 text-[12.5px] font-medium dark:bg-white/10">
+                <Badge key={c} tone="neutral" size="sm">
                   {c}
-                </span>
+                </Badge>
               ))}
             </div>
           </Card>

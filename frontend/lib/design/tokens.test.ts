@@ -268,3 +268,92 @@ describe("card and badge primitives", () => {
     );
   });
 });
+
+/**
+ * Phase B: the first page consumers migrated off hand-rolled pills and hover
+ * lifts. These guards keep the adoption from silently regressing back to raw
+ * palette classes or duplicate transforms.
+ */
+describe("page consumers adopt the shared primitives", () => {
+  const projects = read("app/(app)/projects/page.tsx");
+  const agents = read("app/(app)/agents/page.tsx");
+  const marketplace = read("app/(app)/marketplace/page.tsx");
+  const detail = read("app/(app)/marketplace/[slug]/view.tsx");
+
+  it("moves project status pills onto Badge tones", () => {
+    expect(projects).not.toContain("STATUS_CLASS");
+    expect(projects).toMatch(/\bBadge\b[^;]*from "@\/components\/system\/badges"/);
+    expect(projects).toContain("<Badge tone={STATUS_TONE[status.tone]}");
+
+    const start = projects.indexOf("const STATUS_TONE");
+    const end = projects.indexOf("};", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const toneBlock = projects.slice(start, end);
+    const tones: Record<string, string> = {
+      planning: "neutral",
+      active: "brand",
+      review: "warning",
+      done: "success",
+    };
+    for (const [status, tone] of Object.entries(tones)) {
+      expect(toneBlock, status).toContain(`${status}: "${tone}"`);
+    }
+
+    // The label still comes from projectStatusView, never a local literal.
+    expect(projects).toContain("{status.label}");
+    expect(projects).not.toMatch(/\b(?:slate|amber|emerald)-\d{2,3}\b/);
+  });
+
+  it("moves the agent availability pill onto Badge", () => {
+    expect(agents).toContain("<Badge tone=\"neutral\" size=\"xs\">");
+    expect(agents).toContain("\"MARKETPLACE\"");
+    expect(agents).toContain("\"DISABLED\"");
+    expect(agents).not.toContain("text-[10.5px]");
+    expect(agents).not.toContain("bg-mist-100");
+  });
+
+  it("moves both marketplace listing badges onto Badge verbatim", () => {
+    expect(marketplace).not.toContain("bg-violet-");
+    expect(marketplace).not.toContain("text-[10.5px]");
+    // Two listing cards (demo + live) and two badges rendered unchanged.
+    expect((marketplace.match(/<Badge tone="brand" size="sm">/g) ?? []).length).toBe(2);
+    expect((marketplace.match(/\{l\.badge\}/g) ?? []).length).toBe(2);
+    // Filtering still runs on the listing data, not on rendered markup.
+    expect(marketplace).toContain("selectListings(listings, tab, q)");
+  });
+
+  it("moves only the informational pills in the listing detail", () => {
+    expect(detail).not.toContain("bg-mist-100");
+    expect((detail.match(/<Badge\b/g) ?? []).length).toBe(4);
+    // Pack action states map 1:1 onto the semantic tones, labels unchanged.
+    expect(detail).toContain(
+      'tone={a.action === "blocked" ? "danger" : a.action === "reuse" ? "info" : "success"}',
+    );
+    expect(detail).toContain(
+      '? "Existing" : a.action === "blocked" ? "Disabled" : "Install"',
+    );
+    // Action colours were the only palette removed; permission rows stay.
+    expect(detail).not.toMatch(/bg-(?:red|blue|emerald)-100\b/);
+    expect(detail).toContain("bg-emerald-50");
+    expect(detail).toContain("bg-blue-50");
+    expect(detail).toContain("bg-red-50");
+    // Non-pill notes and the action controls are untouched.
+    expect(detail).toContain("Not available for this listing type.");
+    expect(detail).toContain("<HireButton");
+    expect(detail).toContain("<PackInstallButton");
+  });
+
+  it("uses the interactive Card variant without duplicate transforms", () => {
+    for (const [file, source, count] of [
+      ["projects/page.tsx", projects, 1],
+      ["agents/page.tsx", agents, 1],
+      ["marketplace/page.tsx", marketplace, 2],
+      ["marketplace/[slug]/view.tsx", detail, 0],
+    ] as const) {
+      expect(source, file).not.toContain("hover:-translate-y-0.5");
+      expect((source.match(/variant="interactive"/g) ?? []).length, file).toBe(count);
+    }
+  });
+});

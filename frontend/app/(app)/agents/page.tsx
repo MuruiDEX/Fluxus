@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { AgentStatusBadge, Avatar } from "@/components/system/badges";
+import { AgentStatusBadge, Avatar, Badge } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton, SkeletonCard } from "@/components/system/ui";
 import { StaggerGroup, StaggerItem } from "@/components/system/motion";
 import { AgentToggleButton } from "@/components/system/AgentToggle";
@@ -33,7 +33,7 @@ function AgentGrid({
         {agents.map((a) => (
           <StaggerItem key={a.id} className="flex h-full flex-col gap-2">
             <Link href={`/agents/${a.id}`} className="flex-1">
-              <Card className="flex h-full flex-col gap-2 p-4 transition-transform duration-200 hover:-translate-y-0.5">
+              <Card variant="interactive" className="flex h-full flex-col gap-2 p-4">
                 <div className="flex items-center gap-2.5">
                   <Avatar name={a.name} hue={a.avatarHue} size={38} />
                   <div className="min-w-0 flex-1">
@@ -41,9 +41,9 @@ function AgentGrid({
                     <p className="truncate text-[12px] text-ink-400">{a.currentTask ?? "Standing by"}</p>
                   </div>
                 {!a.hired && (
-                  <span className="rounded-full bg-mist-100 px-2 py-0.5 text-[10.5px] font-bold text-ink-500 dark:bg-white/10">
+                  <Badge tone="neutral" size="xs">
                     {live ? "DISABLED" : "MARKETPLACE"}
-                  </span>
+                  </Badge>
                 )}
                 </div>
                 <div className="flex items-center justify-between">

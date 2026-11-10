@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, Search, Star } from "lucide-react";
-import { Avatar } from "@/components/system/badges";
+import { Avatar, Badge } from "@/components/system/badges";
 import {
   Card,
   LiveBadge,
@@ -83,15 +83,15 @@ function DemoMarketplaceView() {
             const done = isPack ? installedSlugs.includes(l.slug) : hiredSlugs.includes(l.slug);
             return (
               <StaggerItem key={l.slug} className="h-full">
-                <Card className="flex h-full flex-col gap-2 p-4 transition-transform duration-200 hover:-translate-y-0.5">
+                <Card variant="interactive" className="flex h-full flex-col gap-2 p-4">
                   <div className="flex items-start justify-between">
                     <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-cyan-500 text-[15px] font-bold text-white">
                       {l.name[0]}
                     </span>
                     {l.badge && (
-                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10.5px] font-bold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                      <Badge tone="brand" size="sm">
                         {l.badge}
-                      </span>
+                      </Badge>
                     )}
                   </div>
                   <p className="text-[14.5px] font-bold">{l.name}</p>
@@ -182,15 +182,15 @@ function LiveMarketplaceView({ businessId }: { businessId: string }) {
           <h2 className="text-[14px] font-bold">Available now ({total})</h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {visible.map((l) => (
-              <Card key={l.slug} className="flex flex-col gap-2 p-4">
+              <Card key={l.slug} variant="interactive" className="flex flex-col gap-2 p-4">
                 <div className="flex items-start justify-between">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-cyan-500 text-[15px] font-bold text-white">
                     {l.name[0]}
                   </span>
                   {l.badge && (
-                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10.5px] font-bold text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+                    <Badge tone="brand" size="sm">
                       {l.badge}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <p className="text-[14.5px] font-bold">{l.name}</p>
