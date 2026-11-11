@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Card, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
 import { ProgressBar } from "@/components/system/badges";
@@ -50,30 +50,138 @@ function MoneyValue({ state, value }: { state: MetricState; value: number }) {
   return <>{money(value)}</>;
 }
 
+function WorkforceSkeleton() {
+  return (
+    <div role="status" aria-label="Loading workforce" className="overflow-x-auto">
+      <table className="w-full text-[12.5px]">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wide text-ink-400">
+            <th className="py-1.5 pr-2">Employee</th>
+            <th className="py-1.5 pr-2 text-right">Done</th>
+            <th className="py-1.5 pr-2 text-right">Avg</th>
+            <th className="py-1.5 pr-2 text-right">Approval</th>
+            <th className="py-1.5 text-right">Rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[0, 1, 2, 3].map((i) => (
+            <tr key={i} className="border-t border-mist-100 dark:border-white/5">
+              <td className="py-2 pr-2"><Skeleton className="h-3 w-24" /></td>
+              <td className="py-2 pr-2"><Skeleton className="ml-auto h-3 w-10" /></td>
+              <td className="py-2 pr-2"><Skeleton className="ml-auto h-3 w-10" /></td>
+              <td className="py-2 pr-2"><Skeleton className="ml-auto h-3 w-10" /></td>
+              <td className="py-2"><Skeleton className="ml-auto h-3 w-10" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProjectBudgetsSkeleton() {
+  return (
+    <div role="status" aria-label="Loading project budgets" className="flex flex-col gap-3">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i}>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-3 w-24 shrink-0" />
+          </div>
+          <Skeleton className="h-1.5 w-full rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const WorkforceSection = memo(function WorkforceSection({
+  businessName,
+}: {
+  businessName?: string;
+}) {
+  const status = useLiveAgentsList((s) => s.status);
+  const agents = useLiveAgentsList((s) => s.agents).filter((agent) => agent.hired);
+  const error = useLiveAgentsList((s) => s.error);
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-[13px] font-bold">Workforce performance</h3>
+        {businessName && (
+          <span className="text-[11.5px] text-ink-400">{businessName}</span>
+        )}
+      </div>
+      {(status === "idle" || status === "loading") && <WorkforceSkeleton />}
+      {status === "error" && (
+        <p role="alert" className="text-[13px] text-red-500">{error}</p>
+      )}
+      {status === "ready" && agents.length === 0 && (
+        <p className="text-[13px] text-ink-400">No hired AI employees yet.</p>
+      )}
+      {agents.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-400">
+                <th className="py-1.5 pr-2">Employee</th>
+                <th className="py-1.5 pr-2 text-right">Done</th>
+                <th className="py-1.5 pr-2 text-right">Avg</th>
+                <th className="py-1.5 pr-2 text-right">Approval</th>
+                <th className="py-1.5 text-right">Rating</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map((agent) => (
+                <tr key={agent.id} className="border-t border-mist-100 dark:border-white/5">
+                  <td className="py-2 pr-2 font-medium">{agent.role}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums">
+                    {agent.performance.completionRate}%
+                  </td>
+                  <td className="py-2 pr-2 text-right tabular-nums">
+                    ~{agent.performance.avgMinutes}m
+                  </td>
+                  <td className="py-2 pr-2 text-right tabular-nums">
+                    {agent.performance.approvalRate}%
+                  </td>
+                  <td className="py-2 text-right tabular-nums">
+                    ★{agent.performance.rating.toFixed(1)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+});
+
 export function LiveAnalytics({ businessId }: { businessId: string }) {
-  const businessSlice = useLiveBusiness();
-  const projectsSlice = useLiveProjects();
-  const agentsSlice = useLiveAgentsList();
-  const usageSlice = useLiveUsage();
+  const business = useLiveBusiness((s) => s.business);
+  const businessStatus = useLiveBusiness((s) => s.status);
+  const businessError = useLiveBusiness((s) => s.error);
+  const projects = useLiveProjects((s) => s.projects);
+  const projectsStatus = useLiveProjects((s) => s.status);
+  const projectsError = useLiveProjects((s) => s.error);
+  const usageStatus = useLiveUsage((s) => s.status);
+  const usageSummary = useLiveUsage((s) => s.summary);
+  const usageError = useLiveUsage((s) => s.error);
 
   useEffect(() => {
-    void businessSlice.load(businessId);
-    void projectsSlice.load(businessId);
-    void agentsSlice.load(businessId);
-    void usageSlice.load({ businessId });
+    void useLiveBusiness.getState().load(businessId);
+    void useLiveProjects.getState().load(businessId);
+    void useLiveAgentsList.getState().load(businessId);
+    void useLiveUsage.getState().load({ businessId });
     return () => {
-      businessSlice.reset();
-      projectsSlice.reset();
-      agentsSlice.reset();
-      usageSlice.reset();
+      useLiveBusiness.getState().reset();
+      useLiveProjects.getState().reset();
+      useLiveAgentsList.getState().reset();
+      useLiveUsage.getState().reset();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
-  const business = businessSlice.business;
-  const projects = projectsSlice.projects;
-  const agents = agentsSlice.agents.filter((agent) => agent.hired);
-  const summary = usageSlice.summary;
+  const summary = usageSummary;
   const byKind = Object.entries(summary.byCallKind).map(([kind, entry]) => ({
     name: CALL_KIND_LABELS[kind] ?? kind,
     confirmed: entry.confirmedCost,
@@ -83,8 +191,8 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
   const totalCommitted = summary.confirmedCost + summary.estimatedCost;
   // Pending shows a skeleton; a failed load shows "—". It must never fall
   // through to the empty summary as $0.00.
-  const usageState = metricState(usageSlice.status);
-  const projectsState = metricState(projectsSlice.status);
+  const usageState = metricState(usageStatus);
+  const projectsState = metricState(projectsStatus);
   const usageFailed = usageState === "unavailable";
   const projectsFailed = projectsState === "unavailable";
 
@@ -96,14 +204,14 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
         sub="Server-side cost, speed and completion data for this business."
       />
 
-      {businessSlice.status === "error" ? (
+      {businessStatus === "error" ? (
         <Card className="p-8 text-center">
           <div role="alert">
             <p className="text-[14px] font-semibold">Couldn&apos;t load analytics</p>
-            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessSlice.error}</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessError}</p>
           </div>
           <div className="mt-3 flex justify-center">
-            <PrimaryButton onClick={() => void businessSlice.load(businessId)}>Retry</PrimaryButton>
+            <PrimaryButton onClick={() => void useLiveBusiness.getState().load(businessId)}>Retry</PrimaryButton>
           </div>
         </Card>
       ) : (
@@ -116,8 +224,8 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
               </span>
               <PrimaryButton
                 onClick={() => {
-                  if (usageFailed) void usageSlice.load({ businessId });
-                  if (projectsFailed) void projectsSlice.load(businessId);
+                  if (usageFailed) void useLiveUsage.getState().load({ businessId });
+                  if (projectsFailed) void useLiveProjects.getState().load(businessId);
                 }}
               >
                 Retry
@@ -187,13 +295,13 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
             <Card className="p-4">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-[13px] font-bold">AI cost by call kind</h3>
-                {usageSlice.status === "loading" && (
+                {usageStatus === "loading" && (
                   <span className="text-[11.5px] text-ink-400">Loading…</span>
                 )}
               </div>
-              {usageSlice.status === "error" ? (
-                <p role="alert" className="text-[13px] text-red-500">{usageSlice.error}</p>
-              ) : usageSlice.status !== "ready" ? (
+              {usageStatus === "error" ? (
+                <p role="alert" className="text-[13px] text-red-500">{usageError}</p>
+              ) : usageStatus !== "ready" ? (
                 <p role="status" className="text-[13px] text-ink-400">Loading cost data…</p>
               ) : byKind.length === 0 ? (
                 <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
@@ -217,13 +325,13 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
 
             <Card className="p-4">
               <h3 className="mb-2 text-[13px] font-bold">Project AI budgets</h3>
-              {(projectsSlice.status === "idle" || projectsSlice.status === "loading") && (
-                <p role="status" className="text-[13px] text-ink-400">Loading projects…</p>
+              {(projectsStatus === "idle" || projectsStatus === "loading") && (
+                <ProjectBudgetsSkeleton />
               )}
-              {projectsSlice.status === "error" && (
-                <p role="alert" className="text-[13px] text-red-500">{projectsSlice.error}</p>
+              {projectsStatus === "error" && (
+                <p role="alert" className="text-[13px] text-red-500">{projectsError}</p>
               )}
-              {projectsSlice.status === "ready" && projects.length === 0 && (
+              {projectsStatus === "ready" && projects.length === 0 && (
                 <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
                   No projects yet.
                 </p>
@@ -247,57 +355,7 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
             </Card>
           </div>
 
-          <Card className="p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-[13px] font-bold">Workforce performance</h3>
-              {business && (
-                <span className="text-[11.5px] text-ink-400">{business.name}</span>
-              )}
-            </div>
-            {(agentsSlice.status === "idle" || agentsSlice.status === "loading") && (
-              <p role="status" className="text-[13px] text-ink-400">Loading workforce…</p>
-            )}
-            {agentsSlice.status === "error" && (
-              <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
-            )}
-            {agentsSlice.status === "ready" && agents.length === 0 && (
-              <p className="text-[13px] text-ink-400">No hired AI employees yet.</p>
-            )}
-            {agents.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-[12.5px]">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-wide text-ink-400">
-                      <th className="py-1.5 pr-2">Employee</th>
-                      <th className="py-1.5 pr-2 text-right">Done</th>
-                      <th className="py-1.5 pr-2 text-right">Avg</th>
-                      <th className="py-1.5 pr-2 text-right">Approval</th>
-                      <th className="py-1.5 text-right">Rating</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {agents.map((agent) => (
-                      <tr key={agent.id} className="border-t border-mist-100 dark:border-white/5">
-                        <td className="py-2 pr-2 font-medium">{agent.role}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">
-                          {agent.performance.completionRate}%
-                        </td>
-                        <td className="py-2 pr-2 text-right tabular-nums">
-                          ~{agent.performance.avgMinutes}m
-                        </td>
-                        <td className="py-2 pr-2 text-right tabular-nums">
-                          {agent.performance.approvalRate}%
-                        </td>
-                        <td className="py-2 text-right tabular-nums">
-                          ★{agent.performance.rating.toFixed(1)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
+          <WorkforceSection businessName={business?.name} />
         </>
       )}
     </>

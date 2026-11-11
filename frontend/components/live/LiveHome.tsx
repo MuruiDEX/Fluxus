@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
@@ -24,61 +24,115 @@ import {
   useLiveProjects,
 } from "@/lib/store/live";
 
+const LiveHomeActivityCard = memo(function LiveHomeActivityCard() {
+  const status = useLiveActivity((s) => s.status);
+  const events = useLiveActivity((s) => s.events);
+  const error = useLiveActivity((s) => s.error);
+  const pendingCount = useLiveApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-[15px] font-bold">AI Activity</h2>
+        <Link
+          href="/activity"
+          className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline"
+        >
+          View all <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      {(status === "idle" || status === "loading") && (
+        <p role="status" className="text-[13px] text-ink-400">Loading activity…</p>
+      )}
+      {status === "error" && (
+        <p role="alert" className="text-[13px] text-red-500">{error}</p>
+      )}
+      {status === "ready" && events.length === 0 && (
+        <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
+          No activity recorded yet.
+        </p>
+      )}
+      <div className="flex flex-col">
+        {events.slice(0, 5).map((event) => (
+          <div
+            key={event.id}
+            className="flex items-start gap-2 border-b border-mist-100 py-2 text-[12.5px] last:border-0 dark:border-white/5"
+          >
+            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+            <p className="flex-1 leading-5">
+              <span className="font-semibold">{event.agentName}</span> — {event.text}
+            </p>
+            <span className="shrink-0 text-[11px] text-ink-400">{formatWhen(event.at)}</span>
+          </div>
+        ))}
+      </div>
+      {pendingCount > 0 && (
+        <Link
+          href="/approvals"
+          className="mt-3 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2.5 text-[13px] font-medium text-orange-700 dark:bg-orange-500/10 dark:text-orange-300"
+        >
+          {pendingCount} approval{pendingCount === 1 ? "" : "s"} waiting for you
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      )}
+    </Card>
+  );
+});
+
 export function LiveHome({ businessId }: { businessId: string }) {
-  const businessSlice = useLiveBusiness();
-  const projectsSlice = useLiveProjects();
-  const agentsSlice = useLiveAgentsList();
-  const approvalsSlice = useLiveApprovals();
-  const activitySlice = useLiveActivity();
+  const business = useLiveBusiness((s) => s.business);
+  const businessStatus = useLiveBusiness((s) => s.status);
+  const businessError = useLiveBusiness((s) => s.error);
+  const projects = useLiveProjects((s) => s.projects);
+  const projectsStatus = useLiveProjects((s) => s.status);
+  const projectsError = useLiveProjects((s) => s.error);
+  const agents = useLiveAgentsList((s) => s.agents);
+  const agentsStatus = useLiveAgentsList((s) => s.status);
+  const agentsError = useLiveAgentsList((s) => s.error);
 
   useEffect(() => {
-    void businessSlice.load(businessId);
-    void projectsSlice.load(businessId);
-    void agentsSlice.load(businessId);
-    void approvalsSlice.load(businessId);
-    void activitySlice.load({ businessId });
+    void useLiveBusiness.getState().load(businessId);
+    void useLiveProjects.getState().load(businessId);
+    void useLiveAgentsList.getState().load(businessId);
+    void useLiveApprovals.getState().load(businessId);
+    void useLiveActivity.getState().load({ businessId });
     return () => {
-      businessSlice.reset();
-      projectsSlice.reset();
-      agentsSlice.reset();
-      approvalsSlice.reset();
-      activitySlice.reset();
+      useLiveBusiness.getState().reset();
+      useLiveProjects.getState().reset();
+      useLiveAgentsList.getState().reset();
+      useLiveApprovals.getState().reset();
+      useLiveActivity.getState().reset();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
-  const business = businessSlice.business;
-  const projects = projectsSlice.projects;
-  const agents = agentsSlice.agents;
-  const approvals = approvalsSlice.approvals;
-  const events = activitySlice.events;
-  const pending = approvals.filter((approval) => approval.status === "pending");
   const activeProjects = projects.filter((project) => project.status !== "completed");
   const workingAgents = agents.filter(
     (agent) => agent.hired && (agent.status === "working" || agent.status === "thinking"),
   );
-  const projectsReady = projectsSlice.status === "ready";
-  const agentsReady = agentsSlice.status === "ready";
+  const projectsReady = projectsStatus === "ready";
+  const agentsReady = agentsStatus === "ready";
   const projectsSummary = projectsReady
     ? `${activeProjects.length} active project${activeProjects.length === 1 ? "" : "s"}`
-    : projectsSlice.status === "error"
+    : projectsStatus === "error"
       ? "Projects unavailable"
       : "Loading projects…";
   const teamSummary = agentsReady
     ? `${agents.length} AI employee${agents.length === 1 ? "" : "s"} on the team.`
-    : agentsSlice.status === "error"
+    : agentsStatus === "error"
       ? "AI team unavailable."
       : "Loading AI team…";
 
-  if (businessSlice.status === "error") {
+  if (businessStatus === "error") {
     return (
       <>
         <PageHeader title="Workspace" badge={<LiveBadge />} sub="Server data for this business." />
         <Card className="p-8 text-center">
           <p className="text-[14px] font-semibold">Couldn&apos;t load this business</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessSlice.error}</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessError}</p>
           <div className="mt-3 flex justify-center">
-            <PrimaryButton onClick={() => void businessSlice.load(businessId)}>Retry</PrimaryButton>
+            <PrimaryButton onClick={() => void useLiveBusiness.getState().load(businessId)}>Retry</PrimaryButton>
           </div>
         </Card>
       </>
@@ -178,13 +232,13 @@ export function LiveHome({ businessId }: { businessId: string }) {
             </Link>
           </div>
           <div className="flex flex-col gap-3">
-            {(projectsSlice.status === "idle" || projectsSlice.status === "loading") && (
+            {(projectsStatus === "idle" || projectsStatus === "loading") && (
               <p role="status" className="text-[13px] text-ink-400">Loading projects…</p>
             )}
-            {projectsSlice.status === "error" && (
-              <p role="alert" className="text-[13px] text-red-500">{projectsSlice.error}</p>
+            {projectsStatus === "error" && (
+              <p role="alert" className="text-[13px] text-red-500">{projectsError}</p>
             )}
-            {projectsSlice.status === "ready" && activeProjects.length === 0 && (
+            {projectsStatus === "ready" && activeProjects.length === 0 && (
               <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
                 No active projects. Start one to give the team work.
               </p>
@@ -201,51 +255,7 @@ export function LiveHome({ businessId }: { businessId: string }) {
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold">AI Activity</h2>
-            <Link
-              href="/activity"
-              className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline"
-            >
-              View all <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-          {(activitySlice.status === "idle" || activitySlice.status === "loading") && (
-            <p role="status" className="text-[13px] text-ink-400">Loading activity…</p>
-          )}
-          {activitySlice.status === "error" && (
-            <p role="alert" className="text-[13px] text-red-500">{activitySlice.error}</p>
-          )}
-          {activitySlice.status === "ready" && events.length === 0 && (
-            <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
-              No activity recorded yet.
-            </p>
-          )}
-          <div className="flex flex-col">
-            {events.slice(0, 5).map((event) => (
-              <div
-                key={event.id}
-                className="flex items-start gap-2 border-b border-mist-100 py-2 text-[12.5px] last:border-0 dark:border-white/5"
-              >
-                <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
-                <p className="flex-1 leading-5">
-                  <span className="font-semibold">{event.agentName}</span> — {event.text}
-                </p>
-                <span className="shrink-0 text-[11px] text-ink-400">{formatWhen(event.at)}</span>
-              </div>
-            ))}
-          </div>
-          {pending.length > 0 && (
-            <Link
-              href="/approvals"
-              className="mt-3 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2.5 text-[13px] font-medium text-orange-700 dark:bg-orange-500/10 dark:text-orange-300"
-            >
-              {pending.length} approval{pending.length === 1 ? "" : "s"} waiting for you
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          )}
-        </Card>
+        <LiveHomeActivityCard />
 
         <Card className="p-4">
           <div className="mb-2 flex items-center justify-between">
@@ -257,13 +267,13 @@ export function LiveHome({ businessId }: { businessId: string }) {
               Open office <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-          {(agentsSlice.status === "idle" || agentsSlice.status === "loading") && (
+          {(agentsStatus === "idle" || agentsStatus === "loading") && (
             <p role="status" className="text-[13px] text-ink-400">Loading team…</p>
           )}
-          {agentsSlice.status === "error" && (
-            <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
+          {agentsStatus === "error" && (
+            <p role="alert" className="text-[13px] text-red-500">{agentsError}</p>
           )}
-          {agentsSlice.status === "ready" && agents.length === 0 && (
+          {agentsStatus === "ready" && agents.length === 0 && (
             <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
               No AI employees yet. Hire your first specialist.
             </p>
@@ -294,13 +304,13 @@ export function LiveHome({ businessId }: { businessId: string }) {
           <span className="text-[11.5px] text-ink-400">
             {agentsReady
               ? `${workingAgents.length} active`
-              : agentsSlice.status === "error"
+              : agentsStatus === "error"
                 ? "Unavailable"
                 : "Loading…"}
           </span>
         </div>
-        {agentsSlice.status === "error" ? (
-          <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
+        {agentsStatus === "error" ? (
+          <p role="alert" className="text-[13px] text-red-500">{agentsError}</p>
         ) : !agentsReady ? (
           <p role="status" className="text-[13px] text-ink-400">Loading team…</p>
         ) : workingAgents.length === 0 ? (

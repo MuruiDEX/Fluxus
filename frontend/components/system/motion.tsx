@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
@@ -53,11 +53,12 @@ export function StaggerGroup({
   className?: string;
   stagger?: number;
 }) {
+  const variants = useMemo(() => staggerContainer(stagger), [stagger]);
   return (
     <motion.div
       initial={animated ? "hidden" : false}
       animate="show"
-      variants={staggerContainer(stagger)}
+      variants={variants}
       className={className}
     >
       {children}

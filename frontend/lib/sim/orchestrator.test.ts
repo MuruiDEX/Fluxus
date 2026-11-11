@@ -11,6 +11,7 @@ import {
 import {
   __resetEngineForTests,
   getEngineView,
+  pauseLoop,
   resumeLoop,
   startLoop,
   stopLoop,
@@ -381,11 +382,29 @@ describe("end-to-end walkthrough", () => {
 /* Loop lifecycle (single-loop guard)                                  */
 /* ------------------------------------------------------------------ */
 
+function fakeDocument() {
+  const listeners = new Set<() => void>();
+  const doc = {
+    hidden: false,
+    addEventListener: (_type: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_type: string, fn: () => void) => listeners.delete(fn),
+  };
+  return {
+    doc,
+    setHidden(hidden: boolean) {
+      doc.hidden = hidden;
+      listeners.forEach((fn) => fn());
+    },
+    listenerCount: () => listeners.size,
+  };
+}
+
 describe("engine loop", () => {
   afterEach(() => {
-    vi.useRealTimers();
     stopLoop();
     __resetEngineForTests();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("ignores duplicate starts and ticks exactly once per interval", () => {
@@ -411,5 +430,90 @@ describe("engine loop", () => {
     startLoop(scope, 1000);
     expect(resumeLoop()).toBe(false); // already running
     stopLoop();
+  });
+
+  it("suspends ticks while hidden and resumes at the same cadence", () => {
+    vi.useFakeTimers();
+    const fake = fakeDocument();
+    vi.stubGlobal("document", fake.doc);
+    const scope = { businessId: "biz_northstar", projectId: "proj_krakow_launch" };
+
+    expect(startLoop(scope, 1000)).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(getEngineView().tickCount).toBe(1);
+
+    fake.setHidden(true);
+    vi.advanceTimersByTime(5000);
+    expect(getEngineView().tickCount).toBe(1);
+    expect(getEngineView().running).toBe(true);
+    expect(getEngineView().paused).toBe(false);
+
+    fake.setHidden(false);
+    vi.advanceTimersByTime(1000);
+    expect(getEngineView().tickCount).toBe(2);
+    vi.advanceTimersByTime(1000);
+    expect(getEngineView().tickCount).toBe(3);
+  });
+
+  it("ignores duplicate visibility events without stacking intervals", () => {
+    vi.useFakeTimers();
+    const fake = fakeDocument();
+    vi.stubGlobal("document", fake.doc);
+    const scope = { businessId: "biz_northstar", projectId: "proj_krakow_launch" };
+
+    startLoop(scope, 1000);
+    fake.setHidden(true);
+    fake.setHidden(true);
+    fake.setHidden(false);
+    fake.setHidden(false);
+    expect(fake.listenerCount()).toBe(1);
+
+    vi.advanceTimersByTime(2000);
+    expect(getEngineView().tickCount).toBe(2);
+    expect(fake.listenerCount()).toBe(1);
+  });
+
+  it("keeps user pause/stop authoritative while the tab is hidden", () => {
+    vi.useFakeTimers();
+    const fake = fakeDocument();
+    vi.stubGlobal("document", fake.doc);
+    const scope = { businessId: "biz_northstar", projectId: "proj_krakow_launch" };
+
+    startLoop(scope, 1000);
+    fake.setHidden(true);
+    expect(pauseLoop()).toBe(true);
+    expect(getEngineView().paused).toBe(true);
+    expect(getEngineView().running).toBe(false);
+
+    fake.setHidden(false);
+    vi.advanceTimersByTime(5000);
+    expect(getEngineView().tickCount).toBe(0);
+
+    expect(resumeLoop(1000)).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(getEngineView().tickCount).toBe(1);
+
+    expect(stopLoop()).toBe(true);
+    expect(fake.listenerCount()).toBe(0);
+    fake.setHidden(false);
+    vi.advanceTimersByTime(5000);
+    expect(getEngineView().tickCount).toBe(1);
+  });
+
+  it("starts suspended when the document is already hidden", () => {
+    vi.useFakeTimers();
+    const fake = fakeDocument();
+    fake.setHidden(true);
+    vi.stubGlobal("document", fake.doc);
+    const scope = { businessId: "biz_northstar", projectId: "proj_krakow_launch" };
+
+    expect(startLoop(scope, 1000)).toBe(true);
+    vi.advanceTimersByTime(5000);
+    expect(getEngineView().tickCount).toBe(0);
+    expect(getEngineView().running).toBe(true);
+
+    fake.setHidden(false);
+    vi.advanceTimersByTime(1000);
+    expect(getEngineView().tickCount).toBe(1);
   });
 });

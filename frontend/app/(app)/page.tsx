@@ -19,14 +19,110 @@ const briefing = [
   { icon: CheckCircle2, tone: "text-emerald-500", text: "Launch a retention campaign for inactive customers.", action: "Create Project", goal: "Launch a retention campaign for inactive customers." },
 ];
 
-function DemoHomePage() {
-  const { business } = useBusiness();
-  const { projects } = useProjects();
+function DemoActiveProjectsCard() {
+  const projects = useProjects((s) => s.projects);
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-[15px] font-bold">Active Projects</h2>
+        <Link href="/projects" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
+          View all <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="flex flex-col gap-3">
+        {projects.map((p) => (
+          <Link key={p.id} href={`/projects/${p.id}`} className="group">
+            <div className="mb-1 flex items-center justify-between text-[13px]">
+              <span className="font-medium group-hover:text-brand-500">{p.title}</span>
+              <span className="tabular-nums text-ink-500">{p.progress}%</span>
+            </div>
+            <ProgressBar value={p.progress} />
+          </Link>
+        ))}
+        {projects.length === 0 && (
+          <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
+            No demo projects yet. Start one to give the team work.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function DemoActivityCard() {
   const agents = useAgents((s) => s.agents);
-  const approvals = useApprovals((s) => s.approvals);
   const events = useActivity((s) => s.events);
+  const pendingCount = useApprovals(
+    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
+  );
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-[15px] font-bold">AI Activity</h2>
+        <Link href="/office" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
+          Open office <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {agents.slice(0, 5).map((a) => (
+          <span key={a.id} className="flex items-center gap-1.5 rounded-full border border-mist-200 py-0.5 pl-0.5 pr-2 dark:border-white/10">
+            <Avatar name={a.name} hue={a.avatarHue} size={20} />
+            <span className="text-[11px] font-medium">{a.role}</span>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-col">
+        {events.slice(0, 4).map((e) => (
+          <div key={e.id} className="flex items-start gap-2 border-b border-mist-100 py-2 text-[12.5px] last:border-0 dark:border-white/5">
+            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+            <p className="flex-1 leading-5">
+              <span className="font-semibold">{e.agentName}</span> — {e.text}
+            </p>
+            <span className="shrink-0 text-[11px] text-ink-400">{e.at}</span>
+          </div>
+        ))}
+      </div>
+      {pendingCount > 0 && (
+        <Link
+          href="/approvals"
+          className="mt-3 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2.5 text-[13px] font-medium text-orange-700 dark:bg-orange-500/10 dark:text-orange-300"
+        >
+          {pendingCount} approval{pendingCount === 1 ? "" : "s"} waiting for you
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      )}
+    </Card>
+  );
+}
+
+function DemoLiveNow() {
+  const agents = useAgents((s) => s.agents);
+
+  return (
+    <Card className="p-4">
+      <h2 className="mb-2 text-[15px] font-bold">Live now</h2>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {agents.filter((a) => a.status === "working" || a.status === "waiting_dependency").slice(0, 4).map((a) => (
+          <div key={a.id} className="flex items-center gap-2.5 rounded-xl border border-mist-200 p-2.5 dark:border-white/10">
+            <Avatar name={a.name} hue={a.avatarHue} size={30} />
+            <div className="min-w-0">
+              <p className="truncate text-[12.5px] font-semibold">{a.role}</p>
+              <p className="truncate text-[11.5px] text-ink-500">{a.currentTask}</p>
+            </div>
+            <div className="ml-auto"><AgentStatusBadge status={a.status} live /></div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function DemoHomePage() {
+  const business = useBusiness((s) => s.business);
+  const projectCount = useProjects((s) => s.projects.length);
   const m = business.metrics;
-  const pending = approvals.filter((a) => a.status === "pending");
   const router = useRouter();
 
   return (
@@ -34,7 +130,7 @@ function DemoHomePage() {
       <PageHeader
         title={`Good morning, ${business.ownerName}`}
         badge={<DemoBadge />}
-        sub={`Your AI company is working on ${projects.length} project${projects.length === 1 ? "" : "s"}. Here's what's happening.`}
+        sub={`Your AI company is working on ${projectCount} project${projectCount === 1 ? "" : "s"}. Here's what's happening.`}
         actions={
           <PrimaryLink href="/projects/new">+ New Project</PrimaryLink>
         }
@@ -110,84 +206,11 @@ function DemoHomePage() {
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold">Active Projects</h2>
-            <Link href="/projects" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
-              View all <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-          <div className="flex flex-col gap-3">
-            {projects.map((p) => (
-              <Link key={p.id} href={`/projects/${p.id}`} className="group">
-                <div className="mb-1 flex items-center justify-between text-[13px]">
-                  <span className="font-medium group-hover:text-brand-500">{p.title}</span>
-                  <span className="tabular-nums text-ink-500">{p.progress}%</span>
-                </div>
-                <ProgressBar value={p.progress} />
-              </Link>
-            ))}
-            {projects.length === 0 && (
-              <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
-                No demo projects yet. Start one to give the team work.
-              </p>
-            )}
-          </div>
-        </Card>
-
-        <Card className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold">AI Activity</h2>
-            <Link href="/office" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
-              Open office <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {agents.slice(0, 5).map((a) => (
-              <span key={a.id} className="flex items-center gap-1.5 rounded-full border border-mist-200 py-0.5 pl-0.5 pr-2 dark:border-white/10">
-                <Avatar name={a.name} hue={a.avatarHue} size={20} />
-                <span className="text-[11px] font-medium">{a.role}</span>
-              </span>
-            ))}
-          </div>
-          <div className="flex flex-col">
-            {events.slice(0, 4).map((e) => (
-              <div key={e.id} className="flex items-start gap-2 border-b border-mist-100 py-2 text-[12.5px] last:border-0 dark:border-white/5">
-                <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
-                <p className="flex-1 leading-5">
-                  <span className="font-semibold">{e.agentName}</span> — {e.text}
-                </p>
-                <span className="shrink-0 text-[11px] text-ink-400">{e.at}</span>
-              </div>
-            ))}
-          </div>
-          {pending.length > 0 && (
-            <Link
-              href="/approvals"
-              className="mt-3 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2.5 text-[13px] font-medium text-orange-700 dark:bg-orange-500/10 dark:text-orange-300"
-            >
-              {pending.length} approval{pending.length === 1 ? "" : "s"} waiting for you
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          )}
-        </Card>
+        <DemoActiveProjectsCard />
+        <DemoActivityCard />
       </div>
 
-      <Card className="p-4">
-        <h2 className="mb-2 text-[15px] font-bold">Live now</h2>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {agents.filter((a) => a.status === "working" || a.status === "waiting_dependency").slice(0, 4).map((a) => (
-            <div key={a.id} className="flex items-center gap-2.5 rounded-xl border border-mist-200 p-2.5 dark:border-white/10">
-              <Avatar name={a.name} hue={a.avatarHue} size={30} />
-              <div className="min-w-0">
-                <p className="truncate text-[12.5px] font-semibold">{a.role}</p>
-                <p className="truncate text-[11.5px] text-ink-500">{a.currentTask}</p>
-              </div>
-              <div className="ml-auto"><AgentStatusBadge status={a.status} live /></div>
-            </div>
-          ))}
-        </div>
-      </Card>
+      <DemoLiveNow />
     </>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, Pencil, Sparkles, X } from "lucide-react";
 import { Avatar, Badge, type BadgeTone } from "@/components/system/badges";
-import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
 import { DecisionButtons } from "@/components/system/DecisionButtons";
 import { applyApprovalToExecution } from "@/lib/sim/engine";
 import { useSession } from "@/lib/store/auth";
@@ -193,9 +193,36 @@ function LiveApprovalsView({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
       />
       {status === "loading" || status === "idle" ? (
-        <Card className="p-8 text-center text-[13px] text-ink-400">
-          <p role="status">Loading approvals…</p>
-        </Card>
+        <div className="flex flex-col gap-3" role="status" aria-label="Loading approvals">
+          <div className="flex gap-1 border-b border-mist-200 dark:border-white/10">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-9 w-20 rounded-t-md" />
+            ))}
+          </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {[0, 1].map((i) => (
+              <Card key={i} className="p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="mt-1.5 h-3 w-48" />
+                  </div>
+                  <Skeleton className="h-5 w-16 shrink-0 rounded-full" />
+                </div>
+                <div className="mt-3 grid gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-2">
+                  {[0, 1, 2, 3].map((cell) => (
+                    <div key={cell} className="rounded-lg bg-mist-50 px-2.5 py-1.5 dark:bg-white/5">
+                      <Skeleton className="h-2.5 w-20" />
+                      <Skeleton className="mt-1.5 h-3 w-full" />
+                    </div>
+                  ))}
+                </div>
+                <Skeleton className="mt-2 h-3 w-11/12" />
+                <Skeleton className="mt-1 h-3 w-2/3" />
+              </Card>
+            ))}
+          </div>
+        </div>
       ) : status === "error" ? (
         <Card className="p-8 text-center">
           <div role="alert">

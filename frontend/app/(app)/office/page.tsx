@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { AgentStatusBadge, Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, DemoBadge, PageHeader } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
@@ -187,9 +188,9 @@ function DemoOfficePage() {
               <p className="text-[12.5px] text-orange-600/90 dark:text-orange-200/80">
                 Nothing deploys, spends or sends without you.
               </p>
-              <a href="/approvals" className="mt-2 inline-block text-[12.5px] font-bold underline">
+              <Link href="/approvals" className="mt-2 inline-block text-[12.5px] font-bold underline">
                 Open Approval Inbox →
-              </a>
+              </Link>
             </Card>
           )}
         </div>

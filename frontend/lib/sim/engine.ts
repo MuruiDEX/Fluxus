@@ -32,8 +32,11 @@ interface Snapshot {
 }
 
 let interval: ReturnType<typeof setInterval> | null = null;
+let intervalMs = TICK_MS;
 let running = false;
 let paused = false;
+let hiddenSuspended = false;
+let visibilityAttached = false;
 let tickCount = 0;
 let activeScope: Scope | null = null;
 let viewCache: EngineView | null = null;
@@ -71,6 +74,55 @@ function emit() {
 
 export function useEngine(): EngineView {
   return useSyncExternalStore(subscribe, getEngineView, getEngineView);
+}
+
+function hasDocument(): boolean {
+  return typeof document !== "undefined";
+}
+
+/** Start the periodic interval unless one exists or the tab is hidden. */
+function startInterval(): void {
+  if (interval || !running) return;
+  if (hasDocument() && document.hidden) {
+    hiddenSuspended = true;
+    return;
+  }
+  interval = setInterval(() => {
+    tickOnce();
+  }, intervalMs);
+  hiddenSuspended = false;
+}
+
+function clearIntervalOnly(): void {
+  if (interval) clearInterval(interval);
+  interval = null;
+}
+
+/**
+ * Ticks are worthless while the document is hidden: pause the interval, keep
+ * `running` true (execution is still active), and resume at the same cadence
+ * when the tab becomes visible. No activity log, no catch-up burst.
+ */
+function onVisibilityChange(): void {
+  if (!running) return;
+  if (document.hidden) {
+    clearIntervalOnly();
+    hiddenSuspended = true;
+  } else if (hiddenSuspended) {
+    startInterval();
+  }
+}
+
+function attachVisibilityListener(): void {
+  if (!hasDocument() || visibilityAttached) return;
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  visibilityAttached = true;
+}
+
+function detachVisibilityListener(): void {
+  if (!hasDocument() || !visibilityAttached) return;
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  visibilityAttached = false;
 }
 
 function snapshotScope(s: Scope): void {
@@ -141,11 +193,12 @@ export function startLoop(s: Scope, ms: number = TICK_MS): boolean {
   if (running) return false;
   snapshotScope(s);
   activeScope = s;
+  intervalMs = ms;
   running = true;
   paused = false;
-  interval = setInterval(() => {
-    tickOnce();
-  }, ms);
+  hiddenSuspended = false;
+  attachVisibilityListener();
+  startInterval();
   useActivity.getState().log({
     at: "just now",
     agentName: "Team Lead",
@@ -157,11 +210,12 @@ export function startLoop(s: Scope, ms: number = TICK_MS): boolean {
 }
 
 export function pauseLoop(): boolean {
-  if (!running || !interval) return false;
-  clearInterval(interval);
-  interval = null;
+  if (!running) return false;
+  clearIntervalOnly();
   running = false;
   paused = true;
+  hiddenSuspended = false;
+  detachVisibilityListener();
   useActivity.getState().log({ at: "just now", agentName: "Team Lead", text: "Execution paused by you.", kind: "system" });
   emit();
   return true;
@@ -169,12 +223,12 @@ export function pauseLoop(): boolean {
 
 export function resumeLoop(ms: number = TICK_MS): boolean {
   if (running || !paused || !activeScope) return false;
+  intervalMs = ms;
   running = true;
   paused = false;
-  const s = activeScope;
-  interval = setInterval(() => {
-    tickOnce(s);
-  }, ms);
+  hiddenSuspended = false;
+  attachVisibilityListener();
+  startInterval();
   useActivity.getState().log({ at: "just now", agentName: "Team Lead", text: "Execution resumed.", kind: "system" });
   emit();
   return true;
@@ -182,10 +236,11 @@ export function resumeLoop(ms: number = TICK_MS): boolean {
 
 export function stopLoop(): boolean {
   if (!running && !paused) return false;
-  if (interval) clearInterval(interval);
-  interval = null;
+  clearIntervalOnly();
   running = false;
   paused = false;
+  hiddenSuspended = false;
+  detachVisibilityListener();
   useActivity.getState().log({ at: "just now", agentName: "Team Lead", text: "Execution stopped.", kind: "system" });
   emit();
   return true;
@@ -247,10 +302,12 @@ export function retryTaskInExecution(taskId: string): void {
 
 /** Test-only: clear loop + sessions without touching stores. */
 export function __resetEngineForTests(): void {
-  if (interval) clearInterval(interval);
-  interval = null;
+  clearIntervalOnly();
+  detachVisibilityListener();
+  intervalMs = TICK_MS;
   running = false;
   paused = false;
+  hiddenSuspended = false;
   tickCount = 0;
   activeScope = null;
   sessions.clear();

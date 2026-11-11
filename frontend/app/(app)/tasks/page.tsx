@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, TaskStatusBadge } from "@/components/system/badges";
-import { Card, EmptyState, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, EmptyState, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
 import { TaskEditButton } from "@/components/system/TaskEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { failTaskInExecution, retryTaskInExecution } from "@/lib/sim/engine";
@@ -177,9 +177,30 @@ function LiveTasksView({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
       />
       {loading ? (
-        <Card className="p-8 text-center text-[13px] text-ink-400">
-          <p role="status">Loading tasks…</p>
-        </Card>
+        <div className="flex flex-col gap-3" role="status" aria-label="Loading tasks">
+          <div className="flex flex-wrap gap-1.5">
+            {Array.from({ length: 8 }, (_, i) => (
+              <Skeleton key={i} className="h-7 w-20 rounded-full" />
+            ))}
+          </div>
+          <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 6 }, (_, i) => (
+              <Card key={i} className="p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-5 w-20 shrink-0 rounded-full" />
+                </div>
+                <Skeleton className="mt-2 h-3 w-full" />
+                <Skeleton className="mt-1.5 h-3 w-4/5" />
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <Skeleton className="h-5 w-5 shrink-0 rounded-full" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="ml-auto h-3 w-10 shrink-0" />
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
       ) : error ? (
         <Card className="p-8 text-center">
           <div role="alert">
