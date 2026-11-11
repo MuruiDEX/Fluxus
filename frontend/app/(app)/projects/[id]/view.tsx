@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
-import { Avatar, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
+import { Avatar, Badge, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
 import { PlanDriverPanel } from "@/components/system/PlanDriver";
@@ -13,6 +13,7 @@ import { UsagePanel } from "@/components/system/UsagePanel";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useApprovals, useProjects } from "@/lib/store/app";
+import { PROJECT_STATUS_BADGE_TONE, projectStatusView } from "@/lib/project-status";
 import { cn } from "@/lib/cn";
 import type { Agent, Approval, Project, Task } from "@/lib/domain/types";
 
@@ -41,11 +42,7 @@ function ProjectLayout({
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const agentOf = (agentId: string) => agents.find((a) => a.id === agentId);
   const taskTitle = (taskId: string) => projectTasks.find((t) => t.id === taskId)?.title ?? taskId;
-  const statusPill =
-    project.status === "completed"
-      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-      : "bg-blue-50 text-brand-600 dark:bg-brand-500/15 dark:text-sky-300";
-  const statusLabel = project.status === "completed" ? "Completed" : project.status === "planning" ? "Planning" : project.status === "review" ? "In Review" : "In Progress";
+  const status = projectStatusView(project.status);
 
   return (
     <>
@@ -60,8 +57,8 @@ function ProjectLayout({
           <div className="flex flex-wrap items-center gap-2">
             {engineSlot}
             {projectEditSlot}
-            <span data-testid="project-status" className={cn("rounded-full px-2.5 py-1 text-[12px] font-semibold", statusPill)}>
-              {statusLabel}
+            <span data-testid="project-status">
+              <Badge tone={PROJECT_STATUS_BADGE_TONE[status.tone]}>{status.label}</Badge>
             </span>
           </div>
         }
@@ -259,7 +256,9 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
     return (
       <>
         <PageHeader title="Project" sub="Loading from server…" badge={<LiveBadge />} />
-        <Card className="p-8 text-center text-[13px] text-ink-400">Loading project…</Card>
+        <Card className="p-8 text-center text-[13px] text-ink-400">
+          <p role="status">Loading project…</p>
+        </Card>
       </>
     );
   }
@@ -269,14 +268,16 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
       <>
         <PageHeader title="Project" sub="Live server data" badge={<LiveBadge />} />
         <Card className="p-8 text-center">
-          <p className="text-[14px] font-semibold">
-            {notFound ? "Project not found" : "Couldn't load project"}
-          </p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
-            {notFound
-              ? "This project doesn't exist in your business or isn't available to you."
-              : error}
-          </p>
+          <div role={notFound ? undefined : "alert"}>
+            <p className="text-[14px] font-semibold">
+              {notFound ? "Project not found" : "Couldn't load project"}
+            </p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
+              {notFound
+                ? "This project doesn't exist in your business or isn't available to you."
+                : error}
+            </p>
+          </div>
           {!notFound && (
             <div className="mt-3 flex justify-center">
               <PrimaryButton

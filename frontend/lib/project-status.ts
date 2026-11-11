@@ -7,6 +7,8 @@
  * unknown wire value is shown verbatim instead of guessed.
  */
 
+import type { BadgeTone } from "@/components/system/badges";
+
 export type ProjectStatusValue = "planning" | "in_progress" | "review" | "completed";
 
 export type ProjectStatusTone = "planning" | "active" | "review" | "done";
@@ -27,3 +29,11 @@ const VIEWS: Record<ProjectStatusValue, ProjectStatusView> = {
 export function projectStatusView(status: string): ProjectStatusView {
   return VIEWS[status as ProjectStatusValue] ?? { label: status || "Unknown", tone: "planning" };
 }
+
+/** Single semantic-tone adapter shared by every project status surface. */
+export const PROJECT_STATUS_BADGE_TONE: Record<ProjectStatusTone, BadgeTone> = {
+  planning: "neutral",
+  active: "brand",
+  review: "warning",
+  done: "success",
+};

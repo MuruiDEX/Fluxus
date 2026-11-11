@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, Pencil, Sparkles, X } from "lucide-react";
-import { Avatar } from "@/components/system/badges";
+import { Avatar, Badge, type BadgeTone } from "@/components/system/badges";
 import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { DecisionButtons } from "@/components/system/DecisionButtons";
 import { applyApprovalToExecution } from "@/lib/sim/engine";
@@ -13,6 +13,12 @@ import { cn } from "@/lib/cn";
 import type { Agent, Approval } from "@/lib/domain/types";
 
 const tabs = ["Pending", "Approved", "Rejected", "All"] as const;
+
+const APPROVAL_TONE: Record<Approval["status"], BadgeTone> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "danger",
+};
 
 function ApprovalCardBody({ approval: a, agent }: { approval: Approval; agent?: Agent }) {
   return (
@@ -25,12 +31,9 @@ function ApprovalCardBody({ approval: a, agent }: { approval: Approval; agent?: 
             Requested by {a.requestedBy} · {a.ageLabel}
           </p>
         </div>
-        <span className={cn(
-          "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold",
-          a.status === "pending" ? "bg-orange-100 text-orange-700" : a.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700",
-        )}>
+        <Badge tone={APPROVAL_TONE[a.status]} className="shrink-0 font-semibold">
           {a.status}
-        </span>
+        </Badge>
       </div>
       <dl className="mt-3 grid gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-2">
         {([["What will happen", a.what], ["Expected result", a.expectedResult], ["Estimated cost", a.cost], ["Affects", a.affects]] as const).map(([k, v]) => (
@@ -190,11 +193,15 @@ function LiveApprovalsView({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
       />
       {status === "loading" || status === "idle" ? (
-        <Card className="p-8 text-center text-[13px] text-ink-400">Loading approvals…</Card>
+        <Card className="p-8 text-center text-[13px] text-ink-400">
+          <p role="status">Loading approvals…</p>
+        </Card>
       ) : status === "error" ? (
         <Card className="p-8 text-center">
-          <p className="text-[14px] font-semibold">Couldn&apos;t load approvals</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{error}</p>
+          <div role="alert">
+            <p className="text-[14px] font-semibold">Couldn&apos;t load approvals</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{error}</p>
+          </div>
           <div className="mt-3 flex justify-center">
             <PrimaryButton className="justify-center" onClick={() => void load(businessId)}>
               Retry

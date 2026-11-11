@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, TaskStatusBadge } from "@/components/system/badges";
-import { Card, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Card, EmptyState, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { TaskEditButton } from "@/components/system/TaskEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { failTaskInExecution, retryTaskInExecution } from "@/lib/sim/engine";
@@ -177,11 +177,15 @@ function LiveTasksView({ businessId }: { businessId: string }) {
         badge={<LiveBadge />}
       />
       {loading ? (
-        <Card className="p-8 text-center text-[13px] text-ink-400">Loading tasks…</Card>
+        <Card className="p-8 text-center text-[13px] text-ink-400">
+          <p role="status">Loading tasks…</p>
+        </Card>
       ) : error ? (
         <Card className="p-8 text-center">
-          <p className="text-[14px] font-semibold">Couldn&apos;t load tasks</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{error}</p>
+          <div role="alert">
+            <p className="text-[14px] font-semibold">Couldn&apos;t load tasks</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{error}</p>
+          </div>
           <div className="mt-3 flex justify-center">
             <PrimaryButton className="justify-center" onClick={retry}>
               Retry
@@ -189,12 +193,10 @@ function LiveTasksView({ businessId }: { businessId: string }) {
           </div>
         </Card>
       ) : tasksSlice.tasks.length === 0 ? (
-        <Card className="p-8 text-center">
-          <p className="text-[14px] font-semibold">No tasks in this business yet</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">
-            Tasks created on the server will appear here.
-          </p>
-        </Card>
+        <EmptyState
+          title="No tasks in this business yet"
+          body="Tasks created on the server will appear here."
+        />
       ) : (
         <TaskCards
           tasks={tasksSlice.tasks}

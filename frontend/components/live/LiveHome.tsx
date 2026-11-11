@@ -57,6 +57,18 @@ export function LiveHome({ businessId }: { businessId: string }) {
   const workingAgents = agents.filter(
     (agent) => agent.hired && (agent.status === "working" || agent.status === "thinking"),
   );
+  const projectsReady = projectsSlice.status === "ready";
+  const agentsReady = agentsSlice.status === "ready";
+  const projectsSummary = projectsReady
+    ? `${activeProjects.length} active project${activeProjects.length === 1 ? "" : "s"}`
+    : projectsSlice.status === "error"
+      ? "Projects unavailable"
+      : "Loading projects…";
+  const teamSummary = agentsReady
+    ? `${agents.length} AI employee${agents.length === 1 ? "" : "s"} on the team.`
+    : agentsSlice.status === "error"
+      ? "AI team unavailable."
+      : "Loading AI team…";
 
   if (businessSlice.status === "error") {
     return (
@@ -105,7 +117,7 @@ export function LiveHome({ businessId }: { businessId: string }) {
       <PageHeader
         title={business.name}
         badge={<LiveBadge />}
-        sub={`${activeProjects.length} active project${activeProjects.length === 1 ? "" : "s"} · ${agents.length} AI employee${agents.length === 1 ? "" : "s"} on the team.`}
+        sub={`${projectsSummary} · ${teamSummary}`}
         actions={
           <PrimaryLink href="/projects/new">+ New Project</PrimaryLink>
         }
@@ -166,11 +178,11 @@ export function LiveHome({ businessId }: { businessId: string }) {
             </Link>
           </div>
           <div className="flex flex-col gap-3">
-            {projectsSlice.status === "loading" && (
-              <p className="text-[13px] text-ink-400">Loading projects…</p>
+            {(projectsSlice.status === "idle" || projectsSlice.status === "loading") && (
+              <p role="status" className="text-[13px] text-ink-400">Loading projects…</p>
             )}
             {projectsSlice.status === "error" && (
-              <p className="text-[13px] text-red-500">{projectsSlice.error}</p>
+              <p role="alert" className="text-[13px] text-red-500">{projectsSlice.error}</p>
             )}
             {projectsSlice.status === "ready" && activeProjects.length === 0 && (
               <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
@@ -199,11 +211,11 @@ export function LiveHome({ businessId }: { businessId: string }) {
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-          {activitySlice.status === "loading" && (
-            <p className="text-[13px] text-ink-400">Loading activity…</p>
+          {(activitySlice.status === "idle" || activitySlice.status === "loading") && (
+            <p role="status" className="text-[13px] text-ink-400">Loading activity…</p>
           )}
           {activitySlice.status === "error" && (
-            <p className="text-[13px] text-red-500">{activitySlice.error}</p>
+            <p role="alert" className="text-[13px] text-red-500">{activitySlice.error}</p>
           )}
           {activitySlice.status === "ready" && events.length === 0 && (
             <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
@@ -245,11 +257,11 @@ export function LiveHome({ businessId }: { businessId: string }) {
               Open office <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
-          {agentsSlice.status === "loading" && (
-            <p className="text-[13px] text-ink-400">Loading team…</p>
+          {(agentsSlice.status === "idle" || agentsSlice.status === "loading") && (
+            <p role="status" className="text-[13px] text-ink-400">Loading team…</p>
           )}
           {agentsSlice.status === "error" && (
-            <p className="text-[13px] text-red-500">{agentsSlice.error}</p>
+            <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
           )}
           {agentsSlice.status === "ready" && agents.length === 0 && (
             <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
@@ -279,9 +291,19 @@ export function LiveHome({ businessId }: { businessId: string }) {
       <Card className="p-4">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-[15px] font-bold">Working now</h2>
-          <span className="text-[11.5px] text-ink-400">{workingAgents.length} active</span>
+          <span className="text-[11.5px] text-ink-400">
+            {agentsReady
+              ? `${workingAgents.length} active`
+              : agentsSlice.status === "error"
+                ? "Unavailable"
+                : "Loading…"}
+          </span>
         </div>
-        {workingAgents.length === 0 ? (
+        {agentsSlice.status === "error" ? (
+          <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
+        ) : !agentsReady ? (
+          <p role="status" className="text-[13px] text-ink-400">Loading team…</p>
+        ) : workingAgents.length === 0 ? (
           <p className="text-[13px] text-ink-400">No AI employee is working right now.</p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

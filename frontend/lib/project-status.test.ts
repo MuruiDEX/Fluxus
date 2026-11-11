@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectStatusView } from "@/lib/project-status";
+import { PROJECT_STATUS_BADGE_TONE, projectStatusView } from "@/lib/project-status";
 
 describe("projectStatusView", () => {
   it("labels every known status from the row instead of a hardcoded default", () => {
@@ -17,5 +17,14 @@ describe("projectStatusView", () => {
   it("shows an unknown wire value verbatim rather than guessing", () => {
     expect(projectStatusView("archived")).toEqual({ label: "archived", tone: "planning" });
     expect(projectStatusView("").label).toBe("Unknown");
+  });
+
+  it("maps every canonical status tone onto a badge tone", () => {
+    expect(PROJECT_STATUS_BADGE_TONE).toEqual({
+      planning: "neutral",
+      active: "brand",
+      review: "warning",
+      done: "success",
+    });
   });
 });

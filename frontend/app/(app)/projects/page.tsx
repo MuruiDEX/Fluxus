@@ -3,21 +3,14 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { Avatar, Badge, ProgressBar, type BadgeTone } from "@/components/system/badges";
+import { Avatar, Badge, ProgressBar } from "@/components/system/badges";
 import { Card, LiveBadge, PageHeader, PrimaryButton, PrimaryLink } from "@/components/system/ui";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveAgents, useLiveProjects } from "@/lib/store/live";
 import { useAgents, useProjects } from "@/lib/store/app";
 import { newProjectHref } from "@/lib/new-project";
-import { projectStatusView, type ProjectStatusTone } from "@/lib/project-status";
+import { PROJECT_STATUS_BADGE_TONE, projectStatusView } from "@/lib/project-status";
 import type { Agent, Project } from "@/lib/domain/types";
-
-const STATUS_TONE: Record<ProjectStatusTone, BadgeTone> = {
-  planning: "neutral",
-  active: "brand",
-  review: "warning",
-  done: "success",
-};
 
 function ProjectGrid({ projects, agents }: { projects: Project[]; agents: Agent[] }) {
   return (
@@ -32,7 +25,7 @@ function ProjectGrid({ projects, agents }: { projects: Project[]; agents: Agent[
                 <p className="text-[15px] font-bold hover:text-brand-500">{p.title}</p>
                 <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-500">{p.goal}</p>
               </div>
-              <Badge tone={STATUS_TONE[status.tone]} className="shrink-0">
+              <Badge tone={PROJECT_STATUS_BADGE_TONE[status.tone]} className="shrink-0">
                 {status.label}
               </Badge>
             </div>

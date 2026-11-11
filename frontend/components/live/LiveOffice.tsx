@@ -60,13 +60,20 @@ export function LiveOffice({ businessId }: { businessId: string }) {
     (agent) => agent.status === "working" || agent.status === "thinking",
   );
   const activeProject = projects.find((project) => project.status !== "completed") ?? projects[0];
+  const agentsReady = agentsSlice.status === "ready";
 
   return (
     <>
       <PageHeader
         title="AI Office"
         badge={<LiveBadge />}
-        sub={`${hiredAgents.length} AI employee${hiredAgents.length === 1 ? "" : "s"} · ${workingNow.length} active now`}
+        sub={
+          agentsReady
+            ? `${hiredAgents.length} AI employee${hiredAgents.length === 1 ? "" : "s"} · ${workingNow.length} active now`
+            : agentsSlice.status === "error"
+              ? "AI team unavailable"
+              : "Loading AI team…"
+        }
         actions={
           <div className="flex items-center gap-1 rounded-[10px] border border-mist-200 bg-white p-1 dark:border-white/10 dark:bg-night-900">
             <span className="hidden px-2 text-[12px] text-ink-400 sm:block">View:</span>
@@ -106,7 +113,11 @@ export function LiveOffice({ businessId }: { businessId: string }) {
           </div>
 
           {(view === "Office" || view === "Live") &&
-            (hiredAgents.length === 0 ? (
+            (agentsSlice.status === "error" ? (
+              <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
+            ) : !agentsReady ? (
+              <p role="status" className="text-[13px] text-ink-400">Loading team…</p>
+            ) : hiredAgents.length === 0 ? (
               <p className="rounded-xl bg-mist-50 p-3 text-[13px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
                 No AI employees yet. Hire a specialist from the marketplace.
               </p>
@@ -156,11 +167,11 @@ export function LiveOffice({ businessId }: { businessId: string }) {
 
           {view === "Timeline" && (
             <div className="flex max-h-[420px] flex-col gap-0 overflow-y-auto">
-              {activitySlice.status === "loading" && (
-                <p className="text-[13px] text-ink-400">Loading timeline…</p>
+              {(activitySlice.status === "idle" || activitySlice.status === "loading") && (
+                <p role="status" className="text-[13px] text-ink-400">Loading timeline…</p>
               )}
               {activitySlice.status === "error" && (
-                <p className="text-[13px] text-red-500">{activitySlice.error}</p>
+                <p role="alert" className="text-[13px] text-red-500">{activitySlice.error}</p>
               )}
               {activitySlice.status === "ready" && events.length === 0 && (
                 <p className="text-[13px] text-ink-400">No activity recorded yet.</p>
@@ -198,12 +209,13 @@ export function LiveOffice({ businessId }: { businessId: string }) {
 
           {view === "Whiteboard" && (
             <div className="grid gap-2 sm:grid-cols-2">
-              {tasksSlice.status === "loading" && (
-                <p className="text-[13px] text-ink-400">Loading tasks…</p>
-              )}
-              {tasksSlice.status === "error" && (
-                <p className="text-[13px] text-red-500">{tasksSlice.error}</p>
-              )}
+              {projectsSlice.status === "error" ? (
+                <p role="alert" className="text-[13px] text-red-500">{projectsSlice.error}</p>
+              ) : tasksSlice.status === "idle" || tasksSlice.status === "loading" ? (
+                <p role="status" className="text-[13px] text-ink-400">Loading tasks…</p>
+              ) : tasksSlice.status === "error" ? (
+                <p role="alert" className="text-[13px] text-red-500">{tasksSlice.error}</p>
+              ) : null}
               {tasks.map((task) => {
                 const owner = agents.find((agent) => agent.id === task.ownerAgentId);
                 const deps = task.dependsOn
@@ -243,7 +255,13 @@ export function LiveOffice({ businessId }: { businessId: string }) {
               <span className="text-[11px] text-ink-400">server events</span>
             </div>
             <div className="flex max-h-[380px] flex-col overflow-y-auto">
-              {events.length === 0 && activitySlice.status !== "loading" && (
+              {(activitySlice.status === "idle" || activitySlice.status === "loading") && (
+                <p role="status" className="text-[12.5px] text-ink-400">Loading activity…</p>
+              )}
+              {activitySlice.status === "error" && (
+                <p role="alert" className="text-[12.5px] text-red-500">{activitySlice.error}</p>
+              )}
+              {activitySlice.status === "ready" && events.length === 0 && (
                 <p className="text-[12.5px] text-ink-400">No activity recorded yet.</p>
               )}
               {events.map((event) => (

@@ -63,7 +63,9 @@ export function UsagePanel({
         <span className="text-[11.5px] text-ink-400">
           {status === "loading" || status === "idle"
             ? "Loading…"
-            : `${total} accounted call${total === 1 ? "" : "s"}`}
+            : status === "error"
+              ? "Unavailable"
+              : `${total} accounted call${total === 1 ? "" : "s"}`}
         </span>
       </div>
 
@@ -96,14 +98,17 @@ export function UsagePanel({
       )}
 
       {status === "error" && (
-        <p className="mt-3 text-[12.5px] text-amber-700 dark:text-amber-300">
+        <p role="alert" className="mt-3 text-[12.5px] text-amber-700 dark:text-amber-300">
           Usage unavailable ({error ?? "load failed"}). Totals show “—” instead of $0.00.
         </p>
       )}
 
       {status !== "error" && records.length === 0 && (
-        <p className="mt-3 text-[12.5px] text-ink-400">
-          {status === "loading"
+        <p
+          role={status === "idle" || status === "loading" ? "status" : undefined}
+          className="mt-3 text-[12.5px] text-ink-400"
+        >
+          {status === "idle" || status === "loading"
             ? "Loading usage…"
             : projectId
               ? "No AI calls recorded yet for this project."

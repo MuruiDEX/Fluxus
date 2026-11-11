@@ -276,6 +276,7 @@ describe("card and badge primitives", () => {
  */
 describe("page consumers adopt the shared primitives", () => {
   const projects = read("app/(app)/projects/page.tsx");
+  const projectStatus = read("lib/project-status.ts");
   const agents = read("app/(app)/agents/page.tsx");
   const marketplace = read("app/(app)/marketplace/page.tsx");
   const detail = read("app/(app)/marketplace/[slug]/view.tsx");
@@ -283,14 +284,16 @@ describe("page consumers adopt the shared primitives", () => {
   it("moves project status pills onto Badge tones", () => {
     expect(projects).not.toContain("STATUS_CLASS");
     expect(projects).toMatch(/\bBadge\b[^;]*from "@\/components\/system\/badges"/);
-    expect(projects).toContain("<Badge tone={STATUS_TONE[status.tone]}");
+    expect(projects).toContain("<Badge tone={PROJECT_STATUS_BADGE_TONE[status.tone]}");
+    // The tone adapter lives in the canonical project-status module.
+    expect(projects).not.toContain("const STATUS_TONE");
 
-    const start = projects.indexOf("const STATUS_TONE");
-    const end = projects.indexOf("};", start);
+    const start = projectStatus.indexOf("const PROJECT_STATUS_BADGE_TONE");
+    const end = projectStatus.indexOf("};", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
 
-    const toneBlock = projects.slice(start, end);
+    const toneBlock = projectStatus.slice(start, end);
     const tones: Record<string, string> = {
       planning: "neutral",
       active: "brand",

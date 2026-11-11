@@ -98,8 +98,10 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
 
       {businessSlice.status === "error" ? (
         <Card className="p-8 text-center">
-          <p className="text-[14px] font-semibold">Couldn&apos;t load analytics</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessSlice.error}</p>
+          <div role="alert">
+            <p className="text-[14px] font-semibold">Couldn&apos;t load analytics</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-ink-500">{businessSlice.error}</p>
+          </div>
           <div className="mt-3 flex justify-center">
             <PrimaryButton onClick={() => void businessSlice.load(businessId)}>Retry</PrimaryButton>
           </div>
@@ -108,7 +110,7 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
         <>
           {(usageFailed || projectsFailed) && (
             <Card className="flex flex-wrap items-center gap-3 border-amber-200 bg-amber-50 p-3 text-[12.5px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-              <span className="min-w-0 flex-1 leading-5">
+              <span role="alert" className="min-w-0 flex-1 leading-5">
                 Some analytics could not be loaded. Dependent figures show “—” rather than a
                 balance the server never reported.
               </span>
@@ -139,7 +141,13 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
               <p className="mt-1 text-[22px] font-bold tabular-nums">
                 <MoneyValue state={usageState} value={totalCommitted} />
               </p>
-              <p className="mt-1 text-[11.5px] text-ink-400">{summary.unknownCount} unpriced calls</p>
+              <p className="mt-1 text-[11.5px] text-ink-400">
+                {usageState === "pending"
+                  ? "Loading unpriced calls…"
+                  : usageState === "unavailable"
+                    ? "Unpriced data unavailable"
+                    : `${summary.unknownCount} unpriced calls`}
+              </p>
             </Card>
             <Card className="p-4">
               <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">
@@ -184,9 +192,9 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
                 )}
               </div>
               {usageSlice.status === "error" ? (
-                <p className="text-[13px] text-red-500">{usageSlice.error}</p>
+                <p role="alert" className="text-[13px] text-red-500">{usageSlice.error}</p>
               ) : usageSlice.status !== "ready" ? (
-                <p className="text-[13px] text-ink-400">Loading cost data…</p>
+                <p role="status" className="text-[13px] text-ink-400">Loading cost data…</p>
               ) : byKind.length === 0 ? (
                 <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
                   No billable AI calls recorded yet.
@@ -209,11 +217,11 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
 
             <Card className="p-4">
               <h3 className="mb-2 text-[13px] font-bold">Project AI budgets</h3>
-              {projectsSlice.status === "loading" && (
-                <p className="text-[13px] text-ink-400">Loading projects…</p>
+              {(projectsSlice.status === "idle" || projectsSlice.status === "loading") && (
+                <p role="status" className="text-[13px] text-ink-400">Loading projects…</p>
               )}
               {projectsSlice.status === "error" && (
-                <p className="text-[13px] text-red-500">{projectsSlice.error}</p>
+                <p role="alert" className="text-[13px] text-red-500">{projectsSlice.error}</p>
               )}
               {projectsSlice.status === "ready" && projects.length === 0 && (
                 <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
@@ -246,11 +254,11 @@ export function LiveAnalytics({ businessId }: { businessId: string }) {
                 <span className="text-[11.5px] text-ink-400">{business.name}</span>
               )}
             </div>
-            {agentsSlice.status === "loading" && (
-              <p className="text-[13px] text-ink-400">Loading workforce…</p>
+            {(agentsSlice.status === "idle" || agentsSlice.status === "loading") && (
+              <p role="status" className="text-[13px] text-ink-400">Loading workforce…</p>
             )}
             {agentsSlice.status === "error" && (
-              <p className="text-[13px] text-red-500">{agentsSlice.error}</p>
+              <p role="alert" className="text-[13px] text-red-500">{agentsSlice.error}</p>
             )}
             {agentsSlice.status === "ready" && agents.length === 0 && (
               <p className="text-[13px] text-ink-400">No hired AI employees yet.</p>

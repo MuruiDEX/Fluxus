@@ -3,6 +3,7 @@
 import { Pause, Play, RotateCcw, Square, StepForward } from "lucide-react";
 import { pauseLoop, resetScope, resumeLoop, startLoop, stopLoop, tickOnce, useEngine } from "@/lib/sim/engine";
 import type { Scope } from "@/lib/sim/core";
+import { Badge } from "@/components/system/badges";
 import { cn } from "@/lib/cn";
 
 export function EngineControls({ scope, compact }: { scope: Scope; compact?: boolean }) {
@@ -10,16 +11,15 @@ export function EngineControls({ scope, compact }: { scope: Scope; compact?: boo
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span
-        className={cn(
-          "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-semibold",
-          running
-            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-            : "bg-mist-100 text-ink-500 dark:bg-white/10 dark:text-slate-300",
-        )}
-      >
-        <span className={cn("h-1.5 w-1.5 rounded-full", running ? "animate-pulse-dot bg-emerald-500" : "bg-current")} />
+      <Badge tone={running ? "success" : "neutral"} className="gap-1.5 px-2.5 py-1 font-semibold">
+        <span
+          aria-hidden="true"
+          className={cn("h-1.5 w-1.5 rounded-full bg-current", running && "animate-pulse-dot")}
+        />
         {running ? `Executing · tick ${tickCount}` : paused ? `Paused · tick ${tickCount}` : "Idle"}
+      </Badge>
+      <span className="sr-only" role="status" aria-atomic="true">
+        {running ? "Engine executing" : paused ? "Engine paused" : "Engine idle"}
       </span>
       {!running && !paused && (
         <button
