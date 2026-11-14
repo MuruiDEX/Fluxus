@@ -32,6 +32,10 @@ import type {
 
 export type WorkflowMode = "demo" | "live";
 export type ActivityScope = "business" | "project";
+export type WorkflowApprovalCompleteness =
+  | "complete"
+  | "partial"
+  | "unavailable";
 
 export type WorkflowLaneKey =
   | "running"
@@ -65,6 +69,11 @@ export interface WorkflowInput {
   readonly events: readonly ActivityEvent[];
   readonly mode: WorkflowMode;
   readonly activityScope: ActivityScope;
+  /**
+   * Caller-supplied provenance. Omit it when the caller cannot prove the
+   * supplied approvals are the complete dataset; omission means partial.
+   */
+  readonly approvalsCompleteness?: WorkflowApprovalCompleteness;
 }
 
 export interface WorkflowDependencyRef {
@@ -76,6 +85,8 @@ export interface WorkflowDependencyRef {
 
 export interface WorkflowTaskView {
   readonly task: WorkflowTaskInput;
+  /** Stable per-input-occurrence identity; survives lane/status changes. */
+  readonly viewKey: string;
   readonly lane: WorkflowLaneKey;
   readonly rawStatus: string;
   readonly knownStatus: TaskStatus | null;
@@ -161,6 +172,9 @@ export interface WorkflowApprovals {
   readonly unknownCount: number;
   readonly href: string;
   readonly note: string;
+  /** Explicit caller provenance; never inferred from mode. */
+  readonly completeness: WorkflowApprovalCompleteness;
+  readonly completenessNote: string;
 }
 
 export interface WorkflowReview {
@@ -575,6 +589,15 @@ function classifyTask(
 
 export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
   const project = input.project ?? null;
+  // Demo activity is business-wide by construction. A caller cannot make it
+  // project-scoped merely by passing the contradictory scope.
+  const activityScope: ActivityScope =
+    input.mode === "demo" ? "business" : input.activityScope;
+  // Completeness is explicit provenance, not a mode assumption. Omission is
+  // deliberately conservative: the supplied list becomes a partial dataset.
+  const approvalsCompleteness: WorkflowApprovalCompleteness = project
+    ? (input.approvalsCompleteness ?? "partial")
+    : "unavailable";
   const projectApprovals = project
     ? input.approvals.filter((approval) => approval.projectId === project.id)
     : [];
@@ -600,7 +623,10 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
   }
 
   const taskViews: WorkflowTaskView[] = [];
+  const occurrenceById = new Map<string, number>();
   for (const task of projectTasks) {
+    const occurrence = occurrenceById.get(task.id) ?? 0;
+    occurrenceById.set(task.id, occurrence + 1);
     const waitingOn = resolveDependencies(task, tasksById);
     const {
       gate,
@@ -620,6 +646,9 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
     );
     taskViews.push({
       task,
+      // encodeURIComponent keeps the id delimiter-safe, so duplicate ids get
+      // distinct keys without colliding with ids that contain punctuation.
+      viewKey: `${encodeURIComponent(task.id)}:${occurrence}`,
       lane,
       rawStatus: String(task.status),
       knownStatus: isTaskStatus(task.status) ? task.status : null,
@@ -721,11 +750,11 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
 
   const approvals: WorkflowApprovals = {
     key: "approvals",
-    state: project
-      ? projectApprovals.length === 0
+    state: !project || approvalsCompleteness === "unavailable"
+      ? "unavailable"
+      : projectApprovals.length === 0
         ? "empty"
-        : "available"
-      : "unavailable",
+        : "available",
     pending,
     decided,
     unknown,
@@ -735,11 +764,21 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
     href: "/approvals",
     note: !project
       ? "No project selected."
-      : projectApprovals.length === 0
-        ? "No approvals in the provided list for this project."
-        : pending.length > 0
-          ? `${pending.length} pending approval${pending.length === 1 ? "" : "s"} for this project.`
-          : `${decided.length} decided approval${decided.length === 1 ? "" : "s"}; none pending.`,
+      : approvalsCompleteness === "unavailable"
+        ? "No approval data source is available for this project."
+        : projectApprovals.length === 0
+          ? "No approvals in the provided list for this project."
+          : pending.length > 0
+            ? `${pending.length} pending approval${pending.length === 1 ? "" : "s"} in the provided list.`
+            : `${decided.length} decided approval${decided.length === 1 ? "" : "s"} in the provided list; none pending.`,
+    completeness: approvalsCompleteness,
+    completenessNote: !project
+      ? "No project selected."
+      : approvalsCompleteness === "complete"
+        ? "Complete local dataset confirmed by the caller for this project."
+        : approvalsCompleteness === "partial"
+          ? "Counts reflect only the supplied dataset or page; a project-wide total is not confirmed."
+          : "No approval data source is available for this project.",
   };
 
   const parallelWork: WorkflowParallelWork = {
@@ -831,18 +870,18 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
   };
 
   const activity: WorkflowActivity = {
-    scope: input.activityScope,
-    scopedToProject: input.activityScope === "project",
+    scope: activityScope,
+    scopedToProject: activityScope === "project",
     preview: input.events.slice(0, 8),
     providedCount: input.events.length,
     label:
-      input.activityScope === "project"
+      activityScope === "project"
         ? "Project activity"
         : input.mode === "demo"
           ? "Business activity (demo)"
           : "Business activity",
     note:
-      input.activityScope === "project"
+      activityScope === "project"
         ? "Project-scoped activity provided by the caller."
         : input.mode === "demo"
           ? "Demo activity is business-wide and cannot be attributed to one project."
@@ -865,7 +904,7 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
       "Live approvals and activity are caller-supplied pages; completeness is not verifiable here.",
     );
   }
-  if (input.activityScope === "business") {
+  if (activityScope === "business") {
     limitations.add(
       input.mode === "demo"
         ? "Demo activity is business-wide and cannot be attributed to one project."

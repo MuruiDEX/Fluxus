@@ -637,6 +637,35 @@ describe("lane invariants", () => {
       "First",
       "Second",
     ]);
+    expect(new Set(model.tasks.map((view) => view.viewKey)).size).toBe(2);
+  });
+
+  it("keeps a task view key stable when its lane changes", () => {
+    const base = makeTask({ id: "t_move", title: "Move" });
+    const running = build({ tasks: [{ ...base, status: "working" }] });
+    const completed = build({ tasks: [{ ...base, status: "completed" }] });
+
+    expect(taskView(running, "t_move").lane).toBe("running");
+    expect(taskView(completed, "t_move").lane).toBe("completed");
+    expect(taskView(running, "t_move").viewKey).toBe(
+      taskView(completed, "t_move").viewKey,
+    );
+  });
+
+  it("keeps view keys independent of lane-local positions", () => {
+    const tasks = [
+      makeTask({ id: "t_a", title: "A", status: "working" }),
+      makeTask({ id: "t_b", title: "B", status: "working" }),
+    ];
+    const before = build({ tasks });
+    const after = build({
+      tasks: [{ ...tasks[0], status: "completed" }, tasks[1]],
+    });
+
+    expect(taskView(before, "t_a").viewKey).toBe(taskView(after, "t_a").viewKey);
+    expect(taskView(before, "t_b").viewKey).toBe(taskView(after, "t_b").viewKey);
+    expect(taskView(before, "t_b").lane).toBe("running");
+    expect(taskView(after, "t_b").lane).toBe("running");
   });
 
   it("resolves task owners without inventing agents", () => {
@@ -1079,12 +1108,69 @@ describe("approvals", () => {
     expect(view.lane).toBe("ready");
   });
 
-  it("documents that caller-supplied approval pages are not verifiably complete", () => {
-    const model = build({ mode: "live" });
+  it("accepts explicit partial provenance for a caller-supplied LIVE page", () => {
+    const model = build({
+      mode: "live",
+      approvalsCompleteness: "partial",
+    });
 
     expect(model.limitations.join(" ")).toContain(
       "completeness is not verifiable",
     );
+    expect(model.approvals.completeness).toBe("partial");
+    expect(model.approvals.completenessNote).toContain(
+      "project-wide total is not confirmed",
+    );
+  });
+
+  it("accepts explicit complete provenance for the full DEMO dataset", () => {
+    const model = build({
+      mode: "demo",
+      approvalsCompleteness: "complete",
+    });
+
+    expect(model.approvals.completeness).toBe("complete");
+    expect(model.approvals.completenessNote).toBe(
+      "Complete local dataset confirmed by the caller for this project.",
+    );
+  });
+
+  it("accepts explicit partial provenance for a DEMO subset", () => {
+    const model = build({
+      mode: "demo",
+      approvalsCompleteness: "partial",
+      approvals: [makeApproval({ id: "ap_subset" })],
+    });
+
+    expect(model.approvals.completeness).toBe("partial");
+    expect(model.approvals.completeness).not.toBe("complete");
+    expect(model.approvals.completenessNote).toContain(
+      "project-wide total is not confirmed",
+    );
+    expect(model.approvals.completenessNote).not.toContain(
+      "Complete local dataset confirmed",
+    );
+  });
+
+  it("defaults omitted completeness to partial even in DEMO mode", () => {
+    const model = build({ mode: "demo" });
+
+    expect(model.approvals.completeness).toBe("partial");
+    expect(model.approvals.completenessNote).toContain(
+      "project-wide total is not confirmed",
+    );
+  });
+
+  it("keeps approvals unavailable when no project is selected", () => {
+    const model = build({
+      project: null,
+      mode: "demo",
+      approvalsCompleteness: "complete",
+    });
+
+    expect(model.approvals.state).toBe("unavailable");
+    expect(model.approvals.completeness).toBe("unavailable");
+    expect(model.approvals.completenessNote).toBe("No project selected.");
   });
 });
 
@@ -1135,6 +1221,21 @@ describe("activity", () => {
     expect(model.activity.scopedToProject).toBe(false);
     expect(model.activity.label).toBe("Business activity (demo)");
     expect(model.activity.note).toContain("business-wide");
+    expect(model.limitations.join(" ")).toContain("business-wide");
+  });
+
+  it("normalizes a contradictory demo project scope to business-wide", () => {
+    const model = build({
+      mode: "demo",
+      activityScope: "project",
+      events: [makeEvent("evt_demo")],
+    });
+
+    expect(model.activity.scope).toBe("business");
+    expect(model.activity.scopedToProject).toBe(false);
+    expect(model.activity.label).toBe("Business activity (demo)");
+    expect(model.activity.note).toContain("business-wide");
+    expect(model.activity.note).not.toContain("Project-scoped");
     expect(model.limitations.join(" ")).toContain("business-wide");
   });
 
@@ -1190,7 +1291,12 @@ describe("demo and live parity", () => {
       events: [makeEvent("evt_1")],
     };
 
-    const demo = build({ ...shared, mode: "demo", activityScope: "business" });
+    const demo = build({
+      ...shared,
+      mode: "demo",
+      activityScope: "business",
+      approvalsCompleteness: "complete",
+    });
     const live = build({ ...shared, mode: "live", activityScope: "project" });
 
     expect(demo.tasks).toEqual(live.tasks);
@@ -1200,7 +1306,13 @@ describe("demo and live parity", () => {
     expect(demo.review).toEqual(live.review);
     expect(demo.goal).toEqual(live.goal);
     expect(demo.teamLead).toEqual(live.teamLead);
-    expect(demo.approvals).toEqual(live.approvals);
+    expect(demo.approvals.pending).toEqual(live.approvals.pending);
+    expect(demo.approvals.decided).toEqual(live.approvals.decided);
+    expect(demo.approvals.unknown).toEqual(live.approvals.unknown);
+    expect(demo.approvals.pendingCount).toBe(live.approvals.pendingCount);
+    expect(demo.approvals.decidedCount).toBe(live.approvals.decidedCount);
+    expect(demo.approvals.completeness).toBe("complete");
+    expect(live.approvals.completeness).toBe("partial");
   });
 });
 

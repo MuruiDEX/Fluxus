@@ -129,12 +129,19 @@ test("task failure and retry operate on shared engine state", async ({ page }) =
   await expect(page.getByRole("button", { name: "Simulate failure" }).first()).toBeVisible();
 });
 
-test("office views, command bar, dark mode and mobile nav", async ({ page }) => {
+test("office workflow, command bar, dark mode and mobile nav", async ({ page }) => {
   await ready(page, "/office");
-  await page.getByRole("button", { name: "Timeline", exact: true }).click();
-  await expect(page.getByText("Execution timeline")).toBeVisible();
-  await page.getByRole("button", { name: "Whiteboard", exact: true }).click();
-  await expect(page.getByText("Plan whiteboard")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workflow" })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Goal → Team Lead → Parallel work → Approvals → Review → Brain",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Running", exact: true })).toBeVisible();
+  await expect(page.getByText("Business activity (demo)", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Timeline", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Plan whiteboard")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Whiteboard", exact: true })).toHaveCount(0);
 
   // Command bar opens with Ctrl+K and starts a Team Lead flow.
   await page.keyboard.press("Control+k");
