@@ -39,7 +39,13 @@ function mockLive(scenarios: Scenario[], opts?: { honorAbort?: boolean }) {
   return { calls, aborted };
 }
 
-function projectPage(ids: string[]) {
+interface PageMeta {
+  offset?: number;
+  total?: number;
+  limit?: number;
+}
+
+function projectPage(ids: string[], meta: PageMeta = {}) {
   return {
     items: ids.map((id, i) => ({
       id,
@@ -56,14 +62,14 @@ function projectPage(ids: string[]) {
       milestones: [],
       contract: "v1",
     })),
-    total: ids.length,
-    limit: 200,
-    offset: 0,
+    total: meta.total ?? ids.length,
+    limit: meta.limit ?? 200,
+    offset: meta.offset ?? 0,
     contract: "v1",
   };
 }
 
-function taskPage(ids: string[], projectId = "proj_1") {
+function taskPage(ids: string[], projectId = "proj_1", meta: PageMeta = {}) {
   return {
     items: ids.map((id) => ({
       id,
@@ -82,14 +88,14 @@ function taskPage(ids: string[], projectId = "proj_1") {
       costRate: null,
       contract: "v1",
     })),
-    total: ids.length,
-    limit: 200,
-    offset: 0,
+    total: meta.total ?? ids.length,
+    limit: meta.limit ?? 200,
+    offset: meta.offset ?? 0,
     contract: "v1",
   };
 }
 
-function agentPage(ids: string[]) {
+function agentPage(ids: string[], meta: PageMeta = {}) {
   return {
     items: ids.map((id) => ({
       id,
@@ -107,9 +113,9 @@ function agentPage(ids: string[]) {
       avatarHue: 200,
       contract: "v1",
     })),
-    total: ids.length,
-    limit: 200,
-    offset: 0,
+    total: meta.total ?? ids.length,
+    limit: meta.limit ?? 200,
+    offset: meta.offset ?? 0,
     contract: "v1",
   };
 }
@@ -252,6 +258,122 @@ describe("live projects", () => {
     expect(s.projects).toEqual([]);
     expect(s.total).toBe(0);
   });
+
+  it("loads every project page and exposes no partial result while loading", async () => {
+    const { calls } = mockLive([
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=0"),
+        status: 200,
+        body: projectPage(["proj_1", "proj_2"], { total: 3 }),
+      },
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=2"),
+        status: 200,
+        body: projectPage(["proj_3"], { total: 3, offset: 2 }),
+        delayMs: 30,
+      },
+    ]);
+    const pending = useLiveProjects.getState().load("biz_test");
+    expect(useLiveProjects.getState().status).toBe("loading");
+    expect(useLiveProjects.getState().projects).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(useLiveProjects.getState().status).toBe("loading");
+    expect(useLiveProjects.getState().projects).toEqual([]);
+
+    await pending;
+    const s = useLiveProjects.getState();
+    expect(s.status).toBe("ready");
+    expect(s.projects.map((p) => p.id)).toEqual(["proj_1", "proj_2", "proj_3"]);
+    expect(s.total).toBe(3);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("does not publish a partial project page when a later page fails", async () => {
+    mockLive([
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=0"),
+        status: 200,
+        body: projectPage(["proj_1", "proj_2"], { total: 3 }),
+      },
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=2"),
+        status: 500,
+        body: { error: { code: "internal", message: "Page two failed." } },
+      },
+    ]);
+    await useLiveProjects.getState().load("biz_test");
+    const s = useLiveProjects.getState();
+    expect(s.status).toBe("error");
+    expect(s.projects).toEqual([]);
+    expect(s.total).toBe(0);
+    expect(s.error).toContain("Page two failed.");
+  });
+
+  it("rejects an empty intermediate page that cannot reach its total", async () => {
+    mockLive([
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=0"),
+        status: 200,
+        body: projectPage(["proj_1", "proj_2"], { total: 3 }),
+      },
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=2"),
+        status: 200,
+        body: projectPage([], { total: 3, offset: 2 }),
+      },
+    ]);
+    await useLiveProjects.getState().load("biz_test");
+    const s = useLiveProjects.getState();
+    expect(s.status).toBe("error");
+    expect(s.projects).toEqual([]);
+    expect(s.error).toContain("no progress");
+  });
+
+  it("rejects a total that changes between pages", async () => {
+    mockLive([
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=0"),
+        status: 200,
+        body: projectPage(["proj_1", "proj_2"], { total: 3 }),
+      },
+      {
+        test: (u) => /\/projects\?/.test(u) && u.includes("offset=2"),
+        status: 200,
+        body: projectPage(["proj_3"], { total: 4, offset: 2 }),
+      },
+    ]);
+    await useLiveProjects.getState().load("biz_test");
+    const s = useLiveProjects.getState();
+    expect(s.status).toBe("error");
+    expect(s.projects).toEqual([]);
+    expect(s.error).toContain("changed its total");
+  });
+
+  it("does not let a superseded multi-page load publish after its first page", async () => {
+    mockLive(
+      [
+        {
+          test: (u) => u.includes("biz_slow") && /\/projects\?/.test(u),
+          status: 200,
+          body: projectPage(["slow_1", "slow_2"], { total: 3 }),
+          delayMs: 40,
+        },
+        {
+          test: (u) => u.includes("biz_fast") && /\/projects\?/.test(u),
+          status: 200,
+          body: projectPage(["fast"]),
+        },
+      ],
+      { honorAbort: false },
+    );
+    const slow = useLiveProjects.getState().load("biz_slow");
+    await useLiveProjects.getState().load("biz_fast");
+    await slow;
+    const s = useLiveProjects.getState();
+    expect(s.businessId).toBe("biz_fast");
+    expect(s.projects.map((p) => p.id)).toEqual(["fast"]);
+  });
 });
 
 describe("live project detail", () => {
@@ -339,6 +461,120 @@ describe("live tasks", () => {
     expect(s.tasks.map((t) => t.projectId)).toEqual(["proj_1", "proj_2"]);
   });
 
+  it("loads every page for one project", async () => {
+    mockLive([
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=0"),
+        status: 200,
+        body: taskPage(["t_1", "t_2"], "proj_1", { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=2"),
+        status: 200,
+        body: taskPage(["t_3"], "proj_1", { total: 3, offset: 2 }),
+      },
+    ]);
+    await useLiveTasks.getState().load("biz_test", "proj_1");
+    const s = useLiveTasks.getState();
+    expect(s.status).toBe("ready");
+    expect(s.tasks.map((t) => t.id)).toEqual(["t_1", "t_2", "t_3"]);
+    expect(s.tasks.every((t) => t.projectId === "proj_1")).toBe(true);
+  });
+
+  it("loads every page for multiple projects without duplicates or scope drift", async () => {
+    mockLive([
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=0"),
+        status: 200,
+        body: taskPage(["t_1", "t_2"], "proj_1", { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=2"),
+        status: 200,
+        body: taskPage(["t_3"], "proj_1", { total: 3, offset: 2 }),
+      },
+      {
+        test: (u) => u.includes("/projects/proj_2/tasks") && u.includes("offset=0"),
+        status: 200,
+        body: taskPage(["t_4", "t_5"], "proj_2", { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/projects/proj_2/tasks") && u.includes("offset=2"),
+        status: 200,
+        body: taskPage(["t_6"], "proj_2", { total: 3, offset: 2 }),
+      },
+    ]);
+    await useLiveTasks.getState().loadAll("biz_test", ["proj_1", "proj_2"]);
+    const s = useLiveTasks.getState();
+    expect(s.status).toBe("ready");
+    expect(s.tasks.map((t) => t.id)).toEqual(["t_1", "t_2", "t_3", "t_4", "t_5", "t_6"]);
+    expect(new Set(s.tasks.map((t) => t.id)).size).toBe(6);
+    expect(s.tasks.filter((t) => t.projectId === "proj_1")).toHaveLength(3);
+    expect(s.tasks.filter((t) => t.projectId === "proj_2")).toHaveLength(3);
+  });
+
+  it("does not publish a partial task list when a later page fails", async () => {
+    mockLive([
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=0"),
+        status: 200,
+        body: taskPage(["t_1", "t_2"], "proj_1", { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=2"),
+        status: 500,
+        body: { error: { code: "internal", message: "Task page two failed." } },
+      },
+    ]);
+    await useLiveTasks.getState().load("biz_test", "proj_1");
+    const s = useLiveTasks.getState();
+    expect(s.status).toBe("error");
+    expect(s.tasks).toEqual([]);
+    expect(s.error).toContain("Task page two failed.");
+  });
+
+  it("reset invalidates an in-flight multi-page task load", async () => {
+    mockLive([
+      {
+        test: (u) => u.includes("/projects/proj_1/tasks") && u.includes("offset=0"),
+        status: 200,
+        body: taskPage(["t_1", "t_2"], "proj_1", { total: 3 }),
+        delayMs: 40,
+      },
+    ]);
+    const pending = useLiveTasks.getState().load("biz_test", "proj_1");
+    useLiveTasks.getState().reset();
+    await pending;
+    const s = useLiveTasks.getState();
+    expect(s.status).toBe("idle");
+    expect(s.tasks).toEqual([]);
+  });
+
+  it("does not let a superseded multi-page task load publish", async () => {
+    mockLive(
+      [
+        {
+          test: (u) => u.includes("biz_slow") && u.includes("/tasks"),
+          status: 200,
+          body: taskPage(["slow_1", "slow_2"], "proj_1", { total: 3 }),
+          delayMs: 40,
+        },
+        {
+          test: (u) => u.includes("biz_fast") && u.includes("/tasks"),
+          status: 200,
+          body: taskPage(["fast"], "proj_2"),
+        },
+      ],
+      { honorAbort: false },
+    );
+    const slow = useLiveTasks.getState().loadAll("biz_slow", ["proj_1"]);
+    await useLiveTasks.getState().loadAll("biz_fast", ["proj_2"]);
+    await slow;
+    const s = useLiveTasks.getState();
+    expect(s.key).toBe("biz_fast/*");
+    expect(s.tasks.map((t) => t.id)).toEqual(["fast"]);
+  });
+
   it("401 is recorded (the session layer falls back to DEMO)", async () => {
     mockLive([
       {
@@ -365,6 +601,28 @@ describe("live agents cache", () => {
     const count = calls.length;
     await useLiveAgents.getState().ensure("biz_test");
     expect(calls.length).toBe(count);
+  });
+
+  it("loads every page for the agents display cache", async () => {
+    const { calls } = mockLive([
+      {
+        test: (u) => u.includes("/businesses/biz_test/agents") && u.includes("offset=0"),
+        status: 200,
+        body: agentPage(["ag_1", "ag_2"], { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/businesses/biz_test/agents") && u.includes("offset=2"),
+        status: 200,
+        body: agentPage(["ag_3"], { total: 3, offset: 2 }),
+      },
+    ]);
+    await useLiveAgents.getState().ensure("biz_test");
+    expect(useLiveAgents.getState().agents.map((a) => a.id)).toEqual([
+      "ag_1",
+      "ag_2",
+      "ag_3",
+    ]);
+    expect(calls).toHaveLength(2);
   });
 });
 

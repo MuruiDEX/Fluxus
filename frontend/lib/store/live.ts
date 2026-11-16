@@ -32,6 +32,7 @@ import {
   apiListUsage,
   apiPreviewPack,
   isAbortError,
+  type ApiPage,
   type BrainCategory,
 } from "@/lib/api";
 import type { SessionStatus } from "@/lib/store/auth";
@@ -103,6 +104,67 @@ async function runLoad<T extends object>(
   } finally {
     if (ctl.controller === controller) ctl.controller = null;
   }
+}
+
+const LIVE_PAGE_LIMIT = 200;
+
+/**
+ * Fetch every page of a list into a local collection. Nothing is published
+ * until total/progress metadata proves the collection is complete.
+ */
+async function loadAllPages<T>(
+  fetchPage: (offset: number) => Promise<ApiPage<T>>,
+  idOf: (item: T) => string,
+  signal: AbortSignal,
+): Promise<{ items: T[]; total: number }> {
+  const byId = new Map<string, T>();
+  let offset = 0;
+  let expectedTotal: number | null = null;
+
+  while (expectedTotal === null || offset < expectedTotal) {
+    if (signal.aborted) {
+      throw new DOMException("aborted", "AbortError");
+    }
+    const page = await fetchPage(offset);
+    if (!Array.isArray(page.items)) {
+      throw new Error("LIVE pagination returned an invalid items list.");
+    }
+    if (!Number.isInteger(page.total) || page.total < 0) {
+      throw new Error("LIVE pagination returned an invalid total.");
+    }
+    if (!Number.isInteger(page.limit) || page.limit <= 0) {
+      throw new Error("LIVE pagination returned an invalid page limit.");
+    }
+    if (!Number.isInteger(page.offset) || page.offset !== offset) {
+      throw new Error("LIVE pagination returned an unexpected offset.");
+    }
+    if (page.items.length > page.limit) {
+      throw new Error("LIVE pagination returned more rows than its page limit.");
+    }
+    if (expectedTotal === null) expectedTotal = page.total;
+    else if (page.total !== expectedTotal) {
+      throw new Error("LIVE pagination changed its total between pages.");
+    }
+
+    if (page.items.length === 0) {
+      if (offset < expectedTotal) {
+        throw new Error("LIVE pagination made no progress before its total.");
+      }
+      break;
+    }
+
+    for (const item of page.items) byId.set(idOf(item), item);
+    offset += page.items.length;
+    if (offset > expectedTotal) {
+      throw new Error("LIVE pagination returned more rows than its total.");
+    }
+  }
+
+  if (expectedTotal === null) expectedTotal = 0;
+  if (byId.size !== expectedTotal) {
+    throw new Error("LIVE pagination did not return every row exactly once.");
+  }
+  return { items: Array.from(byId.values()), total: expectedTotal };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,11 +247,20 @@ export const useLiveProjects = create<LiveProjectsState>((set) => ({
       set,
       { status: "loading", businessId, projects: [], total: 0, error: null },
       async (signal) => {
-        const page = await apiListProjects(businessId, { limit: 200 }, { signal });
+        const complete = await loadAllPages(
+          (offset) =>
+            apiListProjects(
+              businessId,
+              { limit: LIVE_PAGE_LIMIT, offset },
+              { signal },
+            ),
+          (project) => project.id,
+          signal,
+        );
         return {
           status: "ready" as const,
-          projects: page.items.map(toDomainProject),
-          total: page.total,
+          projects: complete.items.map(toDomainProject),
+          total: complete.total,
           error: null,
         };
       },
@@ -302,8 +373,22 @@ export const useLiveTasks = create<LiveTasksState>((set) => ({
       set,
       { status: "loading", key: `${businessId}/${projectId}`, tasks: [], error: null },
       async (signal) => {
-        const page = await apiListTasks(businessId, projectId, { limit: 200 }, { signal });
-        return { status: "ready" as const, tasks: page.items.map(toDomainTask), error: null };
+        const complete = await loadAllPages(
+          (offset) =>
+            apiListTasks(
+              businessId,
+              projectId,
+              { limit: LIVE_PAGE_LIMIT, offset },
+              { signal },
+            ),
+          (task) => task.id,
+          signal,
+        );
+        return {
+          status: "ready" as const,
+          tasks: complete.items.map(toDomainTask),
+          error: null,
+        };
       },
       (message) => ({ status: "error" as const, error: message }),
     ),
@@ -315,12 +400,26 @@ export const useLiveTasks = create<LiveTasksState>((set) => ({
       async (signal) => {
         const pages = await Promise.all(
           projectIds.map((projectId) =>
-            apiListTasks(businessId, projectId, { limit: 200 }, { signal }),
+            loadAllPages(
+              (offset) =>
+                apiListTasks(
+                  businessId,
+                  projectId,
+                  { limit: LIVE_PAGE_LIMIT, offset },
+                  { signal },
+                ),
+              (task) => task.id,
+              signal,
+            ),
           ),
         );
+        const byId = new Map<string, Task>();
+        for (const page of pages) {
+          for (const task of page.items) byId.set(task.id, toDomainTask(task));
+        }
         return {
           status: "ready" as const,
-          tasks: pages.flatMap((page) => page.items.map(toDomainTask)),
+          tasks: Array.from(byId.values()),
           error: null,
         };
       },
@@ -382,10 +481,19 @@ export const useLiveAgents = create<LiveAgentsState>((set, get) => ({
       set,
       { status: "loading", businessId, agents: [], error: null },
       async (signal) => {
-        const page = await apiListAgents(businessId, { limit: 200 }, { signal });
+        const complete = await loadAllPages(
+          (offset) =>
+            apiListAgents(
+              businessId,
+              { limit: LIVE_PAGE_LIMIT, offset },
+              { signal },
+            ),
+          (agent) => agent.id,
+          signal,
+        );
         return {
           status: "ready" as const,
-          agents: page.items.map(toDomainAgent),
+          agents: complete.items.map(toDomainAgent),
           error: null,
         };
       },
@@ -650,11 +758,20 @@ export const useLiveAgentsList = create<LiveAgentsListState>((set) => ({
       set,
       { status: "loading", businessId, agents: [], total: 0, error: null },
       async (signal) => {
-        const page = await apiListAgents(businessId, { limit: 200 }, { signal });
+        const complete = await loadAllPages(
+          (offset) =>
+            apiListAgents(
+              businessId,
+              { limit: LIVE_PAGE_LIMIT, offset },
+              { signal },
+            ),
+          (agent) => agent.id,
+          signal,
+        );
         return {
           status: "ready" as const,
-          agents: page.items.map(toDomainAgent),
-          total: page.total,
+          agents: complete.items.map(toDomainAgent),
+          total: complete.total,
           error: null,
         };
       },

@@ -105,6 +105,22 @@ describe("live approvals", () => {
     expect(s.approvals[0].gatesTaskId).toBeUndefined();
   });
 
+  it("remains single-page when the server total exceeds the loaded rows", async () => {
+    const { calls } = mockLive([
+      {
+        test: (u) => u.includes("/approvals"),
+        status: 200,
+        body: { ...approvalPage(["ap_1", "ap_2"]), total: 42 },
+      },
+    ]);
+    await useLiveApprovals.getState().load("biz_test");
+    const s = useLiveApprovals.getState();
+    expect(calls).toHaveLength(1);
+    expect(s.approvals.map((a) => a.id)).toEqual(["ap_1", "ap_2"]);
+    expect(s.total).toBe(42);
+    expect(calls[0].url).not.toContain("offset=");
+  });
+
   it("resets on business switch without flashing stale approvals", async () => {
     mockLive([{ test: () => true, status: 200, body: approvalPage(["ap_1"]) }]);
     await useLiveApprovals.getState().load("biz_test");
@@ -158,6 +174,37 @@ describe("live approvals", () => {
     expect(s.approvals).toEqual([]);
   });
 
+  it("clears successful approvals before a failed retry and publishes only the retry result", async () => {
+    mockLive([
+      { test: () => true, status: 200, body: approvalPage(["ap_old"]) },
+    ]);
+    await useLiveApprovals.getState().load("biz_test");
+    expect(useLiveApprovals.getState().approvals.map((a) => a.id)).toEqual([
+      "ap_old",
+    ]);
+
+    mockLive([
+      { test: () => true, status: 500, body: { error: { code: "internal", message: "Retry failed." } } },
+    ]);
+    const failed = useLiveApprovals.getState().load("biz_test");
+    expect(useLiveApprovals.getState().status).toBe("loading");
+    expect(useLiveApprovals.getState().approvals).toEqual([]);
+    await failed;
+
+    const stale = useLiveApprovals.getState();
+    expect(stale.status).toBe("error");
+    expect(stale.approvals).toEqual([]);
+    expect(stale.total).toBe(0);
+
+    mockLive([
+      { test: () => true, status: 200, body: approvalPage(["ap_fresh"]) },
+    ]);
+    await useLiveApprovals.getState().load("biz_test");
+    const fresh = useLiveApprovals.getState();
+    expect(fresh.status).toBe("ready");
+    expect(fresh.approvals.map((a) => a.id)).toEqual(["ap_fresh"]);
+  });
+
   it("reads empty lists as ready-empty", async () => {
     mockLive([
       { test: () => true, status: 200, body: { items: [], total: 0, limit: 50, offset: 0, contract: "v1" } },
@@ -182,6 +229,22 @@ describe("live activity", () => {
     expect(s.events[0].at).toBe("2026-10-11T06:00:00Z");
     expect(s.total).toBe(2);
     expect(calls[0].url).toContain("project_id=proj_1");
+  });
+
+  it("remains single-page when the server total exceeds the loaded rows", async () => {
+    const { calls } = mockLive([
+      {
+        test: (u) => u.includes("/activity"),
+        status: 200,
+        body: { ...activityPage(["first", "second"]), total: 42 },
+      },
+    ]);
+    await useLiveActivity.getState().load({ businessId: "biz_test" });
+    const s = useLiveActivity.getState();
+    expect(calls).toHaveLength(1);
+    expect(s.events.map((e) => e.text)).toEqual(["first", "second"]);
+    expect(s.total).toBe(42);
+    expect(calls[0].url).not.toContain("offset=");
   });
 
   it("omits the filter when unscoped and resets on scope change", async () => {

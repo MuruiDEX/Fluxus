@@ -21,6 +21,7 @@ import {
 import { Card } from "@/components/system/ui";
 import { cn } from "@/lib/cn";
 import type {
+  WorkflowAgentAvailability,
   WorkflowApprovals,
   WorkflowBrain,
   WorkflowGoal,
@@ -145,11 +146,35 @@ function GoalStage({ goal }: { goal: WorkflowGoal }) {
 }
 
 function TeamLeadStage({ teamLead }: { teamLead: WorkflowTeamLead }) {
-  if (teamLead.state === "unavailable" || !teamLead.agent) {
+  if (teamLead.state === "loading") {
     return (
       <>
         <div className="rounded-control border border-dashed border-line bg-surface-sunken p-2.5">
-          <p className="font-semibold text-fg-muted">Not assigned</p>
+          <p className="font-semibold text-fg-muted">Team data loading</p>
+          <p className="mt-0.5 text-caption text-fg-muted">{teamLead.note}</p>
+        </div>
+        <StageLink href={teamLead.href}>Open agents</StageLink>
+      </>
+    );
+  }
+
+  if (teamLead.state === "source_unavailable") {
+    return (
+      <>
+        <div className="rounded-control border border-dashed border-line bg-surface-sunken p-2.5">
+          <p className="font-semibold text-fg-muted">Team data unavailable</p>
+          <p className="mt-0.5 text-caption text-fg-muted">{teamLead.note}</p>
+        </div>
+        <StageLink href={teamLead.href}>Open agents</StageLink>
+      </>
+    );
+  }
+
+  if (teamLead.state === "not_found" || !teamLead.agent) {
+    return (
+      <>
+        <div className="rounded-control border border-dashed border-line bg-surface-sunken p-2.5">
+          <p className="font-semibold text-fg-muted">No Team Lead found</p>
           <p className="mt-0.5 text-caption text-fg-muted">{teamLead.note}</p>
         </div>
         <StageLink href={teamLead.href}>Open agents</StageLink>
@@ -216,6 +241,10 @@ function ParallelWorkStage({
 }
 
 function ApprovalsStage({ approvals }: { approvals: WorkflowApprovals }) {
+  if (approvals.state === "loading") {
+    return <p className="text-caption text-fg-muted">Approvals loading.</p>;
+  }
+
   if (approvals.state === "unavailable") {
     return <p className="text-caption text-fg-muted">{approvals.note}</p>;
   }
@@ -401,6 +430,10 @@ function gateBadge(view: WorkflowTaskView): {
   switch (view.gateState) {
     case "none":
       return null;
+    case "loading":
+      return { label: "Approval loading", tone: "neutral" };
+    case "unverified":
+      return { label: "Gate unverified", tone: "warning" };
     case "pending":
       return { label: "Approval pending", tone: "warning" };
     case "approved":
@@ -408,7 +441,7 @@ function gateBadge(view: WorkflowTaskView): {
     case "rejected":
       return { label: "Approval rejected", tone: "danger" };
     case "missing":
-      return { label: "Gate not loaded", tone: "danger" };
+      return { label: "Gate missing", tone: "danger" };
     case "unknown":
       return { label: `Gate: ${view.gate?.status ?? "unknown"}`, tone: "danger" };
   }
@@ -426,15 +459,31 @@ function formatDependency(view: WorkflowTaskView) {
 }
 
 function formatGate(view: WorkflowTaskView) {
-  if (view.gateState === "none") return "No approval gate linked.";
+  if (view.gateState === "none") {
+    return "No approval gate is linked in the complete approvals dataset.";
+  }
+  if (view.gateState === "loading") {
+    return "Approval data is loading; gate status is not confirmed yet.";
+  }
+  if (view.gateState === "unverified") {
+    return "Approval data does not prove a gate is absent; gate status is unverified.";
+  }
   if (view.gate) {
     return `${view.gate.title} · ${view.gate.status}`;
   }
-  if (view.gateState === "missing") return "Linked approval gate is not loaded.";
+  if (view.gateState === "missing") {
+    return "The linked approval gate is absent from the complete approvals dataset.";
+  }
   return `Approval gate state: ${view.gateState}.`;
 }
 
-function TaskCard({ view }: { view: WorkflowTaskView }) {
+function TaskCard({
+  view,
+  agentsAvailability,
+}: {
+  view: WorkflowTaskView;
+  agentsAvailability: WorkflowAgentAvailability;
+}) {
   const gate = gateBadge(view);
   const showNote =
     Boolean(view.note) &&
@@ -470,8 +519,12 @@ function TaskCard({ view }: { view: WorkflowTaskView }) {
                 {view.owner.role}
               </span>
             </>
-          ) : (
+          ) : agentsAvailability === "available" ? (
             <span>Unassigned</span>
+          ) : agentsAvailability === "loading" ? (
+            <span>Owner loading</span>
+          ) : (
+            <span>Owner unavailable</span>
           )}
         </div>
 
@@ -511,7 +564,11 @@ function TaskCard({ view }: { view: WorkflowTaskView }) {
               <dd className="text-fg-muted">
                 {view.owner
                   ? `${view.owner.name} · ${view.owner.role}`
-                  : "Unassigned"}
+                  : agentsAvailability === "available"
+                    ? "Unassigned"
+                    : agentsAvailability === "loading"
+                      ? "Owner loading"
+                      : "Owner unavailable"}
               </dd>
             </div>
             <div className="grid grid-cols-[86px_1fr] gap-2">
@@ -535,7 +592,13 @@ function TaskCard({ view }: { view: WorkflowTaskView }) {
   );
 }
 
-function LaneBlock({ lane }: { lane: WorkflowLane }) {
+function LaneBlock({
+  lane,
+  agentsAvailability,
+}: {
+  lane: WorkflowLane;
+  agentsAvailability: WorkflowAgentAvailability;
+}) {
   const secondary = lane.kind === "secondary";
   return (
     <section data-lane={lane.key} aria-labelledby={`workflow-lane-${lane.key}`}>
@@ -562,7 +625,11 @@ function LaneBlock({ lane }: { lane: WorkflowLane }) {
         ) : (
           <ul className="mt-2.5 flex flex-1 flex-col gap-2">
             {lane.tasks.map((view) => (
-              <TaskCard key={view.viewKey} view={view} />
+              <TaskCard
+                key={view.viewKey}
+                view={view}
+                agentsAvailability={agentsAvailability}
+              />
             ))}
           </ul>
         )}
@@ -572,6 +639,7 @@ function LaneBlock({ lane }: { lane: WorkflowLane }) {
 }
 
 function LaneBoard({ model }: { model: WorkflowModel }) {
+  const agentsAvailability = model.agentsAvailability;
   const primary = model.lanes.filter((lane) => lane.kind === "primary");
   const secondary = model.lanes.filter(
     (lane) => lane.kind === "secondary" && lane.tasks.length > 0,
@@ -598,13 +666,21 @@ function LaneBoard({ model }: { model: WorkflowModel }) {
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {primary.map((lane) => (
-          <LaneBlock key={lane.key} lane={lane} />
+          <LaneBlock
+            key={lane.key}
+            lane={lane}
+            agentsAvailability={agentsAvailability}
+          />
         ))}
       </div>
       {secondary.length > 0 && (
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           {secondary.map((lane) => (
-            <LaneBlock key={lane.key} lane={lane} />
+            <LaneBlock
+              key={lane.key}
+              lane={lane}
+              agentsAvailability={agentsAvailability}
+            />
           ))}
         </div>
       )}
@@ -730,39 +806,51 @@ function ActivityPanel({ model }: { model: WorkflowModel }) {
           <Badge tone="brand">{activity.label}</Badge>
         </div>
         <p className="mt-1 text-caption text-fg-muted">{activity.note}</p>
-        <p className="mt-1 text-caption text-fg-subtle">
-          Showing {recent.length} of {activity.providedCount} supplied
-          event{activity.providedCount === 1 ? "" : "s"}.
-        </p>
-
-        {recent.length === 0 ? (
+        {activity.state === "loading" ? (
           <p className="mt-3 rounded-control border border-dashed border-line p-3 text-caption text-fg-subtle">
-            No activity supplied.
+            Activity loading.
+          </p>
+        ) : activity.state === "unavailable" ? (
+          <p className="mt-3 rounded-control border border-dashed border-line p-3 text-caption text-fg-subtle">
+            Activity unavailable.
           </p>
         ) : (
-          <ul className="mt-2 flex flex-col">
-            {recent.map((event) => (
-              <li
-                key={event.id}
-                className="flex items-start gap-2 border-b border-line-subtle py-2 text-caption last:border-0"
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                    activityDotClass(event.kind),
-                  )}
-                />
-                <div className="min-w-0">
-                  <p className="leading-5">
-                    <span className="font-semibold">{event.agentName}</span>
-                    <span className="text-fg-subtle"> · {event.at}</span>
-                  </p>
-                  <p className="leading-5 text-fg-muted">{event.text}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <>
+            <p className="mt-1 text-caption text-fg-subtle">
+              Showing {recent.length} of {activity.providedCount} supplied
+              event{activity.providedCount === 1 ? "" : "s"}.
+            </p>
+
+            {recent.length === 0 ? (
+              <p className="mt-3 rounded-control border border-dashed border-line p-3 text-caption text-fg-subtle">
+                No activity supplied.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col">
+                {recent.map((event) => (
+                  <li
+                    key={event.id}
+                    className="flex items-start gap-2 border-b border-line-subtle py-2 text-caption last:border-0"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                        activityDotClass(event.kind),
+                      )}
+                    />
+                    <div className="min-w-0">
+                      <p className="leading-5">
+                        <span className="font-semibold">{event.agentName}</span>
+                        <span className="text-fg-subtle"> · {event.at}</span>
+                      </p>
+                      <p className="leading-5 text-fg-muted">{event.text}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
         <Link
           href="/activity"
@@ -798,6 +886,8 @@ function Limitations({ model }: { model: WorkflowModel }) {
 }
 
 export function WorkflowView({ model, className }: WorkflowViewProps) {
+  const showApprovalQueue =
+    model.approvals.state === "available" || model.approvals.state === "empty";
   return (
     <div className={cn("flex flex-col gap-4", className)}>
       <WorkflowSpine model={model} />
@@ -806,8 +896,8 @@ export function WorkflowView({ model, className }: WorkflowViewProps) {
       ) : (
         <LaneBoard model={model} />
       )}
-      <div className={cn("grid gap-3", model.approvals.state !== "unavailable" && "lg:grid-cols-2")}>
-        {model.approvals.state !== "unavailable" && (
+      <div className={cn("grid gap-3", showApprovalQueue && "lg:grid-cols-2")}>
+        {showApprovalQueue && (
           <ApprovalQueue approvals={model.approvals} />
         )}
         <ActivityPanel model={model} />

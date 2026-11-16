@@ -32,9 +32,19 @@ import type {
 
 export type WorkflowMode = "demo" | "live";
 export type ActivityScope = "business" | "project";
+export type WorkflowActivityScope = ActivityScope | "unknown";
+export type WorkflowAgentAvailability =
+  | "available"
+  | "loading"
+  | "unavailable";
+export type WorkflowActivityAvailability =
+  | "available"
+  | "loading"
+  | "unavailable";
 export type WorkflowApprovalCompleteness =
   | "complete"
   | "partial"
+  | "loading"
   | "unavailable";
 
 export type WorkflowLaneKey =
@@ -47,6 +57,8 @@ export type WorkflowLaneKey =
 
 export type WorkflowGateState =
   | "none"
+  | "loading"
+  | "unverified"
   | "missing"
   | "pending"
   | "approved"
@@ -69,6 +81,10 @@ export interface WorkflowInput {
   readonly events: readonly ActivityEvent[];
   readonly mode: WorkflowMode;
   readonly activityScope: ActivityScope;
+  /** Omitted defaults to available for DEMO and existing callers. */
+  readonly agentsAvailability?: WorkflowAgentAvailability;
+  /** Omitted defaults to available for DEMO and existing callers. */
+  readonly activityAvailability?: WorkflowActivityAvailability;
   /**
    * Caller-supplied provenance. Omit it when the caller cannot prove the
    * supplied approvals are the complete dataset; omission means partial.
@@ -147,7 +163,11 @@ export interface WorkflowGoal {
 
 export interface WorkflowTeamLead {
   readonly key: "team_lead";
-  readonly state: "available" | "unavailable";
+  readonly state:
+    | "available"
+    | "not_found"
+    | "source_unavailable"
+    | "loading";
   readonly agent: Agent | null;
   readonly href: string;
   readonly note: string;
@@ -163,7 +183,7 @@ export interface WorkflowParallelWork {
 
 export interface WorkflowApprovals {
   readonly key: "approvals";
-  readonly state: "available" | "empty" | "unavailable";
+  readonly state: "available" | "empty" | "loading" | "unavailable";
   readonly pending: readonly Approval[];
   readonly decided: readonly Approval[];
   readonly unknown: readonly Approval[];
@@ -204,7 +224,8 @@ export type WorkflowStage =
   | WorkflowBrain;
 
 export interface WorkflowActivity {
-  readonly scope: ActivityScope;
+  readonly state: "available" | "loading" | "unavailable";
+  readonly scope: WorkflowActivityScope;
   readonly scopedToProject: boolean;
   /** First 8 events in the supplied order; no time-based sorting. */
   readonly preview: readonly ActivityEvent[];
@@ -216,6 +237,7 @@ export interface WorkflowActivity {
 
 export interface WorkflowModel {
   readonly mode: WorkflowMode;
+  readonly agentsAvailability: WorkflowAgentAvailability;
   readonly project: Project | null;
   readonly goal: WorkflowGoal;
   readonly teamLead: WorkflowTeamLead;
@@ -398,15 +420,33 @@ function resolveGate(
   taskId: string,
   approvalsById: ReadonlyMap<string, Approval>,
   gateByTaskId: ReadonlyMap<string, Approval>,
+  approvalsLoading: boolean,
+  approvalsComplete: boolean,
 ): GateResolution {
+  // While approvals are loading, neither a direct gate nor a gatesTaskId
+  // side-link can be disproven. Every task stays unresolved until the source
+  // settles; status is not evidence that a side-linked gate cannot exist.
+  if (approvalsLoading) {
+    return { gate: null, state: "loading", rawStatus: null };
+  }
   if (gateId) {
     const gate = approvalsById.get(gateId);
-    if (!gate) return { gate: null, state: "missing", rawStatus: null };
+    if (!gate) {
+      return {
+        gate: null,
+        state: approvalsComplete ? "missing" : "unverified",
+        rawStatus: null,
+      };
+    }
     return classifyGate(gate);
   }
   const linked = gateByTaskId.get(taskId);
   if (linked) return classifyGate(linked);
-  return { gate: null, state: "none", rawStatus: null };
+  return {
+    gate: null,
+    state: approvalsComplete ? "none" : "unverified",
+    rawStatus: null,
+  };
 }
 
 function gateNote(
@@ -416,6 +456,10 @@ function gateNote(
   switch (state) {
     case "none":
       return null;
+    case "loading":
+      return "Approval data is loading; gate status is not confirmed.";
+    case "unverified":
+      return "Approval data does not prove a gate is absent; gate status is unverified.";
     case "missing":
       return "Approval gate is not loaded.";
     case "pending":
@@ -464,6 +508,9 @@ function classifyTask(
           };
         case "pending":
           return { lane: "waiting_user", note: null };
+        case "loading":
+        case "unverified":
+          return { lane: "waiting_user", note: gateStateNote };
         case "missing":
           return {
             lane: "attention",
@@ -495,6 +542,12 @@ function classifyTask(
           return {
             lane: "waiting_user",
             note: joinNotes(WAITING_ASSETS_NOTE, "Approval gate is pending."),
+          };
+        case "loading":
+        case "unverified":
+          return {
+            lane: "waiting_user",
+            note: joinNotes(WAITING_ASSETS_NOTE, gateStateNote),
           };
         case "approved":
         case "none":
@@ -529,6 +582,15 @@ function classifyTask(
             lane: "waiting_user",
             note: "Status is waiting_dependency but dependencies are complete; the approval gate is pending.",
           };
+        case "loading":
+        case "unverified":
+          return {
+            lane: "waiting_user",
+            note: joinNotes(
+              "Status is waiting_dependency but dependencies are complete.",
+              gateStateNote,
+            ),
+          };
         case "approved":
         case "none":
           return {
@@ -559,6 +621,9 @@ function classifyTask(
       switch (gateState) {
         case "pending":
           return { lane: "waiting_user", note: null };
+        case "loading":
+        case "unverified":
+          return { lane: "waiting_user", note: gateStateNote };
         case "approved":
         case "none":
           return { lane: "ready", note: null };
@@ -589,6 +654,8 @@ function classifyTask(
 
 export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
   const project = input.project ?? null;
+  const agentsAvailability = input.agentsAvailability ?? "available";
+  const activityAvailability = input.activityAvailability ?? "available";
   // Demo activity is business-wide by construction. A caller cannot make it
   // project-scoped merely by passing the contradictory scope.
   const activityScope: ActivityScope =
@@ -598,7 +665,10 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
   const approvalsCompleteness: WorkflowApprovalCompleteness = project
     ? (input.approvalsCompleteness ?? "partial")
     : "unavailable";
-  const projectApprovals = project
+  const approvalsLoading = approvalsCompleteness === "loading";
+  const approvalsUnavailable = approvalsCompleteness === "unavailable";
+  const approvalsComplete = approvalsCompleteness === "complete";
+  const projectApprovals = project && !approvalsLoading && !approvalsUnavailable
     ? input.approvals.filter((approval) => approval.projectId === project.id)
     : [];
 
@@ -612,7 +682,8 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
       gateByTaskId.set(approval.gatesTaskId, approval);
     }
   }
-  const agentsById = new Map(input.agents.map((agent) => [agent.id, agent]));
+  const usableAgents = agentsAvailability === "available" ? input.agents : [];
+  const agentsById = new Map(usableAgents.map((agent) => [agent.id, agent]));
 
   const tasksById = new Map<string, WorkflowTaskInput>();
   const projectTasks = project
@@ -637,6 +708,8 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
       task.id,
       approvalsById,
       gateByTaskId,
+      approvalsLoading,
+      approvalsComplete,
     );
     const { lane, note } = classifyTask(
       task,
@@ -719,17 +792,32 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
         summary: "No active project.",
       };
 
-  const lead = project ? findTeamLead(project, input.agents) : null;
+  const lead =
+    project && agentsAvailability === "available"
+      ? findTeamLead(project, usableAgents)
+      : null;
   const teamLead: WorkflowTeamLead = {
     key: "team_lead",
-    state: lead ? "available" : "unavailable",
+    state: !project
+      ? "not_found"
+      : agentsAvailability === "loading"
+        ? "loading"
+      : agentsAvailability === "unavailable"
+        ? "source_unavailable"
+        : lead
+          ? "available"
+          : "not_found",
     agent: lead,
     href: "/agents",
     note: !project
       ? "No project selected."
-      : lead
-        ? `Matched project role "${lead.role}".`
-        : "No Team Lead role in this project's roster.",
+      : agentsAvailability === "loading"
+        ? "Agent data is loading; the Team Lead is not confirmed yet."
+      : agentsAvailability === "unavailable"
+        ? "Agent data is unavailable; the Team Lead cannot be confirmed."
+        : lead
+          ? `Matched project role "${lead.role}".`
+          : "No Team Lead role in this project's roster.",
   };
 
   const pending: Approval[] = [];
@@ -750,11 +838,15 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
 
   const approvals: WorkflowApprovals = {
     key: "approvals",
-    state: !project || approvalsCompleteness === "unavailable"
+    state: !project
       ? "unavailable"
-      : projectApprovals.length === 0
-        ? "empty"
-        : "available",
+      : approvalsLoading
+        ? "loading"
+        : approvalsCompleteness === "unavailable"
+          ? "unavailable"
+          : projectApprovals.length === 0
+            ? "empty"
+            : "available",
     pending,
     decided,
     unknown,
@@ -764,6 +856,8 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
     href: "/approvals",
     note: !project
       ? "No project selected."
+      : approvalsLoading
+        ? "Approvals are loading; no pending counts are available yet."
       : approvalsCompleteness === "unavailable"
         ? "No approval data source is available for this project."
         : projectApprovals.length === 0
@@ -774,6 +868,8 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
     completeness: approvalsCompleteness,
     completenessNote: !project
       ? "No project selected."
+      : approvalsLoading
+        ? "Approvals are loading; counts and gate states are not available yet."
       : approvalsCompleteness === "complete"
         ? "Complete local dataset confirmed by the caller for this project."
         : approvalsCompleteness === "partial"
@@ -869,23 +965,38 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
     note: "Business-wide destination; no project-scoped Brain link is available.",
   };
 
+  const activityLoading = activityAvailability === "loading";
+  const activityAvailable = activityAvailability === "available";
+  const activityScopeClaim: WorkflowActivityScope = activityAvailable
+    ? activityScope
+    : "unknown";
   const activity: WorkflowActivity = {
-    scope: activityScope,
-    scopedToProject: activityScope === "project",
-    preview: input.events.slice(0, 8),
-    providedCount: input.events.length,
-    label:
-      activityScope === "project"
+    state: activityLoading
+      ? "loading"
+      : activityAvailable
+        ? "available"
+        : "unavailable",
+    scope: activityScopeClaim,
+    scopedToProject: activityScopeClaim === "project",
+    preview: activityAvailable ? input.events.slice(0, 8) : [],
+    providedCount: activityAvailable ? input.events.length : 0,
+    label: !activityAvailable
+      ? "Activity"
+      : activityScope === "project"
         ? "Project activity"
         : input.mode === "demo"
           ? "Business activity (demo)"
           : "Business activity",
     note:
-      activityScope === "project"
-        ? "Project-scoped activity provided by the caller."
-        : input.mode === "demo"
-          ? "Demo activity is business-wide and cannot be attributed to one project."
-          : "Business-wide activity; not project-scoped.",
+      activityAvailability === "loading"
+        ? "Activity data is loading."
+        : activityAvailability === "unavailable"
+        ? "Activity data is unavailable; no events were supplied."
+        : activityScope === "project"
+          ? "Project-scoped activity provided by the caller."
+          : input.mode === "demo"
+            ? "Demo activity is business-wide and cannot be attributed to one project."
+            : "Business-wide activity; not project-scoped.",
   };
 
   const stages: readonly WorkflowStage[] = [
@@ -904,7 +1015,38 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
       "Live approvals and activity are caller-supplied pages; completeness is not verifiable here.",
     );
   }
-  if (activityScope === "business") {
+  if (agentsAvailability === "unavailable") {
+    limitations.add(
+      "Agent data is unavailable; the Team Lead and task owners cannot be confirmed.",
+    );
+  }
+  if (agentsAvailability === "loading") {
+    limitations.add(
+      "Agent data is loading; the Team Lead and task owners are not confirmed yet.",
+    );
+  }
+  if (approvalsLoading) {
+    limitations.add(
+      "Approvals are loading; approval counts and gate states are not available yet.",
+    );
+  }
+  if (project && approvalsCompleteness === "partial") {
+    limitations.add(
+      "Approval gates were checked against a partial approvals page; a task with no visible gate is unverified, not gate-free.",
+    );
+  }
+  if (project && approvalsUnavailable) {
+    limitations.add(
+      "Approval data is unavailable; previously loaded approval records are not used and gates are unverified.",
+    );
+  }
+  if (activityAvailability === "unavailable") {
+    limitations.add("Activity data is unavailable.");
+  }
+  if (activityAvailability === "loading") {
+    limitations.add("Activity data is loading.");
+  }
+  if (activityAvailable && activityScope === "business") {
     limitations.add(
       input.mode === "demo"
         ? "Demo activity is business-wide and cannot be attributed to one project."
@@ -924,6 +1066,7 @@ export function buildWorkflowModel(input: WorkflowInput): WorkflowModel {
 
   return {
     mode: input.mode,
+    agentsAvailability,
     project,
     goal,
     teamLead,

@@ -113,6 +113,7 @@ function build(overrides: Partial<WorkflowInput> = {}): WorkflowModel {
     events: [],
     mode: "live",
     activityScope: "project",
+    approvalsCompleteness: "complete",
     ...overrides,
   });
 }
@@ -691,6 +692,14 @@ describe("lane invariants", () => {
   });
 });
 describe("team lead", () => {
+  it("defaults agent availability to available for existing callers", () => {
+    const model = build();
+
+    expect(model.agentsAvailability).toBe("available");
+    expect(model.teamLead.state).toBe("not_found");
+    expect(model.teamLead.note).toContain("No Team Lead role");
+  });
+
   it.each(["Team Lead", "Lead", "Coordinator"])(
     "matches the anchored role %s inside the project roster",
     (role) => {
@@ -730,7 +739,7 @@ describe("team lead", () => {
       agents: [specialist],
     });
 
-    expect(model.teamLead.state).toBe("unavailable");
+    expect(model.teamLead.state).toBe("not_found");
     expect(model.teamLead.agent).toBeNull();
     expect(model.teamLead.note).toContain("No Team Lead");
   });
@@ -754,9 +763,41 @@ describe("team lead", () => {
       agents: [outsider, member],
     });
 
-    expect(model.teamLead.state).toBe("unavailable");
+    expect(model.teamLead.state).toBe("not_found");
     expect(model.teamLead.agent).toBeNull();
     expect(model.teamLead.note).toContain("project's roster");
+  });
+
+  it("marks Team Lead source_unavailable when agent data is unavailable", () => {
+    const model = build({
+      agentsAvailability: "unavailable",
+      tasks: [makeTask({ id: "t_owned", title: "Owned" })],
+    });
+
+    expect(model.agentsAvailability).toBe("unavailable");
+    expect(model.teamLead.state).toBe("source_unavailable");
+    expect(model.teamLead.agent).toBeNull();
+    expect(model.teamLead.note).toContain("Agent data is unavailable");
+    expect(taskView(model, "t_owned").owner).toBeNull();
+    expect(model.limitations.join(" ")).toContain(
+      "Team Lead and task owners cannot be confirmed",
+    );
+  });
+
+  it("marks Team Lead loading without inventing an owner", () => {
+    const model = build({
+      agentsAvailability: "loading",
+      tasks: [makeTask({ id: "t_owned", title: "Owned" })],
+    });
+
+    expect(model.agentsAvailability).toBe("loading");
+    expect(model.teamLead.state).toBe("loading");
+    expect(model.teamLead.agent).toBeNull();
+    expect(model.teamLead.note).toContain("Agent data is loading");
+    expect(taskView(model, "t_owned").owner).toBeNull();
+    expect(model.limitations.join(" ")).toContain(
+      "Team Lead and task owners are not confirmed yet",
+    );
   });
 
   it("prefers Team Lead over Lead over Coordinator deterministically", () => {
@@ -819,7 +860,7 @@ describe("goal and empty project handling", () => {
     expect(model.goal.state).toBe("unavailable");
     expect(model.goal.projectId).toBeNull();
     expect(model.goal.href).toBeNull();
-    expect(model.teamLead.state).toBe("unavailable");
+    expect(model.teamLead.state).toBe("not_found");
     expect(model.teamLead.agent).toBeNull();
     expect(model.parallelWork.state).toBe("unavailable");
     expect(model.approvals.state).toBe("unavailable");
@@ -1153,12 +1194,314 @@ describe("approvals", () => {
   });
 
   it("defaults omitted completeness to partial even in DEMO mode", () => {
-    const model = build({ mode: "demo" });
+    const model = build({ mode: "demo", approvalsCompleteness: undefined });
 
     expect(model.approvals.completeness).toBe("partial");
     expect(model.approvals.completenessNote).toContain(
       "project-wide total is not confirmed",
     );
+  });
+
+  it("represents loading approvals without fake counts or missing gates", () => {
+    const model = build({
+      mode: "live",
+      approvalsCompleteness: "loading",
+      tasks: [
+        makeTask({
+          id: "t_gated",
+          title: "Gated",
+          status: "waiting_approval",
+          approvalGateId: "ap_loading",
+        }),
+        makeTask({
+          id: "t_status_gate",
+          title: "Status-gated",
+          status: "waiting_approval",
+        }),
+        makeTask({
+          id: "t_side_gate",
+          title: "Side-linked",
+          status: "not_started",
+        }),
+        makeTask({
+          id: "t_dep_done",
+          title: "Dependency done",
+          status: "completed",
+        }),
+        makeTask({
+          id: "t_dep_side_gate",
+          title: "Dependency-complete side-linked",
+          status: "waiting_dependency",
+          dependsOn: ["t_dep_done"],
+        }),
+      ],
+      approvals: [
+        makeApproval({ id: "ap_loading", status: "pending" }),
+        makeApproval({
+          id: "ap_side",
+          status: "pending",
+          gatesTaskId: "t_side_gate",
+        }),
+        makeApproval({
+          id: "ap_dep_side",
+          status: "pending",
+          gatesTaskId: "t_dep_side_gate",
+        }),
+      ],
+    });
+    const view = taskView(model, "t_gated");
+    const statusView = taskView(model, "t_status_gate");
+    const sideView = taskView(model, "t_side_gate");
+    const depSideView = taskView(model, "t_dep_side_gate");
+
+    expect(model.approvals.state).toBe("loading");
+    expect(model.approvals.completeness).toBe("loading");
+    expect(model.approvals.pendingCount).toBe(0);
+    expect(model.approvals.pending).toEqual([]);
+    expect(view.gateState).toBe("loading");
+    expect(view.lane).toBe("waiting_user");
+    expect(view.note).toContain("Approval data is loading");
+    expect(statusView.gateState).toBe("loading");
+    expect(statusView.lane).toBe("waiting_user");
+    expect(sideView.gateState).toBe("loading");
+    expect(sideView.lane).not.toBe("ready");
+    expect(sideView.lane).toBe("waiting_user");
+    expect(depSideView.gateState).toBe("loading");
+    expect(depSideView.lane).not.toBe("ready");
+    expect(depSideView.lane).toBe("waiting_user");
+    expect(model.limitations.join(" ")).toContain(
+      "approval counts and gate states are not available yet",
+    );
+  });
+
+  it("resolves side links after loading and treats partial absence as unverified", () => {
+    const tasks = [
+      makeTask({ id: "t_side", title: "Side-linked", status: "not_started" }),
+      makeTask({ id: "t_none", title: "No gate", status: "not_started" }),
+    ];
+    const approvals = [
+      makeApproval({
+        id: "ap_side",
+        status: "pending",
+        gatesTaskId: "t_side",
+      }),
+    ];
+
+    const loading = build({
+      tasks,
+      approvals,
+      approvalsCompleteness: "loading",
+    });
+    const loaded = build({
+      tasks,
+      approvals,
+      approvalsCompleteness: "partial",
+    });
+    const complete = build({
+      tasks,
+      approvals,
+      approvalsCompleteness: "complete",
+    });
+
+    expect(taskView(loading, "t_side").gateState).toBe("loading");
+    expect(taskView(loading, "t_none").gateState).toBe("loading");
+    expect(taskView(loaded, "t_side").gateState).toBe("pending");
+    expect(taskView(loaded, "t_side").gate?.id).toBe("ap_side");
+    expect(taskView(loaded, "t_none").gateState).toBe("unverified");
+    expect(taskView(loaded, "t_none").lane).toBe("waiting_user");
+    expect(taskView(complete, "t_none").gateState).toBe("none");
+    expect(taskView(complete, "t_none").lane).toBe("ready");
+  });
+
+  it("keeps an unverified task with satisfied dependencies out of Ready", () => {
+    const model = build({
+      tasks: [
+        makeTask({
+          id: "t_done_dep",
+          title: "Done dependency",
+          status: "completed",
+        }),
+        makeTask({
+          id: "t_unverified_dep",
+          title: "Unverified dependent",
+          dependsOn: ["t_done_dep"],
+        }),
+      ],
+      approvalsCompleteness: "partial",
+    });
+
+    const view = taskView(model, "t_unverified_dep");
+    expect(view.gateState).toBe("unverified");
+    expect(view.waitingOn.every((ref) => ref.completed)).toBe(true);
+    expect(view.lane).toBe("waiting_user");
+    expect(view.lane).not.toBe("ready");
+  });
+
+  it("distinguishes direct-ID absence under partial and complete approvals", () => {
+    const tasks = [
+      makeTask({
+        id: "t_direct",
+        title: "Direct gate",
+        approvalGateId: "ap_absent",
+      }),
+    ];
+
+    const partial = build({
+      tasks,
+      approvalsCompleteness: "partial",
+    });
+    const complete = build({
+      tasks,
+      approvalsCompleteness: "complete",
+    });
+
+    expect(taskView(partial, "t_direct").gateState).toBe("unverified");
+    expect(taskView(partial, "t_direct").lane).toBe("waiting_user");
+    expect(taskView(complete, "t_direct").gateState).toBe("missing");
+    expect(taskView(complete, "t_direct").lane).toBe("attention");
+  });
+
+  it("ignores supplied approval records when the source is unavailable", () => {
+    const model = build({
+      tasks: [
+        makeTask({
+          id: "t_stale",
+          title: "Stale approved gate",
+          approvalGateId: "ap_stale",
+        }),
+        makeTask({
+          id: "t_pending_stale",
+          title: "Pending retained gate",
+          approvalGateId: "ap_pending_stale",
+        }),
+        makeTask({
+          id: "t_rejected_stale",
+          title: "Rejected retained gate",
+          approvalGateId: "ap_rejected_stale",
+        }),
+        makeTask({
+          id: "t_unknown_stale",
+          title: "Unknown retained gate",
+          approvalGateId: "ap_unknown_stale",
+        }),
+        makeTask({ id: "t_none_stale", title: "No visible gate" }),
+      ],
+      approvals: [
+        makeApproval({ id: "ap_stale", status: "approved" }),
+        makeApproval({ id: "ap_pending_stale", status: "pending" }),
+        makeApproval({ id: "ap_rejected_stale", status: "rejected" }),
+        makeApproval({
+          id: "ap_unknown_stale",
+          status: "expired" as Approval["status"],
+        }),
+      ],
+      approvalsCompleteness: "unavailable",
+    });
+
+    const stale = taskView(model, "t_stale");
+    expect(stale.gateState).toBe("unverified");
+    expect(stale.gate).toBeNull();
+    expect(stale.lane).toBe("waiting_user");
+    for (const id of [
+      "t_pending_stale",
+      "t_rejected_stale",
+      "t_unknown_stale",
+    ]) {
+      const retained = taskView(model, id);
+      expect(retained.gateState).toBe("unverified");
+      expect(retained.gate).toBeNull();
+      expect(retained.lane).toBe("waiting_user");
+    }
+    expect(taskView(model, "t_none_stale").gateState).toBe("unverified");
+    expect(model.approvals.pendingCount).toBe(0);
+    expect(model.approvals.decidedCount).toBe(0);
+    expect(model.approvals.unknownCount).toBe(0);
+    expect(model.limitations.join(" ")).toContain(
+      "previously loaded approval records are not used",
+    );
+  });
+
+  it("keeps a discovered partial gate authoritative for its actual status", () => {
+    const model = build({
+      tasks: [
+        makeTask({
+          id: "t_approved",
+          title: "Approved",
+          approvalGateId: "ap_approved",
+        }),
+      ],
+      approvals: [
+        makeApproval({ id: "ap_approved", status: "approved" }),
+      ],
+      approvalsCompleteness: "partial",
+    });
+
+    expect(taskView(model, "t_approved").gateState).toBe("approved");
+    expect(taskView(model, "t_approved").lane).toBe("ready");
+  });
+
+  it("does not let an approved gate bypass status or dependency precedence", () => {
+    const model = build({
+      tasks: [
+        makeTask({ id: "t_open_dep", title: "Open dependency" }),
+        makeTask({
+          id: "t_approved_blocked",
+          title: "Approved but blocked",
+          dependsOn: ["t_open_dep"],
+          approvalGateId: "ap_approved",
+        }),
+        makeTask({
+          id: "t_approved_working",
+          title: "Approved but working",
+          status: "working",
+          approvalGateId: "ap_approved",
+        }),
+        makeTask({
+          id: "t_approved_completed",
+          title: "Approved but completed",
+          status: "completed",
+          approvalGateId: "ap_approved",
+        }),
+        makeTask({
+          id: "t_approved_failed",
+          title: "Approved but failed",
+          status: "failed",
+          approvalGateId: "ap_approved",
+        }),
+      ],
+      approvals: [
+        makeApproval({ id: "ap_approved", status: "approved" }),
+      ],
+      approvalsCompleteness: "partial",
+    });
+
+    expect(taskView(model, "t_approved_blocked").lane).toBe("waiting_dependency");
+    expect(taskView(model, "t_approved_working").lane).toBe("running");
+    expect(taskView(model, "t_approved_completed").lane).toBe("completed");
+    expect(taskView(model, "t_approved_failed").lane).toBe("attention");
+  });
+
+  it("keeps unknown gate status after successful approval loading", () => {
+    const model = build({
+      tasks: [
+        makeTask({
+          id: "t_unknown_gate",
+          title: "Unknown gate",
+          status: "not_started",
+          approvalGateId: "ap_unknown",
+        }),
+      ],
+      approvals: [
+        makeApproval({
+          id: "ap_unknown",
+          status: "expired" as Approval["status"],
+        }),
+      ],
+    });
+
+    const view = taskView(model, "t_unknown_gate");
+    expect(view.gateState).toBe("unknown");
+    expect(view.lane).toBe("attention");
   });
 
   it("keeps approvals unavailable when no project is selected", () => {
@@ -1175,6 +1518,12 @@ describe("approvals", () => {
 });
 
 describe("activity", () => {
+  it("defaults to available activity for existing callers", () => {
+    const model = build({ events: [] });
+
+    expect(model.activity.state).toBe("available");
+  });
+
   it("preserves supplied order and caps the preview at eight entries", () => {
     const events = Array.from({ length: 10 }, (_, index) =>
       makeEvent(`evt_${index}`),
@@ -1263,6 +1612,42 @@ describe("activity", () => {
     expect(model.activity.note).toContain("not project-scoped");
     expect(model.limitations.join(" ")).toContain("not project-scoped");
   });
+
+  it("represents unavailable activity without an empty-feed claim", () => {
+    const model = build({
+      mode: "live",
+      activityScope: "business",
+      activityAvailability: "unavailable",
+      events: [makeEvent("evt_ignored")],
+    });
+
+    expect(model.activity.state).toBe("unavailable");
+    expect(model.activity.preview).toEqual([]);
+    expect(model.activity.providedCount).toBe(0);
+    expect(model.activity.scope).toBe("unknown");
+    expect(model.activity.scopedToProject).toBe(false);
+    expect(model.activity.label).toBe("Activity");
+    expect(model.activity.note).toContain("Activity data is unavailable");
+    expect(model.limitations).toContain("Activity data is unavailable.");
+  });
+
+  it("represents loading activity without an empty-feed claim", () => {
+    const model = build({
+      mode: "live",
+      activityScope: "business",
+      activityAvailability: "loading",
+      events: [makeEvent("evt_ignored")],
+    });
+
+    expect(model.activity.state).toBe("loading");
+    expect(model.activity.preview).toEqual([]);
+    expect(model.activity.providedCount).toBe(0);
+    expect(model.activity.scope).toBe("unknown");
+    expect(model.activity.scopedToProject).toBe(false);
+    expect(model.activity.label).toBe("Activity");
+    expect(model.activity.note).toBe("Activity data is loading.");
+    expect(model.limitations).toContain("Activity data is loading.");
+  });
 });
 
 describe("demo and live parity", () => {
@@ -1297,7 +1682,12 @@ describe("demo and live parity", () => {
       activityScope: "business",
       approvalsCompleteness: "complete",
     });
-    const live = build({ ...shared, mode: "live", activityScope: "project" });
+    const live = build({
+      ...shared,
+      mode: "live",
+      activityScope: "project",
+      approvalsCompleteness: "complete",
+    });
 
     expect(demo.tasks).toEqual(live.tasks);
     expect(demo.lanes).toEqual(live.lanes);
@@ -1312,7 +1702,7 @@ describe("demo and live parity", () => {
     expect(demo.approvals.pendingCount).toBe(live.approvals.pendingCount);
     expect(demo.approvals.decidedCount).toBe(live.approvals.decidedCount);
     expect(demo.approvals.completeness).toBe("complete");
-    expect(live.approvals.completeness).toBe("partial");
+    expect(live.approvals.completeness).toBe("complete");
   });
 });
 

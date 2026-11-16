@@ -117,6 +117,7 @@ function build(overrides: Partial<WorkflowInput> = {}): WorkflowModel {
     events: [],
     mode: "demo",
     activityScope: "business",
+    approvalsCompleteness: "complete",
     ...overrides,
   });
 }
@@ -154,7 +155,7 @@ describe("WorkflowView spine", () => {
     expect(markup).toContain("Read-only office view");
   });
 
-  it("shows an honest unavailable Team Lead instead of inventing one", () => {
+  it("shows an honest no-lead Team Lead instead of inventing one", () => {
     const worker = makeAgent({
       id: "ag_worker",
       name: "Worker",
@@ -167,11 +168,60 @@ describe("WorkflowView spine", () => {
       }),
     );
 
-    expect(markup).toContain("Not assigned");
+    expect(markup).toContain("No Team Lead found");
     expect(markup).toContain("No Team Lead role in this project");
     expect(markup).toContain("roster.");
     expect(markup).not.toContain("Matched project role");
     expect(markup).toContain('href="/agents"');
+  });
+
+  it("distinguishes unavailable agent data from a known roster with no lead", () => {
+    const markup = html(
+      build({
+        agentsAvailability: "unavailable",
+        tasks: [makeTask({ id: "t_owned", title: "Owned task" })],
+      }),
+    );
+
+    expect(markup).toContain("Team data unavailable");
+    expect(markup).toContain("Owner unavailable");
+    expect(markup).not.toContain("Not assigned");
+    expect(markup).not.toContain("Unassigned");
+  });
+
+  it("renders auxiliary loading without fake owners, counts, or gate errors", () => {
+    const markup = html(
+      build({
+        agentsAvailability: "loading",
+        approvalsCompleteness: "loading",
+        activityAvailability: "loading",
+        tasks: [
+          makeTask({
+            id: "t_gated",
+            title: "Gated task",
+            status: "waiting_approval",
+            approvalGateId: "ap_1",
+          }),
+        ],
+      }),
+    );
+
+    expect(markup).toContain("Team data loading");
+    expect(markup).toContain("Owner loading");
+    expect(markup).toContain("Approvals loading.");
+    expect(markup).toContain("Activity loading.");
+    expect(markup).toContain('data-activity-scope="unknown"');
+    expect(markup).not.toContain('data-activity-scope="business"');
+    expect(markup).toContain("Approval loading");
+    expect(markup).not.toContain("Gate not loaded");
+    expect(markup).not.toContain("Approval queue");
+    expect(markup).not.toContain("0 pending");
+    expect(markup).not.toContain("Unassigned");
+    expect(markup).not.toContain("Owner unavailable");
+    expect(markup).not.toContain("Team data unavailable");
+    expect(markup).not.toContain("No Team Lead found");
+    expect(markup).not.toContain("Activity unavailable.");
+    expect(markup).not.toContain("No activity supplied.");
   });
 
   it("shows the matching project Team Lead without adding a second roster", () => {
@@ -216,6 +266,73 @@ describe("WorkflowView lanes", () => {
     expect(markup).toContain('data-lane="attention"');
     expect(markup).toContain("Ready task");
     expect(markup).toContain("Failed task");
+  });
+
+  it("renders partial gate absence as unverified, never as a Ready or missing claim", () => {
+    const markup = html(
+      build({
+        approvalsCompleteness: "partial",
+        tasks: [makeTask({ id: "t_unverified", title: "Unverified task" })],
+      }),
+    );
+
+    expect(markup).toContain("Gate unverified");
+    expect(markup).toContain(
+      "a task with no visible gate is unverified, not gate-free",
+    );
+    expect(markup).not.toContain("Gate missing");
+    expect(markup).not.toContain("No approval gate linked");
+    expect(markup).not.toContain('data-lane="ready"');
+    expect(markup).toContain('data-lane="waiting_user"');
+  });
+
+  it("renders confirmed direct-ID absence as missing only under complete approvals", () => {
+    const markup = html(
+      build({
+        approvalsCompleteness: "complete",
+        tasks: [
+          makeTask({
+            id: "t_missing",
+            title: "Missing gate",
+            approvalGateId: "ap_absent",
+          }),
+        ],
+      }),
+    );
+
+    expect(markup).toContain("Gate missing");
+    expect(markup).toContain(
+      "The linked approval gate is absent from the complete approvals dataset.",
+    );
+    expect(markup).not.toContain("Gate unverified");
+    expect(markup).not.toContain('data-lane="ready"');
+  });
+
+  it("ignores retained approval records when unavailable", () => {
+    const markup = html(
+      build({
+        mode: "live",
+        approvalsCompleteness: "unavailable",
+        approvals: [
+          makeApproval({ id: "ap_stale", status: "approved" }),
+        ],
+        tasks: [
+          makeTask({
+            id: "t_stale",
+            title: "Stale approved gate",
+            approvalGateId: "ap_stale",
+          }),
+        ],
+      }),
+    );
+
+    expect(markup).toContain("Gate unverified");
+    expect(markup).toContain(
+      "previously loaded approval records are not used and gates are unverified",
+    );
+    expect(markup).not.toContain("Approval approved");
+    expect(markup).not.toContain("Gate missing");
+    expect(markup).not.toContain('data-lane="ready"');
   });
 
   it("renders every task exactly once across the six lanes", () => {
@@ -369,6 +486,21 @@ describe("WorkflowView review and empty states", () => {
 });
 
 describe("WorkflowView provenance", () => {
+  it("renders unavailable activity without claiming an empty feed", () => {
+    const markup = html(
+      build({
+        activityAvailability: "unavailable",
+        events: [],
+      }),
+    );
+
+    expect(markup).toContain("Activity unavailable.");
+    expect(markup).toContain('data-activity-scope="unknown"');
+    expect(markup).not.toContain('data-activity-scope="business"');
+    expect(markup).not.toContain("Business activity");
+    expect(markup).not.toContain("No activity supplied.");
+  });
+
   it("normalizes contradictory demo project activity to a business-wide label", () => {
     const model = build({
       mode: "demo",
@@ -443,7 +575,11 @@ describe("WorkflowView provenance", () => {
 
   it("defaults omitted completeness to partial in DEMO mode", () => {
     const markup = html(
-      build({ mode: "demo", approvals: [makeApproval({ id: "ap_pending" })] }),
+      build({
+        mode: "demo",
+        approvals: [makeApproval({ id: "ap_pending" })],
+        approvalsCompleteness: undefined,
+      }),
     );
 
     expect(markup).toContain('data-approval-completeness="partial"');

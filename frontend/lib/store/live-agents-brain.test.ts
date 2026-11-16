@@ -40,7 +40,13 @@ function mockLive(scenarios: Scenario[], opts?: { honorAbort?: boolean }) {
   return { calls, aborted };
 }
 
-function agentPage(ids: string[]) {
+interface PageMeta {
+  offset?: number;
+  total?: number;
+  limit?: number;
+}
+
+function agentPage(ids: string[], meta: PageMeta = {}) {
   return {
     items: ids.map((id) => ({
       id,
@@ -58,9 +64,9 @@ function agentPage(ids: string[]) {
       avatarHue: 200,
       contract: "v1",
     })),
-    total: ids.length,
-    limit: 200,
-    offset: 0,
+    total: meta.total ?? ids.length,
+    limit: meta.limit ?? 200,
+    offset: meta.offset ?? 0,
     contract: "v1",
   };
 }
@@ -109,6 +115,73 @@ describe("live agents list", () => {
     expect(s.agents[0].role).toBe("Role ag_1");
     expect(s.agents[0].permissions).toEqual({ read: ["x"], write: [], actions: [], denied: ["y"] });
     expect(s.agents[0].currentTask).toBeUndefined();
+  });
+
+  it("loads every agent page, including an agent on page two", async () => {
+    const { calls } = mockLive([
+      {
+        test: (u) => u.includes("/agents") && u.includes("offset=0"),
+        status: 200,
+        body: agentPage(["ag_1", "ag_2"], { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/agents") && u.includes("offset=2"),
+        status: 200,
+        body: agentPage(["ag_3"], { total: 3, offset: 2 }),
+      },
+    ]);
+    await useLiveAgentsList.getState().load("biz_test");
+    const s = useLiveAgentsList.getState();
+    expect(s.status).toBe("ready");
+    expect(s.agents.map((a) => a.id)).toEqual(["ag_1", "ag_2", "ag_3"]);
+    expect(s.total).toBe(3);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("does not publish a partial agent page when page two fails", async () => {
+    mockLive([
+      {
+        test: (u) => u.includes("/agents") && u.includes("offset=0"),
+        status: 200,
+        body: agentPage(["ag_1", "ag_2"], { total: 3 }),
+      },
+      {
+        test: (u) => u.includes("/agents") && u.includes("offset=2"),
+        status: 500,
+        body: { error: { code: "internal", message: "Agent page two failed." } },
+      },
+    ]);
+    await useLiveAgentsList.getState().load("biz_test");
+    const s = useLiveAgentsList.getState();
+    expect(s.status).toBe("error");
+    expect(s.agents).toEqual([]);
+    expect(s.total).toBe(0);
+    expect(s.error).toContain("Agent page two failed.");
+  });
+
+  it("does not let a superseded multi-page agent load publish", async () => {
+    mockLive(
+      [
+        {
+          test: (u) => u.includes("biz_slow") && u.includes("/agents"),
+          status: 200,
+          body: agentPage(["slow_1", "slow_2"], { total: 3 }),
+          delayMs: 40,
+        },
+        {
+          test: (u) => u.includes("biz_fast") && u.includes("/agents"),
+          status: 200,
+          body: agentPage(["fast"]),
+        },
+      ],
+      { honorAbort: false },
+    );
+    const slow = useLiveAgentsList.getState().load("biz_slow");
+    await useLiveAgentsList.getState().load("biz_fast");
+    await slow;
+    const s = useLiveAgentsList.getState();
+    expect(s.businessId).toBe("biz_fast");
+    expect(s.agents.map((a) => a.id)).toEqual(["fast"]);
   });
 
   it("resets on business switch without flashing stale agents", async () => {
