@@ -50,7 +50,8 @@ business-os/                  # repo root — orchestration + docs only
 │   └── pyproject.toml        # source of truth for dependencies
 ├── docs/
 │   ├── architecture.md       # this file
-│   └── development.md        # local setup, commands, workflows
+│   ├── development.md        # local setup, commands, workflows
+│   └── fluxus-strategy.md    # product plan + what of it already exists
 ├── package.json              # root orchestration scripts (npm --prefix frontend)
 ├── .gitignore
 └── README.md

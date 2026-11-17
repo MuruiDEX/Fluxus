@@ -39,6 +39,9 @@ All commands delegate to `frontend/` — you can also run them there directly.
   TypeScript, Tailwind v4, Zustand). See [`frontend/README.md`](frontend/README.md).
 - [`backend/`](backend/) — FastAPI backend (auth, persistence, LLM layer,
   execution + briefs API, Alembic migrations). See [`backend/README.md`](backend/README.md).
+- [`docs/fluxus-strategy.md`](docs/fluxus-strategy.md) — the product plan
+  (AI Office, Workspace, Intelligence, Dots, Provider Hub, Marketplace,
+  subscriptions) and what of it is already implemented.
 - [`docs/architecture.md`](docs/architecture.md) — where everything lives
   and where new code goes.
 - [`docs/development.md`](docs/development.md) — install, run, verify, workflows.

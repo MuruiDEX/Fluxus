@@ -8,13 +8,13 @@ import { TopBar } from "@/components/system/TopBar";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen overflow-hidden bg-canvas">
+    <div className="flux-shell flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
         <Suspense>
           <AuthGate>
-            <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 lg:px-6">
+            <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-5 lg:px-7 lg:py-6">
               <PageTransition className="mx-auto max-w-(--flux-page-max)">{children}</PageTransition>
             </main>
           </AuthGate>

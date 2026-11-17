@@ -27,14 +27,22 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="flex flex-wrap items-center gap-2 text-heading-md font-bold text-fg">
+      <div className="relative min-w-0 pl-3.5">
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-1 h-[calc(100%-0.4rem)] w-[2.5px] rounded-full bg-gradient-to-b from-brand-solid via-accent to-transparent"
+        />
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-1 h-[calc(100%-0.4rem)] w-[2.5px] rounded-full bg-brand blur-[6px] opacity-40"
+        />
+        <h1 className="flex flex-wrap items-center gap-2 text-heading-md font-bold tracking-tight text-fg">
           {title}
           {badge}
         </h1>
-        {sub && <p className="mt-0.5 text-body-sm text-fg-muted">{sub}</p>}
+        {sub && <p className="mt-1 max-w-3xl text-body-sm text-fg-muted">{sub}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }
@@ -154,10 +162,14 @@ export function MetricCard({
       ? series.map((v, i) => `${(i / (series.length - 1)) * 100},${28 - (v / peak) * 24}`).join(" ")
       : null;
   return (
-    <Card className="p-4">
-      <p className="text-caption font-medium text-fg-muted">{label}</p>
-      <div className="mt-1 flex items-baseline gap-2">
-        <p className="text-heading-lg font-bold tabular-nums text-fg">{value}</p>
+    <Card className="relative overflow-hidden p-4">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-brand/10 blur-2xl"
+      />
+      <p className="relative text-caption font-medium text-fg-muted">{label}</p>
+      <div className="relative mt-1 flex items-baseline gap-2">
+        <p className="text-heading-lg font-bold tabular-nums tracking-tight text-fg">{value}</p>
         <span
           className={cn(
             "flex items-center gap-0.5 text-caption font-semibold tabular-nums",

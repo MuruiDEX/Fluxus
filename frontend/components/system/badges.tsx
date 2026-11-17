@@ -159,9 +159,9 @@ export function Avatar({ name, hue, size = 28 }: { name: string; hue: number; si
 export function ProgressBar({ value, className }: { value: number; className?: string }) {
   const clamped = Math.min(100, Math.max(0, value));
   return (
-    <div className={cn("h-1.5 w-full overflow-hidden rounded-full bg-mist-200 dark:bg-white/10", className)}>
+    <div className={cn("h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken", className)}>
       <div
-        className="h-full origin-left rounded-full bg-gradient-to-r from-brand-500 to-sky-400 transition-transform duration-700"
+        className="h-full origin-left rounded-full bg-gradient-to-r from-brand-solid via-brand to-accent transition-transform duration-700"
         style={{ transform: `scaleX(${clamped / 100})` }}
       />
     </div>

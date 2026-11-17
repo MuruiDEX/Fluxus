@@ -1,216 +1,357 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowRight, CheckCircle2, CircleAlert, Lightbulb, TrendingUp } from "lucide-react";
-import { AgentStatusBadge, Avatar, ProgressBar } from "@/components/system/badges";
-import { Card, DemoBadge, MetricCard, PageHeader, PrimaryLink } from "@/components/system/ui";
-import { StaggerGroup, StaggerItem } from "@/components/system/motion";
-import { LiveHome } from "@/components/live/LiveHome";
-import { goalHref } from "@/lib/intake-goal";
-import { useActivity, useAgents, useApprovals, useBusiness, useProjects } from "@/lib/store/app";
+import { useEffect } from "react";
+import { useUI } from "@/lib/store/app";
+import {
+  useActivity,
+  useAgents,
+  useApprovals,
+  useBusiness,
+  useProjects,
+} from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext } from "@/lib/store/live";
+import {
+  useLiveActivity,
+  useLiveAgentsList,
+  useLiveApprovals,
+  useLiveBusiness,
+  useLiveProjects,
+  useLiveTasks,
+  useLiveUsage,
+} from "@/lib/store/live";
+import { AgentWorkflow } from "@/components/dashboard/AgentWorkflow";
+import { DashboardHero } from "@/components/dashboard/DashboardHero";
+import {
+  CommandPanel,
+  DepartmentsPanel,
+  HealthPanel,
+  OperationsPanel,
+  QuickActions,
+  RecentActivity,
+  SystemOverview,
+} from "@/components/dashboard/panels";
+import { Card, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
 
-const briefing = [
-  { icon: CircleAlert, tone: "text-red-500", text: "Competitor X reduced pricing by 10%.", action: "Investigate", goal: "Respond to competitor X cutting prices by 10%." },
-  { icon: TrendingUp, tone: "text-amber-500", text: "Search traffic for “personal trainer Kraków” increased 23%.", action: "Create Project", goal: "Capture rising search demand for personal trainer Krakow." },
-  { icon: Lightbulb, tone: "text-sky-500", text: "Customer response time increased from 8m to 21m.", action: "Investigate", goal: "Fix customer response time rising from 8 to 21 minutes." },
-  { icon: CheckCircle2, tone: "text-emerald-500", text: "Launch a retention campaign for inactive customers.", action: "Create Project", goal: "Launch a retention campaign for inactive customers." },
-];
-
-function DemoActiveProjectsCard() {
-  const projects = useProjects((s) => s.projects);
-
+function DashboardSkeleton() {
   return (
-    <Card className="p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-[15px] font-bold">Active Projects</h2>
-        <Link href="/projects" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
-          View all <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-      <div className="flex flex-col gap-3">
-        {projects.map((p) => (
-          <Link key={p.id} href={`/projects/${p.id}`} className="group">
-            <div className="mb-1 flex items-center justify-between text-[13px]">
-              <span className="font-medium group-hover:text-brand-500">{p.title}</span>
-              <span className="tabular-nums text-ink-500">{p.progress}%</span>
-            </div>
-            <ProgressBar value={p.progress} />
-          </Link>
-        ))}
-        {projects.length === 0 && (
-          <p className="rounded-xl bg-mist-50 p-3 text-[12.5px] text-ink-500 dark:bg-white/5 dark:text-slate-300">
-            No demo projects yet. Start one to give the team work.
-          </p>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function DemoActivityCard() {
-  const agents = useAgents((s) => s.agents);
-  const events = useActivity((s) => s.events);
-  const pendingCount = useApprovals(
-    (s) => s.approvals.filter((approval) => approval.status === "pending").length,
-  );
-
-  return (
-    <Card className="p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-[15px] font-bold">AI Activity</h2>
-        <Link href="/office" className="flex items-center gap-1 text-[12px] font-semibold text-brand-500 hover:underline">
-          Open office <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {agents.slice(0, 5).map((a) => (
-          <span key={a.id} className="flex items-center gap-1.5 rounded-full border border-mist-200 py-0.5 pl-0.5 pr-2 dark:border-white/10">
-            <Avatar name={a.name} hue={a.avatarHue} size={20} />
-            <span className="text-[11px] font-medium">{a.role}</span>
-          </span>
-        ))}
-      </div>
-      <div className="flex flex-col">
-        {events.slice(0, 4).map((e) => (
-          <div key={e.id} className="flex items-start gap-2 border-b border-mist-100 py-2 text-[12.5px] last:border-0 dark:border-white/5">
-            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
-            <p className="flex-1 leading-5">
-              <span className="font-semibold">{e.agentName}</span> — {e.text}
-            </p>
-            <span className="shrink-0 text-[11px] text-ink-400">{e.at}</span>
+    <div className="flex flex-col gap-4" role="status" aria-label="Loading dashboard">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <Card className="relative overflow-hidden p-6">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="mt-6 h-12 w-2/3" />
+          <Skeleton className="mt-3 h-5 w-1/2" />
+          <Skeleton className="mt-3 h-3 w-3/4" />
+          <div className="mt-6 flex gap-2">
+            <Skeleton className="h-11 w-36 rounded-control" />
+            <Skeleton className="h-11 w-32 rounded-control" />
           </div>
+        </Card>
+        <div className="flex flex-col gap-3">
+          <Card className="p-4">
+            <Skeleton className="h-8 w-44" />
+            <Skeleton className="mt-4 h-4 w-40" />
+            <Skeleton className="mt-3 h-10 w-full rounded-control" />
+            <Skeleton className="mt-2 h-9 w-full rounded-control" />
+          </Card>
+          <Card className="p-4">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="mt-3 h-3 w-full" />
+            <Skeleton className="mt-2 h-3 w-full" />
+          </Card>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-8 w-8 rounded-control" />
+            <Skeleton className="mt-3 h-7 w-1/3" />
+            <Skeleton className="mt-2 h-3 w-2/3" />
+          </Card>
         ))}
       </div>
-      {pendingCount > 0 && (
-        <Link
-          href="/approvals"
-          className="mt-3 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2.5 text-[13px] font-medium text-orange-700 dark:bg-orange-500/10 dark:text-orange-300"
-        >
-          {pendingCount} approval{pendingCount === 1 ? "" : "s"} waiting for you
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-function DemoLiveNow() {
-  const agents = useAgents((s) => s.agents);
-
-  return (
-    <Card className="p-4">
-      <h2 className="mb-2 text-[15px] font-bold">Live now</h2>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {agents.filter((a) => a.status === "working" || a.status === "waiting_dependency").slice(0, 4).map((a) => (
-          <div key={a.id} className="flex items-center gap-2.5 rounded-xl border border-mist-200 p-2.5 dark:border-white/10">
-            <Avatar name={a.name} hue={a.avatarHue} size={30} />
-            <div className="min-w-0">
-              <p className="truncate text-[12.5px] font-semibold">{a.role}</p>
-              <p className="truncate text-[11.5px] text-ink-500">{a.currentTask}</p>
-            </div>
-            <div className="ml-auto"><AgentStatusBadge status={a.status} live /></div>
-          </div>
-        ))}
-      </div>
-    </Card>
+      <Card className="p-4">
+        <Skeleton className="h-5 w-40" />
+        <div className="mt-4 flex gap-2">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-40 flex-1 rounded-card" />
+          ))}
+        </div>
+      </Card>
+    </div>
   );
 }
 
 function DemoHomePage() {
   const business = useBusiness((s) => s.business);
-  const projectCount = useProjects((s) => s.projects.length);
-  const m = business.metrics;
-  const router = useRouter();
+  const agents = useAgents((s) => s.agents);
+  const projects = useProjects((s) => s.projects);
+  const tasks = useProjects((s) => s.tasks);
+  const activeProjectId = useProjects((s) => s.activeProjectId);
+  const approvals = useApprovals((s) => s.approvals);
+  const events = useActivity((s) => s.events);
+  const setCommandOpen = useUI((s) => s.setCommandOpen);
+
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null;
+  const hired = agents.filter((agent) => agent.hired);
+  const activeAgents = hired.filter((agent) =>
+    ["working", "thinking", "reviewing"].includes(agent.status),
+  );
+  const pending = approvals.filter((approval) => approval.status === "pending");
+  const openTasks = tasks.filter((task) =>
+    ["working", "waiting_dependency", "waiting_assets", "waiting_approval"].includes(task.status),
+  );
+
+  const spend = activeProject
+    ? {
+        amount: activeProject.aiSpent,
+        budget: activeProject.aiBudget,
+        note: `of $${activeProject.aiBudget.toFixed(2)} project budget`,
+      }
+    : null;
+
+  const systemLabel =
+    pending.length > 0
+      ? `${pending.length} approval${pending.length === 1 ? "" : "s"} waiting`
+      : "Demo · systems normal";
+  const systemTone = pending.length > 0 ? "warning" : "brand";
 
   return (
     <>
-      <PageHeader
-        title={`Good morning, ${business.ownerName}`}
-        badge={<DemoBadge />}
-        sub={`Your AI company is working on ${projectCount} project${projectCount === 1 ? "" : "s"}. Here's what's happening.`}
-        actions={
-          <PrimaryLink href="/projects/new">+ New Project</PrimaryLink>
-        }
-      />
-
-      <StaggerGroup className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StaggerItem>
-          <MetricCard label="Revenue" value={`$${business.metrics.revenue.toLocaleString("en-US")}`} delta={m.revenueDelta} spark={business.revenueSeries.map((r) => r.value)} />
-        </StaggerItem>
-        <StaggerItem>
-          <MetricCard label="New Customers" value={String(m.customers)} delta={m.customersDelta} />
-        </StaggerItem>
-        <StaggerItem>
-          <MetricCard label="Conversion" value={`${m.conversion}%`} delta={m.conversionDelta} invert />
-        </StaggerItem>
-        <StaggerItem>
-        <Card className="flex h-full items-center gap-3 p-4">
-          <div className="relative h-14 w-14 shrink-0">
-            <svg viewBox="0 0 36 36" className="h-14 w-14 -rotate-90">
-              <circle cx="18" cy="18" r="15.5" fill="none" strokeWidth="4" className="stroke-mist-200 dark:stroke-white/10" />
-              <circle
-                cx="18"
-                cy="18"
-                r="15.5"
-                fill="none"
-                strokeWidth="4"
-                strokeLinecap="round"
-                stroke="url(#health)"
-                pathLength={100}
-                strokeDasharray={`${business.healthScore} 100`}
-              />
-              <defs>
-                <linearGradient id="health" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#2563eb" />
-                  <stop offset="100%" stopColor="#06b6d4" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-[13px] font-bold tabular-nums">
-              {business.healthScore}
-            </span>
-          </div>
-          <div>
-            <p className="text-[12px] font-medium text-ink-500 dark:text-slate-400">Business Health</p>
-            <p className="text-[15px] font-bold">{business.healthScore}/100</p>
-          </div>
-        </Card>
-        </StaggerItem>
-      </StaggerGroup>
-
-      <div className="grid gap-3 xl:grid-cols-3">
-        <Card className="p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold">CEO Briefing</h2>
-            <span className="text-[11px] text-ink-400">Sample signals</span>
-          </div>
-          <p className="mb-1 text-[11.5px] leading-4 text-ink-400">
-            Illustrative demo scenarios — not live measurements of your business.
-          </p>
-          <div className="flex flex-col">
-            {briefing.map((b, i) => (
-              <div key={i} className="flex items-start gap-2.5 border-b border-mist-100 py-2.5 last:border-0 dark:border-white/5">
-                <b.icon className={`mt-0.5 h-4 w-4 shrink-0 ${b.tone}`} />
-                <p className="flex-1 text-[13px] leading-5">{b.text}</p>
-                <button
-                  onClick={() => router.push(goalHref(b.goal))}
-                  className="shrink-0 text-[12px] font-semibold text-brand-500 hover:underline"
-                >
-                  {b.action}
-                </button>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <DemoActiveProjectsCard />
-        <DemoActivityCard />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <DashboardHero
+          mode="demo"
+          greetingName={business.ownerName}
+          businessName={business.name}
+          systemLabel={systemLabel}
+          systemTone={systemTone}
+          activeAgents={activeAgents.length}
+          pendingApprovals={pending.length}
+          onOpenCommand={() => setCommandOpen(true)}
+        />
+        <div className="flex flex-col gap-3">
+          <CommandPanel mode="demo" onOpen={() => setCommandOpen(true)} />
+          <HealthPanel
+            mode="demo"
+            pendingApprovals={pending.length}
+            activeTasks={openTasks.length}
+            totalTasks={tasks.length}
+            healthScore={business.healthScore}
+            lastActivity={events[0]?.at}
+          />
+        </div>
       </div>
 
-      <DemoLiveNow />
+      <SystemOverview
+        mode="demo"
+        agents={agents}
+        tasks={tasks}
+        approvals={approvals}
+        spend={spend}
+      />
+
+      <div id="agent-workflow" className="scroll-mt-4">
+        <AgentWorkflow
+          mode="demo"
+          project={activeProject}
+          tasks={tasks}
+          agents={agents}
+          approvals={approvals}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
+        <OperationsPanel
+          mode="demo"
+          tasks={tasks}
+          agents={agents}
+          approvals={approvals}
+          projects={projects}
+        />
+        <DepartmentsPanel agents={agents} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <QuickActions />
+        <RecentActivity events={events} />
+      </div>
+    </>
+  );
+}
+
+function LiveDashboard({ businessId }: { businessId: string }) {
+  const business = useLiveBusiness((s) => s.business);
+  const businessStatus = useLiveBusiness((s) => s.status);
+  const businessError = useLiveBusiness((s) => s.error);
+  const projects = useLiveProjects((s) => s.projects);
+  const projectsStatus = useLiveProjects((s) => s.status);
+  const tasks = useLiveTasks((s) => s.tasks);
+  const tasksStatus = useLiveTasks((s) => s.status);
+  const tasksError = useLiveTasks((s) => s.error);
+  const agents = useLiveAgentsList((s) => s.agents);
+  const agentsStatus = useLiveAgentsList((s) => s.status);
+  const agentsError = useLiveAgentsList((s) => s.error);
+  const approvals = useLiveApprovals((s) => s.approvals);
+  const approvalsStatus = useLiveApprovals((s) => s.status);
+  const events = useLiveActivity((s) => s.events);
+  const activityStatus = useLiveActivity((s) => s.status);
+  const activityError = useLiveActivity((s) => s.error);
+  const spendStatus = useLiveUsage((s) => s.status);
+  const spendSummary = useLiveUsage((s) => s.summary);
+  const spendError = useLiveUsage((s) => s.error);
+  const setCommandOpen = useUI((s) => s.setCommandOpen);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await Promise.all([
+        useLiveBusiness.getState().load(businessId),
+        useLiveProjects.getState().load(businessId),
+        useLiveAgentsList.getState().load(businessId),
+        useLiveApprovals.getState().load(businessId),
+        useLiveActivity.getState().load({ businessId }),
+        useLiveUsage.getState().load({ businessId }),
+      ]);
+      if (cancelled) return;
+      const projectIds = useLiveProjects.getState().projects.map((project) => project.id);
+      if (projectIds.length > 0) {
+        await useLiveTasks.getState().loadAll(businessId, projectIds);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      useLiveBusiness.getState().reset();
+      useLiveProjects.getState().reset();
+      useLiveAgentsList.getState().reset();
+      useLiveApprovals.getState().reset();
+      useLiveActivity.getState().reset();
+      useLiveUsage.getState().reset();
+      useLiveTasks.getState().reset();
+    };
+  }, [businessId]);
+
+  if (businessStatus === "error") {
+    return (
+      <>
+        <PageHeader title="Workspace" badge={<LiveBadge />} sub="Server data for this business." />
+        <Card className="p-8 text-center">
+          <p className="text-body font-semibold text-fg">Couldn&apos;t load this business</p>
+          <p className="mx-auto mt-1 max-w-md text-body-sm text-fg-muted">{businessError}</p>
+          <div className="mt-3 flex justify-center">
+            <PrimaryButton onClick={() => void useLiveBusiness.getState().load(businessId)}>
+              Retry
+            </PrimaryButton>
+          </div>
+        </Card>
+      </>
+    );
+  }
+
+  if (!business) return <DashboardSkeleton />;
+
+  const hired = agents.filter((agent) => agent.hired);
+  const activeAgents = hired.filter((agent) =>
+    ["working", "thinking", "reviewing"].includes(agent.status),
+  );
+  const activeProject =
+    projects.find((project) => project.status === "in_progress") ?? projects[0] ?? null;
+  const pending = approvals.filter((approval) => approval.status === "pending");
+  const openTasks = tasks.filter((task) =>
+    ["working", "waiting_dependency", "waiting_assets", "waiting_approval"].includes(task.status),
+  );
+  const budget = projects.reduce((total, project) => total + project.aiBudget, 0);
+  const spendAmount = spendSummary.confirmedCost + spendSummary.estimatedCost;
+  const spend =
+    spendStatus === "ready"
+      ? {
+          amount: spendAmount,
+          note: budget > 0 ? `of $${budget.toFixed(2)} project budget` : "Server-reported usage",
+          budget: budget > 0 ? budget : undefined,
+          unknownCount: spendSummary.unknownCount,
+        }
+      : null;
+
+  // `businessStatus === "error"` is handled by the early return above, so it
+  // is not part of this union (the narrowed type made the check dead code).
+  const degraded =
+    projectsStatus === "error" ||
+    tasksStatus === "error" ||
+    agentsStatus === "error" ||
+    approvalsStatus === "error" ||
+    activityStatus === "error" ||
+    spendStatus === "error";
+  const systemLabel = degraded
+    ? "Degraded · a data source failed"
+    : pending.length > 0
+      ? `${pending.length} approval${pending.length === 1 ? "" : "s"} waiting`
+      : "Online · systems normal";
+  const systemTone = degraded ? "danger" : pending.length > 0 ? "warning" : "success";
+
+  return (
+    <>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <DashboardHero
+          mode="live"
+          greetingName={business.ownerName}
+          businessName={business.name}
+          systemLabel={systemLabel}
+          systemTone={systemTone}
+          activeAgents={activeAgents.length}
+          pendingApprovals={pending.length}
+          onOpenCommand={() => setCommandOpen(true)}
+        />
+        <div className="flex flex-col gap-3">
+          <CommandPanel mode="live" onOpen={() => setCommandOpen(true)} />
+          <HealthPanel
+            mode="live"
+            pendingApprovals={pending.length}
+            activeTasks={openTasks.length}
+            totalTasks={tasks.length}
+            healthScore={business.healthScore}
+            lastActivity={events[0]?.at}
+            degraded={degraded}
+          />
+        </div>
+      </div>
+
+      <SystemOverview
+        mode="live"
+        agents={agents}
+        tasks={tasks}
+        approvals={approvals}
+        spend={spend}
+        agentsState={agentsStatus}
+        tasksState={tasksStatus}
+        spendState={spendStatus}
+      />
+
+      <div id="agent-workflow" className="scroll-mt-4">
+        <AgentWorkflow
+          mode="live"
+          project={activeProject}
+          tasks={tasks}
+          agents={agents}
+          approvals={approvals}
+        />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
+        <OperationsPanel
+          mode="live"
+          tasks={tasks}
+          agents={agents}
+          approvals={approvals}
+          projects={projects}
+          state={tasksStatus === "error" || agentsStatus === "error" ? "error" : tasksStatus}
+          error={tasksError ?? agentsError ?? spendError}
+        />
+        <DepartmentsPanel agents={agents} state={agentsStatus} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <QuickActions />
+        <RecentActivity events={events} state={activityStatus} error={activityError} />
+      </div>
     </>
   );
 }
@@ -218,7 +359,7 @@ function DemoHomePage() {
 export default function HomePage() {
   const { status, currentBusinessId } = useSession();
   if (isLiveContext(status, currentBusinessId)) {
-    return <LiveHome businessId={currentBusinessId} />;
+    return <LiveDashboard businessId={currentBusinessId} />;
   }
   return <DemoHomePage />;
 }

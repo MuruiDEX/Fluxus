@@ -6,12 +6,14 @@ import { Bell, LogIn, LogOut, Menu, Moon, Plus, Search, Sun, X } from "lucide-re
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/cn";
 import { useApprovals, useUI } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveApprovals } from "@/lib/store/live";
 import { runtimeMode } from "@/lib/runtime-config";
 import { BusinessSwitcher } from "./BusinessSwitcher";
-import { SidebarLinks } from "./Sidebar";
+import { SidebarBrand, SidebarLinks } from "./Sidebar";
+import { FluxusMark } from "./FluxusMark";
 import { Avatar, Badge } from "./badges";
 import { buttonClass, IconButton } from "./controls";
 import { PrimaryLink } from "./ui";
@@ -41,6 +43,15 @@ export function TopBar() {
         : "Demo operator";
   const router = useRouter();
 
+  const system =
+    status === "unreachable"
+      ? { label: "Backend unreachable", dot: "bg-danger-fg", tone: "text-danger-fg" }
+      : runtimeMode === "live" && status !== "authenticated"
+        ? { label: "Live · signed out", dot: "bg-warning-fg", tone: "text-warning-fg" }
+        : status === "authenticated"
+          ? { label: "Online · server data", dot: "bg-success-fg", tone: "text-success-fg" }
+          : { label: "Demo · simulated", dot: "bg-brand", tone: "text-brand" };
+
   useModalSurface(drawerRef, menuOpen);
 
   useEffect(() => {
@@ -54,7 +65,11 @@ export function TopBar() {
 
   return (
     <>
-      <header className="flex h-(--flux-topbar-h) shrink-0 items-center gap-2 border-b border-line bg-surface/80 px-3 backdrop-blur sm:gap-3 sm:px-4 lg:px-6">
+      <header className="relative flex h-(--flux-topbar-h) shrink-0 items-center gap-2 border-b border-line/70 bg-surface/70 px-3 backdrop-blur-2xl sm:gap-3 sm:px-4 lg:px-6">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-brand/25 to-transparent"
+        />
         <IconButton
           variant="outline"
           label="Open navigation"
@@ -63,17 +78,27 @@ export function TopBar() {
         >
           <Menu className="h-4 w-4" />
         </IconButton>
+        <Link href="/" aria-label="Fluxus home" className="shrink-0 lg:hidden">
+          <FluxusMark size={28} />
+        </Link>
         <button
           onClick={() => setCommandOpen(true)}
-          className="flex h-9 min-w-0 max-w-md flex-1 items-center gap-2 rounded-control border border-line bg-surface-sunken px-3 text-body-sm text-fg-muted transition-colors hover:border-brand/40 hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          className="group flex h-10 min-w-0 max-w-lg flex-1 items-center gap-2 rounded-full border border-line/80 bg-surface/60 px-3.5 text-body-sm text-fg-muted shadow-card backdrop-blur transition-colors hover:border-brand/35 hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
-          <Search className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate text-left">What do you want to accomplish?</span>
-          <kbd className="hidden rounded border border-line bg-surface px-1.5 py-0.5 text-micro font-semibold text-fg-muted sm:block">
+          <Search className="h-4 w-4 shrink-0 transition-colors group-hover:text-brand" />
+          <span className="flex-1 truncate text-left">Search Fluxus…</span>
+          <kbd className="hidden rounded-md border border-line bg-surface/80 px-1.5 py-0.5 text-micro font-semibold text-fg-muted sm:block">
             Ctrl K
           </kbd>
         </button>
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <span className="hidden items-center gap-2 rounded-full border border-line/70 bg-surface/60 px-3 py-1.5 text-caption font-medium shadow-card backdrop-blur md:inline-flex">
+            <span
+              aria-hidden="true"
+              className={cn("h-1.5 w-1.5 rounded-full shadow-[0_0_8px_currentColor]", system.dot)}
+            />
+            <span className={system.tone}>{system.label}</span>
+          </span>
           <IconButton
             variant="outline"
             label="Toggle theme"
@@ -98,7 +123,7 @@ export function TopBar() {
               </Badge>
             )}
           </Link>
-          <PrimaryLink href="/projects/new" className="hidden sm:inline-flex">
+          <PrimaryLink href="/projects/new" className="hidden rounded-full sm:inline-flex">
             <Plus className="h-4 w-4" /> New Project
           </PrimaryLink>
           <Avatar name={displayName} hue={217} />
@@ -148,10 +173,10 @@ export function TopBar() {
               role="dialog"
               aria-modal="true"
               aria-label="Navigation"
-              className="flex h-full w-[260px] flex-col gap-4 overflow-y-auto bg-surface px-3 py-4"
+              className="flex h-full w-[276px] flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 pb-4 pt-3"
             >
-              <div className="flex items-center justify-between px-2">
-                <span className="text-body-sm font-bold tracking-wide text-fg">MUSE SPARK</span>
+              <div className="flex items-center justify-between gap-2">
+                <SidebarBrand />
                 <IconButton
                   variant="ghost"
                   size="sm"
@@ -161,6 +186,7 @@ export function TopBar() {
                   <X className="h-4 w-4" />
                 </IconButton>
               </div>
+              <div className="flux-hairline h-px w-full" />
               <div onClick={() => setMenuOpen(false)}>
                 <SidebarLinks />
               </div>

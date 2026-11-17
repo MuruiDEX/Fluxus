@@ -6,8 +6,8 @@ import { Providers } from "@/components/providers";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "MUSE SPARK — AI Business Office",
-  description: "Your AI company runs the work. You run the business.",
+  title: "Fluxus — AI Business OS",
+  description: "A futuristic operating system for AI-powered businesses.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -32,15 +32,30 @@
   --color-cyan-500: #06b6d4;
   --color-violet-500: #8b5cf6;
 
+  /* Y2K / holographic support palette. Components consume the semantic
+     `accent` and `holo` roles below, never these raw steps directly. */
+  --color-ice-100: #e8f6ff;
+  --color-ice-200: #c9ebff;
+  --color-ice-300: #9fdcff;
+  --color-electric-300: #7dd3fc;
+  --color-electric-400: #38bdf8;
+  --color-electric-500: #0ea5e9;
+  --color-holo-300: #c4b5fd;
+  --color-holo-400: #a78bfa;
+  --color-holo-500: #8b5cf6;
+  --color-silver-200: #e2e8f0;
+  --color-silver-300: #cbd5e1;
+
   --color-night-950: #070d24;
   --color-night-900: #0d1730;
   --color-night-800: #14224a;
 
-  --radius-card: 1rem;
-  --radius-control: 0.625rem;
+  --radius-card: 1.125rem;
+  --radius-control: 0.75rem;
 
-  --shadow-card: 0 1px 2px rgba(16, 24, 64, 0.06), 0 8px 24px -12px rgba(37, 99, 235, 0.18);
-  --shadow-pop: 0 12px 40px -12px rgba(15, 30, 61, 0.28);
+  --shadow-card: 0 1px 1px rgba(16, 24, 64, 0.04), 0 14px 34px -26px rgba(30, 64, 175, 0.32);
+  --shadow-pop: 0 24px 64px -28px rgba(15, 30, 61, 0.38);
+  --shadow-glow: 0 0 0 1px color-mix(in srgb, var(--flux-brand) 20%, transparent), 0 24px 60px -38px color-mix(in srgb, var(--flux-accent) 60%, transparent);
 
   /*
    * Canonical typography roles (10). These are the only sizes new code should
@@ -122,6 +137,12 @@
   --color-brand-soft-hover: var(--flux-brand-soft-hover);
   --color-on-brand: var(--flux-on-brand);
 
+  /* Holographic accents: decorative orbital light, never a status color. */
+  --color-accent: var(--flux-accent);
+  --color-accent-soft: var(--flux-accent-soft);
+  --color-holo: var(--flux-holo);
+  --color-holo-soft: var(--flux-holo-soft);
+
   --color-success: var(--flux-success);
   --color-success-soft: var(--flux-success-soft);
   --color-success-fg: var(--flux-success-fg);
@@ -153,10 +174,10 @@
 :root {
   color-scheme: light;
 
-  --flux-canvas: #f4f7fe;
+  --flux-canvas: #f2f6fe;
   --flux-surface: #ffffff;
   --flux-surface-raised: #f8faff;
-  --flux-surface-sunken: #eaf0fb;
+  --flux-surface-sunken: #e9effb;
   --flux-surface-hover: #f7f9ff;
   --flux-surface-selected: #eef4ff;
   --flux-surface-inverse: #0f1e3d;
@@ -178,6 +199,11 @@
   --flux-brand-soft: #eef4ff;
   --flux-brand-soft-hover: #e0ecff;
   --flux-on-brand: #ffffff;
+
+  --flux-accent: #0e7490;
+  --flux-accent-soft: #e6f7ff;
+  --flux-holo: #6d28d9;
+  --flux-holo-soft: #f3efff;
 
   --flux-success-fg: #047857;
   --flux-success-bg: #ecfdf5;
@@ -226,10 +252,10 @@
 .dark {
   color-scheme: dark;
 
-  --flux-canvas: #070d24;
-  --flux-surface: #0c1631;
-  --flux-surface-raised: #121f42;
-  --flux-surface-sunken: #0a1330;
+  --flux-canvas: #05091a;
+  --flux-surface: #0a1330;
+  --flux-surface-raised: #101d3f;
+  --flux-surface-sunken: #070f26;
   --flux-surface-hover: #14224a;
   --flux-surface-selected: #16264f;
   --flux-surface-inverse: #f2f6ff;
@@ -251,6 +277,11 @@
   --flux-brand-soft: #102349;
   --flux-brand-soft-hover: #16305f;
   --flux-on-brand: #ffffff;
+
+  --flux-accent: #67e8f9;
+  --flux-accent-soft: #0c2836;
+  --flux-holo: #c4b5fd;
+  --flux-holo-soft: #1b1533;
 
   --flux-success-fg: #6ee7b7;
   --flux-success-bg: #0b2a22;
@@ -331,6 +362,335 @@ body {
   background-size: 28px 28px;
 }
 
+/*
+ * Y2K tech-futurism surfaces.
+ *
+ * Everything below resolves through the semantic tokens, so the holo accents
+ * follow light and dark mode without a single `dark:` override at call sites.
+ * Motion is opt-in and disabled wholesale by the reduced-motion block.
+ */
+.flux-shell {
+  background:
+    radial-gradient(1000px 520px at 82% -12%, color-mix(in srgb, var(--flux-accent) 10%, transparent), transparent 68%),
+    radial-gradient(820px 480px at 8% 108%, color-mix(in srgb, var(--flux-holo) 8%, transparent), transparent 70%),
+    var(--flux-canvas);
+}
+
+.flux-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--flux-brand) 16%, var(--flux-line));
+  background:
+    radial-gradient(120% 150% at 88% 8%, color-mix(in srgb, var(--flux-accent) 22%, transparent) 0%, transparent 58%),
+    radial-gradient(85% 130% at 10% 0%, color-mix(in srgb, var(--flux-brand) 12%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, var(--flux-surface) 0%, var(--flux-surface-raised) 48%, color-mix(in srgb, var(--flux-accent-soft) 86%, var(--flux-surface)) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
+    var(--shadow-card);
+}
+
+.dark .flux-hero {
+  border-color: color-mix(in srgb, var(--flux-accent) 22%, var(--flux-line));
+  background:
+    radial-gradient(120% 150% at 88% 8%, color-mix(in srgb, var(--flux-accent) 20%, transparent) 0%, transparent 58%),
+    radial-gradient(85% 130% at 8% 0%, color-mix(in srgb, var(--flux-holo) 18%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, #0a1430 0%, #0b1738 48%, #101b45 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 24px 70px -42px rgba(56, 189, 248, 0.55);
+}
+
+.flux-panel {
+  position: relative;
+  border: 1px solid var(--flux-line);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--flux-surface) 94%, var(--flux-brand) 6%), var(--flux-surface) 52%);
+  box-shadow: var(--shadow-card);
+}
+
+.dark .flux-panel {
+  border-color: color-mix(in srgb, #ffffff 9%, transparent);
+  background: linear-gradient(160deg, rgba(20, 34, 74, 0.82), rgba(10, 20, 48, 0.92));
+}
+
+.flux-glass {
+  border: 1px solid color-mix(in srgb, var(--flux-line) 76%, transparent);
+  background: color-mix(in srgb, var(--flux-surface) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* Sidebar rail: a slightly deeper glass than the page so navigation reads as
+   the OS frame rather than another panel. */
+.flux-sidebar {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--flux-surface) 94%, transparent) 0%,
+    color-mix(in srgb, var(--flux-surface-raised) 82%, transparent) 100%
+  );
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+.dark .flux-sidebar {
+  background: linear-gradient(180deg, rgba(10, 20, 46, 0.9) 0%, rgba(5, 10, 26, 0.94) 100%);
+}
+
+/*
+ * Stat tiles: the reference's layered "glass slab" cards. The gradient and
+ * inset highlight stay inside the semantic token system; hover is a 2px lift
+ * plus a border/glow shift, so dense rows do not flicker.
+ */
+.flux-stat {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--flux-line) 86%, var(--flux-accent) 14%);
+  background: linear-gradient(
+    158deg,
+    color-mix(in srgb, var(--flux-surface) 97%, var(--flux-accent) 3%) 0%,
+    var(--flux-surface) 62%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 62%, transparent),
+    var(--shadow-card);
+  transition:
+    transform 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease;
+}
+
+.flux-stat:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--flux-brand) 26%, var(--flux-line));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 70%, transparent),
+    0 22px 48px -36px color-mix(in srgb, var(--flux-brand) 65%, transparent);
+}
+
+.dark .flux-stat {
+  border-color: color-mix(in srgb, #ffffff 9%, transparent);
+  background: linear-gradient(158deg, rgba(20, 34, 74, 0.88) 0%, rgba(8, 16, 38, 0.94) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 26px 60px -46px rgba(0, 0, 0, 0.9);
+}
+
+.dark .flux-stat:hover {
+  border-color: color-mix(in srgb, var(--flux-accent) 28%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 26px 64px -42px color-mix(in srgb, var(--flux-accent) 45%, transparent);
+}
+
+/* Static aurora wash behind the hero orbital. No animation: the orbital rings
+   already carry the motion, and a moving backdrop is a performance tax. */
+.flux-aurora {
+  background: conic-gradient(
+    from 140deg at 56% 48%,
+    transparent 0deg,
+    color-mix(in srgb, var(--flux-accent) 40%, transparent) 82deg,
+    transparent 190deg,
+    color-mix(in srgb, var(--flux-holo) 32%, transparent) 288deg,
+    transparent 360deg
+  );
+  filter: blur(30px);
+  opacity: 0.45;
+}
+
+.dark .flux-aurora {
+  opacity: 0.6;
+}
+
+/*
+ * Workflow connectors: a 2px gradient track with one travelling light dot per
+ * active link. Both are CSS-only so the state can change on every engine tick
+ * without mounting animation components.
+ */
+.flux-connector {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--flux-line) 92%, transparent),
+    color-mix(in srgb, var(--flux-line) 40%, transparent)
+  );
+}
+
+.flux-connector[data-active="true"] {
+  background: linear-gradient(90deg, var(--flux-brand-solid), var(--flux-accent));
+  opacity: 0.75;
+}
+
+.flux-connector[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  height: 5px;
+  width: 5px;
+  margin-top: -2.5px;
+  border-radius: 9999px;
+  background: var(--flux-accent);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--flux-accent) 70%, transparent);
+  animation: flux-travel 2.6s linear infinite;
+}
+
+/* Planned modules use a faint diagonal hatch: the pattern itself signals
+   "not wired yet" without relying on colour alone. */
+.flux-planned {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 9px,
+    color-mix(in srgb, var(--flux-line-strong) 42%, transparent) 9px 10px
+  );
+}
+
+@keyframes flux-travel {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 5px);
+    opacity: 0;
+  }
+}
+
+.dark .flux-glass {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(8, 16, 40, 0.72);
+}
+
+.flux-grid-overlay {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--flux-brand) 9%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--flux-brand) 9%, transparent) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(80% 80% at 50% 40%, #000 10%, transparent 74%);
+}
+
+/* The mark's body is brand blue in light mode and ice blue in dark mode; both
+   read as a lit symbol rather than a dark cut-out on the nav rail. */
+.dark .flux-mark-body {
+  fill: var(--flux-accent);
+}
+
+.flux-holo-text {
+  background: linear-gradient(110deg, var(--flux-brand) 8%, var(--flux-accent) 46%, var(--flux-holo) 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.flux-hero-title {
+  font-size: clamp(2.2rem, 4.1vw, 3.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+}
+
+.flux-hero-lead {
+  font-size: clamp(1.1rem, 1.7vw, 1.45rem);
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+}
+
+.flux-hairline {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--flux-brand) 30%, transparent), transparent);
+}
+
+.flux-node {
+  transition:
+    border-color 0.22s ease,
+    background-color 0.22s ease,
+    box-shadow 0.22s ease;
+}
+
+.flux-node[data-state="active"],
+.flux-node[data-state="waiting"] {
+  border-color: color-mix(in srgb, var(--flux-brand) 38%, var(--flux-line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--flux-brand) 10%, transparent), 0 18px 36px -28px var(--flux-brand);
+}
+
+.flux-flow-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--flux-line);
+}
+
+.flux-flow-track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--flux-accent), transparent);
+  opacity: 0;
+}
+
+.flux-flow-track[data-active="true"]::after {
+  opacity: 0.85;
+  animation: flux-flow 2.4s linear infinite;
+}
+
+.flux-scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 38%, color-mix(in srgb, #ffffff 22%, transparent) 48%, transparent 58%);
+  transform: translateX(-120%);
+  animation: flux-scan 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.dark .flux-scan {
+  background: linear-gradient(105deg, transparent 38%, color-mix(in srgb, var(--flux-accent) 10%, transparent) 48%, transparent 58%);
+}
+
+.flux-orbit-ring {
+  animation: flux-orbit 26s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+.flux-orbit-ring-reverse {
+  animation: flux-orbit 34s linear infinite reverse;
+  transform-origin: 50% 50%;
+}
+
+@keyframes flux-flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes flux-scan {
+  0%,
+  62%,
+  100% {
+    transform: translateX(-120%);
+  }
+  78% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes flux-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
@@ -360,6 +720,22 @@ body {
   .animate-pulse-dot {
     animation: none;
     opacity: 1;
+  }
+
+  .flux-orbit-ring,
+  .flux-orbit-ring-reverse,
+  .flux-scan,
+  .flux-flow-track[data-active="true"]::after {
+    animation: none;
+  }
+
+  .flux-connector[data-active="true"]::after {
+    animation: none;
+    opacity: 0;
+  }
+
+  .flux-scan {
+    display: none;
   }
 
   *,
