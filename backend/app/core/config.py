@@ -92,6 +92,15 @@ class Settings(BaseSettings):
     execution_lease_ttl_s: float = 300.0
     execution_heartbeat_interval_s: float = 60.0
     execution_lease_wall_s: float = 2400.0
+    # --- Agent Capability Engine (opt-in through the agent's own profile). ---
+    # A capability-enabled execution is bounded to this many provider calls.
+    # Agents with no resolved capability grants ALWAYS use one call.
+    execution_capabilities_enabled: bool = True
+    execution_max_llm_calls: int = 4
+    execution_max_tool_requests_per_step: int = 4
+    execution_max_write_calls_per_run: int = 3
+    execution_capability_result_chars: int = 4000
+    execution_capability_timeout_s: float = 10.0
     # Recovery staleness threshold. Startup validation (below) requires it to
     # strictly exceed the worst-case live run plus _RECOVERY_CUTOFF_MARGIN_S.
     recovery_stale_minutes: int = _DEFAULT_RECOVERY_STALE_MINUTES
@@ -193,6 +202,43 @@ class Settings(BaseSettings):
         # (or expire immediately) and break the heartbeat's hard bound.
         if not math.isfinite(value) or value <= 0:
             raise ValueError("lease timings must be finite positive numbers of seconds")
+        return value
+
+    @field_validator("execution_max_llm_calls")
+    @classmethod
+    def _bounded_llm_calls(cls, value: int) -> int:
+        # The loop is deliberately small: each extra turn is another billed
+        # provider call reserved against the project budget.
+        if not 1 <= value <= 8:
+            raise ValueError("execution_max_llm_calls must be between 1 and 8")
+        return value
+
+    @field_validator("execution_max_tool_requests_per_step")
+    @classmethod
+    def _bounded_tool_requests(cls, value: int) -> int:
+        if not 1 <= value <= 8:
+            raise ValueError("execution_max_tool_requests_per_step must be between 1 and 8")
+        return value
+
+    @field_validator("execution_max_write_calls_per_run")
+    @classmethod
+    def _bounded_write_calls(cls, value: int) -> int:
+        if not 0 <= value <= 10:
+            raise ValueError("execution_max_write_calls_per_run must be between 0 and 10")
+        return value
+
+    @field_validator("execution_capability_result_chars")
+    @classmethod
+    def _bounded_result_chars(cls, value: int) -> int:
+        if not 500 <= value <= 20000:
+            raise ValueError("execution_capability_result_chars must be between 500 and 20000")
+        return value
+
+    @field_validator("execution_capability_timeout_s")
+    @classmethod
+    def _positive_capability_timeout(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("execution_capability_timeout_s must be a finite positive number")
         return value
 
     @model_validator(mode="after")

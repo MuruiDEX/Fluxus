@@ -197,6 +197,15 @@ async def main() -> None:
                     role="Team Lead",
                     status="working",
                     hired=True,
+                    # Mirrors the frontend demo profile; capability grants are
+                    # opt-in from these same columns.
+                    tools=["Planner", "Business Brain", "Marketplace"],
+                    permissions={
+                        "read": ["All project data"],
+                        "write": ["Plans", "Tasks"],
+                        "actions": ["Assign", "Review"],
+                        "denied": ["Spend money", "Publish"],
+                    },
                 )
             )
             session.add(
@@ -207,6 +216,13 @@ async def main() -> None:
                     role="Market Analyst",
                     status="working",
                     hired=True,
+                    tools=["Web research", "Business Brain"],
+                    permissions={
+                        "read": ["Web", "Business Brain"],
+                        "write": ["Research docs"],
+                        "actions": [],
+                        "denied": ["Send emails", "Modify CRM", "Spend money"],
+                    },
                 )
             )
             await session.flush()

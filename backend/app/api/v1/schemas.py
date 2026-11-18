@@ -134,6 +134,21 @@ class AgentResponse(Contracted):
     avatar_hue: int = Field(default=200, alias="avatarHue")
 
 
+class AgentCapabilityResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    risk: str
+    approval_required: bool = Field(alias="approvalRequired")
+
+
+class AgentCapabilitiesResponse(Contracted):
+    agent_id: str = Field(alias="agentId")
+    enabled: bool
+    max_llm_calls: int = Field(default=1, alias="maxLlmCalls")
+    capabilities: list[AgentCapabilityResponse] = Field(default_factory=list)
+
+
 class ApprovalResponse(Contracted):
     id: str
     business_id: str = Field(alias="businessId")

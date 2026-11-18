@@ -573,6 +573,50 @@ class TaskRepository(BaseRepository[Task]):
             result = await session.execute(stmt)
         return (result.rowcount or 0) == 1
 
+    async def owned_now(
+        self,
+        session: AsyncSession,
+        business_id: str,
+        task_id: str,
+        *,
+        execution_generation: int,
+        lease_owner: str,
+        lock: bool = False,
+    ) -> bool:
+        """Read-only ownership proof for capability side effects.
+
+        Uses database statement time (not transaction time), so a proof taken
+        late in a transaction still measures the live lease instead of the
+        transaction's start. With `lock=True` it also takes a shared row lock,
+        which blocks a concurrent takeover until the caller's transaction ends:
+        callers re-prove ownership this way immediately before committing a
+        side effect, so no newer owner can be granted in between.
+        """
+        if not isinstance(execution_generation, int) or execution_generation < 1:
+            return False
+        if not lease_owner or len(lease_owner) > 64:
+            return False
+        now = func.statement_timestamp()
+        stmt = (
+            select(Task.id)
+            .where(
+                Task.business_id == business_id,
+                Task.id == task_id,
+                Task.status == TaskStatus.WORKING.value,
+                Task.execution_generation == execution_generation,
+                Task.lease_owner == lease_owner,
+                Task.lease_expires_at.is_not(None),
+                Task.lease_deadline_at.is_not(None),
+                Task.lease_expires_at > now,
+                Task.lease_deadline_at > now,
+            )
+            .limit(1)
+        )
+        if lock:
+            stmt = stmt.with_for_update(read=True)
+        row = (await session.execute(stmt)).first()
+        return row is not None
+
     async def renew_lease(
         self,
         session: AsyncSession,

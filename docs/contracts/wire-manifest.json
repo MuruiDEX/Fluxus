@@ -47,6 +47,11 @@
       "response": "AgentResponse"
     },
     {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/agents/{agent_id}/capabilities",
+      "response": "AgentCapabilitiesResponse"
+    },
+    {
       "method": "POST",
       "path": "/api/v1/businesses/{business_id}/agents/{agent_id}/disable",
       "response": "AgentResponse"
@@ -277,6 +282,58 @@
       "required": [
         "id",
         "kind"
+      ]
+    },
+    "AgentCapabilitiesResponse": {
+      "properties": {
+        "agentId": {
+          "type": "string"
+        },
+        "capabilities": {
+          "default": [],
+          "type": "array"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxLlmCalls": {
+          "default": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "agentId",
+        "enabled"
+      ]
+    },
+    "AgentCapabilityResponse": {
+      "properties": {
+        "approvalRequired": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approvalRequired",
+        "description",
+        "id",
+        "risk",
+        "title"
       ]
     },
     "AgentListResponse": {

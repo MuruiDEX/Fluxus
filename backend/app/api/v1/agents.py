@@ -16,7 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.v1.executions import _factory, _settings
 from app.api.v1.reads import _agent_response
-from app.api.v1.schemas import AgentResponse
+from app.api.v1.schemas import (
+    AgentCapabilitiesResponse,
+    AgentCapabilityResponse,
+    AgentResponse,
+)
+from app.capabilities.registry import resolve_grants
 from app.core.auth import check_client_contract
 from app.core.identity import Identity, require_business
 from app.persistence.repositories.concrete import (
@@ -92,3 +97,51 @@ async def disable_agent(
     identity: Identity = Depends(require_business),  # noqa: B008 - FastAPI idiom
 ):
     return await _set_active(business_id, agent_id, False, identity, request)
+
+
+@router.get(
+    "/businesses/{business_id}/agents/{agent_id}/capabilities",
+    response_model=AgentCapabilitiesResponse,
+    dependencies=_GUARD,
+)
+async def get_agent_capabilities(
+    business_id: str,
+    agent_id: str,
+    request: Request,
+    identity: Identity = Depends(require_business),  # noqa: B008 - FastAPI idiom
+):
+    """Read-only introspection of the capabilities resolved for one agent.
+
+    The profile columns stay the single source of truth: this endpoint only
+    reports what execution would grant, never grants anything itself. An
+    unknown agent is a uniform 404 (same rule as lifecycle); a disabled agent
+    still reports its stored profile so an owner can inspect it before
+    re-activating.
+    """
+    settings = _settings(request)
+    factory = _factory(request)
+    async with factory() as session:
+        agent = await _agents.get(session, business_id, agent_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found in scope.")
+        specs = (
+            resolve_grants(agent.tools, agent.permissions)
+            if settings.execution_capabilities_enabled
+            else []
+        )
+        return AgentCapabilitiesResponse(
+            agentId=agent.id,
+            enabled=bool(specs),
+            maxLlmCalls=settings.execution_max_llm_calls if specs else 1,
+            capabilities=[
+                AgentCapabilityResponse(
+                    id=spec.id,
+                    title=spec.title,
+                    description=spec.description,
+                    risk=spec.risk.value,
+                    approvalRequired=spec.approval.value == "required",
+                )
+                for spec in specs
+            ],
+            contract=settings.contract_version,
+        )

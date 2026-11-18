@@ -34,13 +34,21 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.capabilities import (
+    CapabilityContext,
+    CapabilityExecutor,
+    CapabilityOwnershipLost,
+    aggregate_usage,
+    resolve_grants,
+)
+from app.capabilities.protocol import build_capability_block
+from app.capabilities.types import text_limit
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution import prompts
 from app.execution.heartbeat import LeaseHeartbeat
 from app.execution.prompts import (
     MAX_ENVELOPE_CHARS,
-    RESULT_SCHEMA,
     build_envelope,
     build_system_prompt,
     build_user_prompt,
@@ -89,6 +97,11 @@ _budget_reservations = BudgetReservationRepository()
 log = get_logger(__name__)
 
 MAX_ATTEMPTS = 3  # initial try + reruns; attempts counts completed failures
+
+# Capability turns cap the model's own JSON at this many characters before it
+# is echoed back as an assistant message. The reservation bound below uses the
+# same constant, so the two can never drift apart.
+_MAX_ASSISTANT_TURN_CHARS = 4000
 
 # Statuses the executor may claim from. Everything else is refused without
 # touching the row: completed в†’ no-op, working в†’ already-running,
@@ -325,6 +338,30 @@ async def _append_event(
             "cost": cost,
         },
     )
+
+
+def _capability_extra_turn_bound(result_chars: int) -> int:
+    """Conservative prompt-token bound for one assistant + tool-result pair.
+
+    `estimate_input_token_bound` measures UTF-8 bytes, and one code point can
+    take four bytes, so a character cap of N needs 4*N. Two extra chat messages
+    also carry their framing allowance.
+    """
+    chars = _MAX_ASSISTANT_TURN_CHARS + max(0, int(result_chars))
+    return 4 * chars + 2 * pricing.CHAT_FRAMING_TOKENS_PER_MESSAGE
+
+
+def _capability_input_bound(base_input_bound: int, result_chars: int, calls: int) -> int:
+    """Worst-case prompt tokens for `calls` turns of the bounded loop.
+
+    Every turn repeats the base prompt; later turns also carry every earlier
+    assistant/tool pair (bounded per turn). `calls` is the number of provider
+    calls whose input may be billed.
+    """
+    if calls <= 1:
+        return base_input_bound
+    extra = _capability_extra_turn_bound(result_chars)
+    return base_input_bound * calls + extra * (calls * (calls - 1) // 2)
 
 
 def _usage_dict(response_usage: object) -> dict:
@@ -668,24 +705,59 @@ async def _execute_inner(
             "budget_exceeded",
             f"Project AI budget exhausted ({project.ai_spent}/{ai_budget}).",
         )
+    # Capabilities come from the agent's OWN existing profile columns. No
+    # default grants: an empty profile keeps the exact legacy one-call path,
+    # including its budget bound.
+    capability_specs = (
+        resolve_grants(agent.tools, agent.permissions)
+        if settings.execution_capabilities_enabled
+        else []
+    )
+    capability_enabled = bool(capability_specs)
+    max_llm_calls = settings.execution_max_llm_calls if capability_enabled else 1
+    capability_block = (
+        build_capability_block(capability_specs, max_llm_calls) if capability_enabled else ""
+    )
+    execution_schema = prompts.result_schema(capabilities=capability_enabled)
+    system_prompt = build_system_prompt(
+        agent.role,
+        list(agent.responsibilities or []),
+        capability_block=capability_block,
+    )
+    user_prompt = build_user_prompt(
+        business.name,
+        project.title,
+        project.goal or "",
+        task.title,
+        task.summary or "",
+    )
     # A conservative bound requires a known tariff AND a capped output.
-    input_bound = pricing.estimate_input_token_bound(
-        build_system_prompt(agent.role, list(agent.responsibilities or [])),
-        build_user_prompt(
-            business.name,
-            project.title,
-            project.goal or "",
-            task.title,
-            task.summary or "",
-        ),
-        json.dumps(dict(RESULT_SCHEMA)),
+    base_input_bound = pricing.estimate_input_token_bound(
+        system_prompt,
+        user_prompt,
+        json.dumps(dict(execution_schema)),
         message_count=2,
     )
+    reserved_input_bound = base_input_bound
+    reserved_output_tokens = settings.llm_max_tokens
+    if capability_enabled:
+        # Each later turn repeats the prompt and accumulates BOUNDED tool
+        # results plus capped assistant text. Reserve the sum of per-turn
+        # input bounds across the whole loop and the maximum output of every
+        # call: the model may use all of them.
+        reserved_input_bound = _capability_input_bound(
+            base_input_bound,
+            settings.execution_capability_result_chars,
+            max_llm_calls,
+        )
+        reserved_output_tokens = (
+            settings.llm_max_tokens * max_llm_calls if settings.llm_max_tokens is not None else None
+        )
     bound = pricing.upper_bound_cost(
         provider=provider_name,
         model=model_name,
-        input_token_bound=input_bound,
-        max_output_tokens=settings.llm_max_tokens,
+        input_token_bound=reserved_input_bound,
+        max_output_tokens=reserved_output_tokens,
     )
 
     # ---- Phase 2: atomic claim, committed BEFORE any network call ----
@@ -693,11 +765,7 @@ async def _execute_inner(
     # the rollback below expires all loaded objects, and later attribute
     # access must never implicitly reopen a transaction mid-flow.
     agent_name = agent.name
-    agent_role = agent.role
-    agent_resp = list(agent.responsibilities or [])
-    biz_name = business.name
-    proj_title, proj_goal = project.title, project.goal or ""
-    task_title, task_notes = task.title, task.summary or ""
+    task_title = task.title
     pre_status, pre_attempts = task.status, task.attempts
     agent_id = agent.id
     await session.rollback()
@@ -811,28 +879,17 @@ async def _execute_inner(
             error_message="Claim lost and state unclear; manual review required.",
         )
 
-    # ---- Phase 3: LLM call вЂ” NO transaction open here ----
+    # ---- Phase 3: bounded LLM + capability loop — NO transaction open here ----
+    base_messages = [
+        LlmMessage(role="system", content=system_prompt),
+        LlmMessage(role="user", content=user_prompt),
+    ]
     llm_request = LlmRequest(
-        messages=[
-            LlmMessage(
-                role="system",
-                content=build_system_prompt(agent_role, agent_resp),
-            ),
-            LlmMessage(
-                role="user",
-                content=build_user_prompt(
-                    biz_name,
-                    proj_title,
-                    proj_goal,
-                    task_title,
-                    task_notes,
-                ),
-            ),
-        ],
+        messages=list(base_messages),
         model=model_name,
         max_tokens=settings.llm_max_tokens,
         temperature=None,
-        structured=StructuredOutput(mode="json_schema", schema=dict(RESULT_SCHEMA)),
+        structured=StructuredOutput(mode="json_schema", schema=dict(execution_schema)),
         timeout_s=request.timeout_s or 30.0,
         idempotency_key=reservation_key or attempt_key,
     )
@@ -844,10 +901,111 @@ async def _execute_inner(
         ttl_seconds=settings.execution_lease_ttl_s,
         interval_seconds=settings.execution_heartbeat_interval_s,
     )
+    capability_executor = (
+        CapabilityExecutor(capability_specs, settings) if capability_enabled else None
+    )
+    capability_ctx = (
+        CapabilityContext(
+            session=session,
+            business_id=business_id,
+            project_id=project_id,
+            task_id=task_id,
+            task_title=task_title,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            attempt=pre_attempts,
+            execution_generation=ownership.execution_generation,
+            lease_owner=ownership.lease_owner,
+            settings=settings,
+        )
+        if capability_enabled
+        else None
+    )
+    responses: list[LlmResponse] = []
+    capability_trace: list[dict] = []
+    capability_limit_reached = False
+    response: LlmResponse | None = None
+    settle_input_bound = base_input_bound
+    settle_max_output: int | None = settings.llm_max_tokens
     heartbeat.start()
     try:
         try:
-            response = await _complete_with_ownership(provider, llm_request, heartbeat)
+            for step in range(max_llm_calls):
+                # Every call in the loop gets a distinct logical key; the
+                # reservation/ledger identity stays the per-attempt key. A
+                # fresh request object keeps provider-side call logs exact.
+                call_key = (
+                    f"{reservation_key or attempt_key}:c{step + 1}"
+                    if capability_enabled
+                    else (reservation_key or attempt_key)
+                )
+                step_request = llm_request.model_copy(
+                    update={
+                        "messages": list(base_messages),
+                        "idempotency_key": call_key,
+                    }
+                )
+                response = await _complete_with_ownership(provider, step_request, heartbeat)
+                responses.append(response)
+                if capability_executor is None or capability_ctx is None:
+                    break
+                calls, request_errors = capability_executor.parse(
+                    response.data if isinstance(response.data, dict) else None
+                )
+                if step == max_llm_calls - 1:
+                    # Last permitted turn: its requests are never executed.
+                    # Finish with the answer it produced and record the limit.
+                    capability_limit_reached = bool(calls or request_errors)
+                    break
+                if not calls and not request_errors:
+                    break
+                if heartbeat.ownership_lost:
+                    raise _OwnershipLost
+                results = list(request_errors)
+                for call in calls:
+                    if heartbeat.ownership_lost:
+                        raise _OwnershipLost
+                    result = await capability_executor.execute(capability_ctx, call)
+                    results.append(result)
+                    capability_trace.append(
+                        {
+                            "capability": call.capability,
+                            "requestId": call.request_id,
+                            "status": "ok" if result.ok else "error",
+                            "error": result.error_code,
+                        }
+                    )
+                # Keep the model's own JSON as the assistant turn, then feed
+                # back only bounded host results. No invented tool output.
+                assistant_text = response.text
+                if not assistant_text and isinstance(response.data, dict):
+                    assistant_text = json.dumps(response.data, ensure_ascii=False)
+                base_messages.append(
+                    LlmMessage(
+                        role="assistant",
+                        content=text_limit(assistant_text or "", _MAX_ASSISTANT_TURN_CHARS),
+                    )
+                )
+                base_messages.append(
+                    LlmMessage(
+                        role="user",
+                        content=capability_executor.format_results(results),
+                    )
+                )
+            if response is None:  # defensive: the loop always runs at least once
+                raise RuntimeError("bounded loop produced no provider response")
+            if capability_enabled:
+                calls_made = len(responses)
+                settle_input_bound = _capability_input_bound(
+                    base_input_bound,
+                    settings.execution_capability_result_chars,
+                    calls_made,
+                )
+                settle_max_output = (
+                    settings.llm_max_tokens * calls_made
+                    if settings.llm_max_tokens is not None
+                    else None
+                )
         finally:
             # No heartbeat may run while status/settlement is persisted.
             await heartbeat.stop()
@@ -861,6 +1019,15 @@ async def _execute_inner(
             )
             return _ownership_lost_result(task_id, TaskStatus.WORKING.value)
     except _OwnershipLost:
+        await _settle_stale_reservation(
+            session,
+            business_id,
+            claim,
+            reservation_id=reservation_id,
+            settle="ambiguous",
+        )
+        return _ownership_lost_result(task_id, TaskStatus.WORKING.value)
+    except CapabilityOwnershipLost:
         await _settle_stale_reservation(
             session,
             business_id,
@@ -926,12 +1093,39 @@ async def _execute_inner(
         # definitively failed (pre-send network error, or an error status that
         # produced no generation) → safe to release.
         estimate: tuple[int, int | None] | None = None
-        if isinstance(exc, BadResponseError) and reservation_id is not None:
+        if responses and reservation_id is not None:
+            # Earlier turns in the bounded loop answered, so they may have
+            # been billed. Never release the whole hold as if nothing had
+            # happened: record the accumulated token bound as an estimate. A
+            # post-send / ambiguous failure adds the failed turn itself, whose
+            # usage we cannot observe.
+            calls_made = len(responses)
+            maybe_billed = isinstance(exc, BadResponseError) or bool(
+                getattr(exc, "ambiguous", False)
+            )
+            billable_calls = calls_made + (1 if maybe_billed else 0)
+            if capability_enabled:
+                estimate = (
+                    _capability_input_bound(
+                        base_input_bound,
+                        settings.execution_capability_result_chars,
+                        billable_calls,
+                    ),
+                    (
+                        settings.llm_max_tokens * billable_calls
+                        if settings.llm_max_tokens is not None
+                        else None
+                    ),
+                )
+            else:
+                estimate = (base_input_bound, settings.llm_max_tokens)
+            settle = "ambiguous"
+        elif isinstance(exc, BadResponseError) and reservation_id is not None:
             # Post-send malformed response (Stage 16.1): the provider answered,
             # so the call may have been billed and must NEVER be released. Price
             # it `estimated` from the tariff bound, or keep the hold `ambiguous`
             # when it cannot be priced (handled inside the settlement helper).
-            estimate = (input_bound, settings.llm_max_tokens)
+            estimate = (base_input_bound, settings.llm_max_tokens)
             settle = "ambiguous"
         else:
             settle = "ambiguous" if getattr(exc, "ambiguous", False) else "release"
@@ -956,14 +1150,38 @@ async def _execute_inner(
     # so a provider swap that skips validation cannot store unchecked JSON.
     data = response.data if isinstance(response.data, dict) else None
     summary = str((data or {}).get("summary", response.text))[: prompts.MAX_SUMMARY_CHARS]
+    if len(responses) > 1:
+        # One settlement row for the whole bounded loop. Usage is the sum of
+        # every provider call; `reported` stays true only if ALL calls reported
+        # it (a partially reported run is never shown as confirmed spend).
+        settle_response = LlmResponse(
+            text=response.text,
+            data=response.data,
+            usage=aggregate_usage([item.usage for item in responses]),
+            model=response.model,
+            provider_request_id=response.provider_request_id,
+            attempts=sum(item.attempts for item in responses),
+            metadata={"llm_calls": len(responses)},
+        )
+    else:
+        settle_response = response
+    capabilities_payload = None
+    if capability_enabled:
+        capabilities_payload = {
+            "enabled": True,
+            "llmCalls": len(responses),
+            "limitReached": capability_limit_reached,
+            "calls": capability_trace,
+        }
     envelope = fit_envelope(
         build_envelope(
             task_id=task_id,
             model=response.model or llm_request.model,
             summary=summary,
             output=data,
-            usage=_usage_dict(response.usage),
-            attempts=response.attempts,
+            usage=_usage_dict(settle_response.usage),
+            attempts=settle_response.attempts,
+            capabilities=capabilities_payload,
         )
     )
     envelope_text = json.dumps(envelope, ensure_ascii=False)
@@ -972,7 +1190,7 @@ async def _execute_inner(
     # recorded in the ledger but never presented as settled money.
     event_cost = None
     if reservation_id is not None:
-        quote = price_response(provider_name, model_name, response)
+        quote = price_response(provider_name, model_name, settle_response)
         event_cost = quote.cost if quote.status == "confirmed" else None
 
     # ---- Phase 4: persist (single txn; one aggregate per flush inside repos) ----
@@ -1027,9 +1245,9 @@ async def _execute_inner(
                     execution_generation=ownership.execution_generation,
                     provider=provider_name,
                     model=model_name,
-                    response=response,
-                    input_bound_tokens=input_bound,
-                    max_output_tokens=settings.llm_max_tokens,
+                    response=settle_response,
+                    input_bound_tokens=settle_input_bound,
+                    max_output_tokens=settle_max_output,
                 )
                 if settlement.outcome == "skipped":
                     raise SettlementRejected(
@@ -1075,8 +1293,8 @@ async def _execute_inner(
         task_id=task_id,
         status=final.status if final else None,
         attempts=final.attempts if final else None,
-        llm_attempts=response.attempts,
-        usage=_usage_dict(response.usage),
+        llm_attempts=settle_response.attempts,
+        usage=_usage_dict(settle_response.usage),
     )
 
 
