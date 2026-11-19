@@ -18,7 +18,7 @@ export type ButtonSize = "sm" | "md" | "lg";
 
 /** Shape shared by every button variant; variant classes add the identity. */
 const buttonBaseClass =
-  "relative inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-control text-body-sm transition-[background-color,border-color,color,box-shadow] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:opacity-60 disabled:shadow-none";
+  "relative inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-control text-body-sm transition-[background-color,border-color,color,box-shadow,transform] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:opacity-60 disabled:shadow-none motion-reduce:active:translate-y-0";
 
 const buttonVariantClass: Record<ButtonVariant, string> = {
   // Solid action fill. Brand text/accent tokens are intentionally not used
@@ -27,10 +27,10 @@ const buttonVariantClass: Record<ButtonVariant, string> = {
     "border border-transparent bg-brand-solid font-semibold text-on-brand shadow-card hover:bg-brand-solid-hover active:bg-brand-solid-hover",
   // The historical GhostButton look: an elevated neutral surface.
   secondary:
-    "border border-line bg-surface font-medium text-fg hover:bg-surface-hover active:bg-surface-sunken",
+    "border border-line bg-surface font-medium text-fg hover:border-line-strong hover:bg-surface-hover active:bg-surface-sunken",
   // Outlined neutral action for secondary placement without a filled surface.
   outline:
-    "border border-line bg-transparent font-medium text-fg hover:bg-surface-hover active:bg-surface-sunken",
+    "border border-line bg-transparent font-medium text-fg hover:border-line-strong hover:bg-surface-hover active:bg-surface-sunken",
   // Lowest-emphasis action: no border or fill until hover/focus.
   ghost:
     "border border-transparent bg-transparent font-medium text-fg-muted hover:bg-surface-hover hover:text-fg active:bg-surface-sunken",
@@ -144,7 +144,7 @@ export const IconButton = React.forwardRef<
 
 /** Shared form-chrome base: tokens give light/dark, focus, disabled, read-only and invalid states. */
 const controlBaseClass =
-  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-focus read-only:cursor-default read-only:bg-surface-sunken read-only:text-fg-muted disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg aria-invalid:border-danger aria-invalid:ring-1 aria-invalid:ring-danger/30";
+  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-[color,background-color,border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-focus read-only:cursor-default read-only:bg-surface-sunken read-only:text-fg-muted read-only:hover:border-line disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:hover:border-disabled-line aria-invalid:border-danger aria-invalid:ring-1 aria-invalid:ring-danger/30 aria-invalid:hover:border-danger";
 
 export const inputClass = cn(controlBaseClass, "h-10 px-3");
 
@@ -153,7 +153,39 @@ export const textareaClass = cn(controlBaseClass, "min-h-20 px-3 py-2");
 export const selectClass = cn(controlBaseClass, "h-10 cursor-pointer px-3 pr-9");
 
 export const checkboxClass =
-  "h-4 w-4 shrink-0 cursor-pointer rounded border-line align-middle accent-brand-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:outline aria-invalid:outline-2 aria-invalid:outline-offset-2 aria-invalid:outline-danger";
+  "h-4 w-4 shrink-0 cursor-pointer rounded border-line align-middle accent-brand-solid transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:outline aria-invalid:outline-2 aria-invalid:outline-offset-2 aria-invalid:outline-danger";
+
+/**
+ * Choice chips (filters, categories, single-select pills). One definition for
+ * the whole app: the selected state is a solid brand fill, the rest are quiet
+ * outlines, and `aria-pressed` is always present so the state is announced.
+ */
+export const chipClass =
+  "inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-label font-medium capitalize transition-[background-color,border-color,color,box-shadow] duration-150 active:translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg motion-reduce:active:translate-y-0";
+
+export function ChoiceChip({
+  pressed,
+  className,
+  children,
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { pressed: boolean }) {
+  return (
+    <button
+      {...rest}
+      type={rest.type ?? "button"}
+      aria-pressed={pressed}
+      className={cn(
+        chipClass,
+        pressed
+          ? "border-brand-solid bg-brand-solid text-on-brand shadow-card"
+          : "border-line bg-surface text-fg-muted hover:bg-surface-hover hover:text-fg",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
 export type InputProps = React.InputHTMLAttributes<HTMLInputElement>;
 export type TextareaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>;

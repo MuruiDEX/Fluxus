@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Search, Upload, X } from "lucide-react";
 import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
+import { Badge } from "@/components/system/badges";
+import { ChoiceChip, IconButton, Input, Textarea } from "@/components/system/controls";
+import { useModalSurface } from "@/lib/use-modal-surface";
 import { BrainCreateButton } from "@/components/system/BrainCreate";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveBrain } from "@/lib/store/live";
@@ -21,14 +24,14 @@ function EntryGrid({ entries }: { entries: BrainEntry[] }) {
     <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
       {entries.map((e) => (
         <Card key={e.id} className="p-4">
-          <div className="flex items-center justify-between">
-            <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold capitalize text-brand-600 dark:bg-brand-500/15 dark:text-sky-300">
+          <div className="flex items-center justify-between gap-2">
+            <Badge tone="brand" size="xs">
               {e.category}
-            </span>
-            <span className="text-[11px] text-ink-400">{e.updatedLabel}</span>
+            </Badge>
+            <span className="text-label text-fg-subtle">{e.updatedLabel}</span>
           </div>
-          <p className="mt-2 text-[14px] font-bold">{e.title}</p>
-          <p className="mt-1 text-[13px] leading-5 text-ink-700 dark:text-slate-300">{e.body}</p>
+          <p className="mt-2 text-body font-bold">{e.title}</p>
+          <p className="mt-1 text-body-sm leading-5 text-fg-muted">{e.body}</p>
         </Card>
       ))}
     </div>
@@ -60,6 +63,10 @@ function DemoBrainView() {
   const [body, setBody] = useState("");
   const [noteCat, setNoteCat] = useState<BrainEntry["category"]>("knowledge");
   const fileRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  // The demo modal shares the same scroll lock, focus trap and Escape contract
+  // as the server-backed dialogs instead of being a second, weaker variant.
+  useModalSurface(modalRef, modal !== null, { onEscape: () => setModal(null) });
   const visible = entries.filter(
     (e) => (cat === "all" || e.category === cat) && (e.title + e.body).toLowerCase().includes(q.toLowerCase()),
   );
@@ -124,36 +131,63 @@ function DemoBrainView() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-night-950/50 px-4"
+            className="fixed inset-0 z-50 flex overflow-y-auto bg-overlay px-4 py-6"
             onClick={() => setModal(null)}
           >
             <motion.div
-              initial={{ y: 12, scale: 0.98 }}
-              animate={{ y: 0, scale: 1 }}
-              exit={{ y: 8, scale: 0.98 }}
+              ref={modalRef}
+              initial={{ y: 12, scale: 0.98, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 8, scale: 0.98, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-2xl border border-mist-200 bg-white p-5 shadow-pop dark:border-white/10 dark:bg-night-900"
+              role="dialog"
+              aria-modal="true"
+              aria-label={modal === "note" ? "Add memory" : "Import knowledge"}
+              className="m-auto w-full max-w-md rounded-card border border-line bg-surface p-5 text-fg shadow-pop"
             >
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[15px] font-bold">{modal === "note" ? "Add memory" : "Import knowledge"}</h3>
-                <button onClick={() => setModal(null)} aria-label="Close"><X className="h-4 w-4 text-ink-400" /></button>
+              <div className="mb-3 flex items-center justify-between gap-3 border-b border-line pb-2.5">
+                <h3 className="text-heading-sm font-bold tracking-tight">
+                  {modal === "note" ? "Add memory" : "Import knowledge"}
+                </h3>
+                <IconButton
+                  variant="ghost"
+                  size="sm"
+                  label="Close"
+                  onClick={() => setModal(null)}
+                  className="-mr-1"
+                >
+                  <X className="h-4 w-4" />
+                </IconButton>
               </div>
               {modal === "note" ? (
                 <div className="flex flex-col gap-2.5">
-                  <div className="flex flex-wrap gap-1.5">
+                  <div role="group" aria-label="Category" className="flex flex-wrap gap-1.5">
                     {(["company", "audience", "model", "brand", "goals", "decisions", "knowledge", "results"] as const).map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => setNoteCat(c)}
-                        className={cn("rounded-full px-2.5 py-1 text-[12px] font-medium capitalize", noteCat === c ? "bg-brand-500 text-white" : "border border-mist-200 text-ink-500 dark:border-white/10")}
-                      >
+                      <ChoiceChip key={c} pressed={noteCat === c} onClick={() => setNoteCat(c)}>
                         {c}
-                      </button>
+                      </ChoiceChip>
                     ))}
                   </div>
-                  <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="h-10 rounded-[10px] border border-mist-200 bg-transparent px-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10" />
-                  <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="What should the team remember?" rows={4} className="rounded-[10px] border border-mist-200 bg-transparent p-3 text-[13.5px] outline-none focus:border-brand-500 dark:border-white/10" />
-                  <PrimaryButton onClick={saveNote}>Save to Business Brain</PrimaryButton>
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Title"
+                    aria-label="Memory title"
+                  />
+                  <Textarea
+                    value={body}
+                    onChange={(e) => setBody(e.target.value)}
+                    placeholder="What should the team remember?"
+                    aria-label="Memory content"
+                    rows={4}
+                  />
+                  <PrimaryButton
+                    onClick={saveNote}
+                    disabled={!title.trim() || !body.trim()}
+                    className="justify-center"
+                  >
+                    Save to Business Brain
+                  </PrimaryButton>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2.5">

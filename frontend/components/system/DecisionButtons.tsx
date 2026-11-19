@@ -67,8 +67,8 @@ export function DecisionButtons({
   if (view.kind === "deciding") {
     return (
       <div className="mt-3 flex items-center gap-2">
-        <span className="flex h-9 items-center gap-1.5 rounded-[10px] bg-brand-500/10 px-3.5 text-[13px] font-semibold text-brand-600 dark:text-sky-300">
-          <Loader2 className="h-4 w-4 animate-spin" /> Deciding…
+        <span className="flex h-9 items-center gap-1.5 rounded-control bg-brand-soft px-3.5 text-body-sm font-semibold text-brand">
+          <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> Deciding…
         </span>
       </div>
     );
@@ -80,11 +80,11 @@ export function DecisionButtons({
         {view.message && (
           <p
             className={cn(
-              "text-[12.5px] leading-5",
-              view.tone === "ok" && "text-emerald-700 dark:text-emerald-300",
-              view.tone === "bad" && "text-red-600 dark:text-red-300",
-              view.tone === "warn" && "text-amber-700 dark:text-amber-300",
-              view.tone === "info" && "text-ink-500 dark:text-slate-400",
+              "text-caption leading-5",
+              view.tone === "ok" && "text-success-fg",
+              view.tone === "bad" && "text-danger-fg",
+              view.tone === "warn" && "text-warning-fg",
+              view.tone === "info" && "text-fg-muted",
             )}
           >
             {view.message}

@@ -523,6 +523,16 @@ body {
   opacity: 0.75;
 }
 
+/* Idle links are dashed: the path is structurally there but no work is
+   travelling through it yet. */
+.flux-connector[data-active="false"] {
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--flux-line-strong) 80%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+
 .flux-connector[data-active="true"]::after {
   content: "";
   position: absolute;
@@ -607,6 +617,35 @@ body {
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--flux-brand) 30%, transparent), transparent);
 }
 
+/*
+ * Tooltips enter with a 2px settle: enough to feel attached to the control,
+ * short enough that it never delays reading. The arrow inherits the inverted
+ * surface so the tail does not disappear in either theme.
+ */
+.flux-tooltip {
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+}
+
+.flux-tooltip[data-state="delayed-open"],
+.flux-tooltip[data-state="instant-open"] {
+  animation: flux-tooltip-in 120ms ease-out;
+}
+
+.flux-tooltip-arrow {
+  fill: var(--flux-surface-inverse);
+}
+
+@keyframes flux-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .flux-node {
   transition:
     border-color 0.22s ease,
@@ -614,10 +653,31 @@ body {
     box-shadow 0.22s ease;
 }
 
-.flux-node[data-state="active"],
-.flux-node[data-state="waiting"] {
+.flux-node[data-state="active"] {
   border-color: color-mix(in srgb, var(--flux-brand) 38%, var(--flux-line));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--flux-brand) 10%, transparent), 0 18px 36px -28px var(--flux-brand);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--flux-brand) 10%, transparent),
+    0 18px 36px -28px var(--flux-brand);
+}
+
+/* Waiting and complete keep their own status hue: sharing the active border
+   made a blocked stage look like it was running. */
+.flux-node[data-state="waiting"] {
+  border-color: color-mix(in srgb, var(--flux-warning-fg) 40%, var(--flux-line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--flux-warning-fg) 10%, transparent),
+    0 18px 36px -30px var(--flux-warning-fg);
+}
+
+.flux-node[data-state="complete"] {
+  border-color: color-mix(in srgb, var(--flux-success-fg) 34%, var(--flux-line));
+}
+
+.flux-node[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--flux-danger-fg) 42%, var(--flux-line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--flux-danger-fg) 12%, transparent),
+    0 18px 36px -30px var(--flux-danger-fg);
 }
 
 .flux-flow-track {

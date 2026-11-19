@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Field,
@@ -13,6 +14,7 @@ import {
   parseMoneyInput,
 } from "@/components/system/WriteModal";
 import { GhostButton, PrimaryButton } from "@/components/system/ui";
+import { Checkbox, ChoiceChip } from "@/components/system/controls";
 import { useLiveAgents } from "@/lib/store/live";
 import { useLiveWrites } from "@/lib/store/writes";
 import type { ProjectPatchInput, ProjectStatus } from "@/lib/api";
@@ -260,6 +262,7 @@ function ProjectEditForm({
       dirty={dirty && phase !== "saved"}
       phase={phase}
       onClose={close}
+      onSubmit={save}
       footer={
         phase === "saved" ? (
           <PrimaryButton onClick={close} className="flex-1 justify-center">
@@ -276,23 +279,16 @@ function ProjectEditForm({
       <Field label="Goal">
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={3} className={areaClass} />
       </Field>
-      <Field label="Status">
+      <Field label="Status" group>
         <div className="flex flex-wrap gap-1.5">
           {STATUSES.map((s) => (
-            <button
+            <ChoiceChip
               key={s.value}
-              type="button"
+              pressed={status === s.value}
               onClick={() => setStatus(s.value)}
-              aria-pressed={status === s.value}
-              className={cn(
-                "rounded-full px-3 py-1.5 text-[12.5px] font-medium",
-                status === s.value
-                  ? "bg-brand-500 text-white"
-                  : "border border-mist-200 bg-white text-ink-500 dark:border-white/10 dark:bg-night-900",
-              )}
             >
               {s.label}
-            </button>
+            </ChoiceChip>
           ))}
         </div>
       </Field>
@@ -347,11 +343,9 @@ function ProjectEditForm({
         hint="Best-effort AI calls without a configured price are refused unless enabled."
       >
         <label className="flex cursor-pointer items-center gap-2 text-[13px]">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={allowUnpricedAi}
             onChange={(e) => setAllowUnpricedAi(e.target.checked)}
-            className="h-4 w-4 accent-brand-500"
           />
           <span className="font-medium">Allow unpriced AI calls</span>
         </label>
@@ -378,9 +372,13 @@ export function ProjectEditButton({
       <GhostButton onClick={() => setOpen(true)}>
         <Pencil className="h-4 w-4" /> Edit
       </GhostButton>
-      {open && (
-        <ProjectEditForm businessId={businessId} project={project} onClose={() => setOpen(false)} />
-      )}
+      {/* The dialog owns its own enter/exit motion; this keeps it mounted until
+          the exit finishes instead of dropping it mid-transition. */}
+      <AnimatePresence>
+        {open && (
+          <ProjectEditForm businessId={businessId} project={project} onClose={() => setOpen(false)} />
+        )}
+      </AnimatePresence>
     </>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { Pencil } from "lucide-react";
 import {
   Field,
@@ -10,7 +11,7 @@ import {
   WriteModal,
   parseIntInput,
 } from "@/components/system/WriteModal";
-import { Input, Select, Textarea } from "@/components/system/controls";
+import { Button, Input, Select, Textarea } from "@/components/system/controls";
 import { PrimaryButton } from "@/components/system/ui";
 import { useLiveAgents } from "@/lib/store/live";
 import { useLiveWrites } from "@/lib/store/writes";
@@ -108,6 +109,7 @@ function TaskEditForm({
       dirty={dirty && phase !== "saved"}
       phase={phase}
       onClose={close}
+      onSubmit={save}
       footer={
         phase === "saved" ? (
           <PrimaryButton onClick={close} className="flex-1 justify-center">
@@ -155,12 +157,12 @@ function TaskEditForm({
               ))}
           </Select>
         ) : agentsSlice.status === "error" ? (
-          <p className="text-[12.5px] text-amber-700 dark:text-amber-300">
+          <p className="text-caption text-warning-fg">
             Agent list unavailable ({agentsSlice.error ?? "load failed"}) — the current owner is
             kept unchanged.
           </p>
         ) : (
-          <p className="text-[12.5px] text-ink-400">Loading agents…</p>
+          <p className="text-caption text-fg-subtle">Loading agents…</p>
         )}
       </Field>
       <FormError message={clientError} />
@@ -173,15 +175,19 @@ export function TaskEditButton({ businessId, task }: { businessId: string; task:
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button
+      <Button
+        variant="outline"
+        size="sm"
         onClick={() => setOpen(true)}
-        className="flex h-7 items-center gap-1.5 rounded-lg border border-mist-200 px-2.5 text-[12px] font-medium text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:hover:bg-white/5"
+        className="h-7 gap-1 px-2.5 text-caption"
       >
         <Pencil className="h-3.5 w-3.5" /> Edit
-      </button>
-      {open && (
-        <TaskEditForm businessId={businessId} task={task} onClose={() => setOpen(false)} />
-      )}
+      </Button>
+      <AnimatePresence>
+        {open && (
+          <TaskEditForm businessId={businessId} task={task} onClose={() => setOpen(false)} />
+        )}
+      </AnimatePresence>
     </>
   );
 }

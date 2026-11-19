@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { Plus } from "lucide-react";
 import {
   Field,
@@ -12,9 +13,9 @@ import {
   inputClass,
 } from "@/components/system/WriteModal";
 import { GhostButton, PrimaryButton } from "@/components/system/ui";
+import { ChoiceChip } from "@/components/system/controls";
 import { useLiveWrites } from "@/lib/store/writes";
 import type { BrainCategory } from "@/lib/api";
-import { cn } from "@/lib/cn";
 
 /**
  * LIVE manual Brain entry creator (Stage 7.2) — drives POST .../brain
@@ -73,6 +74,7 @@ function BrainCreateForm({ businessId, onClose }: { businessId: string; onClose:
       dirty={dirty && phase !== "saved"}
       phase={phase}
       onClose={close}
+      onSubmit={save}
       footer={
         phase === "saved" ? (
           <PrimaryButton onClick={close} className="flex-1 justify-center">
@@ -83,23 +85,12 @@ function BrainCreateForm({ businessId, onClose }: { businessId: string; onClose:
         )
       }
     >
-      <Field label="Category">
+      <Field label="Category" group>
         <div className="flex flex-wrap gap-1.5">
           {CATEGORIES.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setCategory(c)}
-              aria-pressed={category === c}
-              className={cn(
-                "rounded-full px-2.5 py-1 text-[12px] font-medium capitalize",
-                category === c
-                  ? "bg-brand-500 text-white"
-                  : "border border-mist-200 text-ink-500 dark:border-white/10",
-              )}
-            >
+            <ChoiceChip key={c} pressed={category === c} onClick={() => setCategory(c)}>
               {c}
-            </button>
+            </ChoiceChip>
           ))}
         </div>
       </Field>
@@ -133,7 +124,9 @@ export function BrainCreateButton({ businessId }: { businessId: string }) {
       <GhostButton onClick={() => setOpen(true)}>
         <Plus className="h-4 w-4" /> Add note
       </GhostButton>
-      {open && <BrainCreateForm businessId={businessId} onClose={() => setOpen(false)} />}
+      <AnimatePresence>
+        {open && <BrainCreateForm businessId={businessId} onClose={() => setOpen(false)} />}
+      </AnimatePresence>
     </>
   );
 }

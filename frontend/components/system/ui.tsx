@@ -86,7 +86,10 @@ export type CardVariant = "default" | "interactive";
  */
 const cardVariants: Record<CardVariant, string> = {
   default: "",
-  interactive: "transition-transform duration-200 hover:-translate-y-0.5",
+  // The wrapping <Link> owns focus, so the card echoes it with `focus-within`:
+  // a keyboard user sees which card the next Enter will open.
+  interactive:
+    "transition-transform duration-200 hover:-translate-y-0.5 hover:border-line-strong focus-within:border-brand/40 motion-reduce:hover:translate-y-0",
 };
 
 export function Card({
@@ -173,11 +176,7 @@ export function MetricCard({
         <span
           className={cn(
             "flex items-center gap-0.5 text-caption font-semibold tabular-nums",
-            flat
-              ? "text-ink-400 dark:text-slate-400"
-              : good
-                ? "text-emerald-600"
-                : "text-red-500",
+            flat ? "text-fg-subtle" : good ? "text-success-fg" : "text-danger-fg",
           )}
         >
           {!flat &&
@@ -195,13 +194,13 @@ export function MetricCard({
           <polyline
             points={points}
             fill="none"
-            stroke={flat ? "#64748b" : good ? "#16a34a" : "#ef4444"}
+            stroke={flat ? "var(--flux-fg-subtle)" : good ? "var(--flux-success-fg)" : "var(--flux-danger-fg)"}
             strokeOpacity="0.35"
             strokeWidth="2"
           />
           <polygon
             points={`0,28 ${points} 100,28`}
-            fill={flat ? "#64748b" : good ? "#16a34a" : "#ef4444"}
+            fill={flat ? "var(--flux-fg-subtle)" : good ? "var(--flux-success-fg)" : "var(--flux-danger-fg)"}
             fillOpacity="0.08"
           />
         </svg>

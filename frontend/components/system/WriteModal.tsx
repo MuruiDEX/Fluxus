@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { motion } from "framer-motion";
 import { Loader2, X } from "lucide-react";
-import { GhostButton, PrimaryButton } from "@/components/system/ui";
 import {
+  Button,
+  IconButton,
   inputClass as canonicalInputClass,
   textareaClass as canonicalTextareaClass,
 } from "@/components/system/controls";
@@ -34,15 +35,34 @@ import { transition } from "@/lib/motion";
 export const inputClass = canonicalInputClass;
 export const areaClass = canonicalTextareaClass;
 
+/**
+ * Modal field caption. `group` renders a real `role="group"` instead of a
+ * `<label>`: a label wrapped around a set of chips would forward clicks to the
+ * first chip and label the group with no control at all.
+ */
 export function Field({
   label,
   children,
   hint,
+  group = false,
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
+  group?: boolean;
 }) {
+  const id = useId();
+  if (group) {
+    return (
+      <div role="group" aria-labelledby={id} className="flex flex-col gap-1">
+        <span id={id} className={fieldLabelClass}>
+          {label}
+        </span>
+        {children}
+        {hint && <span className={fieldHelpClass}>{hint}</span>}
+      </div>
+    );
+  }
   return (
     <label className="flex flex-col gap-1">
       <span className={fieldLabelClass}>{label}</span>
@@ -60,8 +80,8 @@ export function FormError({ message }: { message: string | null }) {
 export function PhaseMessage({ phase, message }: { phase: WritePhase; message: string | null }) {
   if (phase === "saving") {
     return (
-      <p className="flex items-center gap-1.5 text-[12.5px] font-medium text-brand-600 dark:text-sky-300">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving to server…
+      <p role="status" className="flex items-center gap-1.5 text-caption font-medium text-brand">
+        <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> Saving to server…
       </p>
     );
   }
@@ -70,9 +90,10 @@ export function PhaseMessage({ phase, message }: { phase: WritePhase; message: s
     <p
       role={phase === "error" ? "alert" : "status"}
       className={cn(
-        "text-[12.5px] leading-5",
-        phase === "saved" && "text-emerald-700 dark:text-emerald-300",
-        phase === "error" && "text-red-600 dark:text-red-300",
+        "text-caption leading-5",
+        phase === "saved" && "text-success-fg",
+        phase === "error" && "text-danger-fg",
+        phase === "idle" && "text-fg-muted",
       )}
     >
       {message}
@@ -116,6 +137,7 @@ export function WriteModal({
   dirty,
   phase,
   onClose,
+  onSubmit,
   children,
   footer,
 }: {
@@ -124,14 +146,14 @@ export function WriteModal({
   dirty: boolean;
   phase: WritePhase;
   onClose: () => void;
+  /** Enter in a single-line field saves; Ctrl/⌘+Enter in a textarea saves. */
+  onSubmit?: () => void;
   children: ReactNode;
   footer: ReactNode;
 }) {
   const [confirming, setConfirming] = useState(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const saving = phase === "saving";
-  // Scroll lock, focus containment and focus restore are shared by every surface.
-  useModalSurface(surfaceRef, true);
   const requestClose = () => {
     if (saving) return;
     if (dirty && !confirming) {
@@ -140,83 +162,92 @@ export function WriteModal({
     }
     onClose();
   };
+  // Scroll lock, initial focus, Escape, focus containment and focus restore.
+  useModalSurface(surfaceRef, true, { onEscape: requestClose });
 
+  // The discard prompt is a state change inside the same dialog; announcing it
+  // tells screen-reader users why the footer just changed.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") requestClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirty, confirming, saving]);
-
-  const firstField = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    firstField.current?.focus();
-  }, []);
+    if (!confirming) return;
+    const timer = window.setTimeout(() => {
+      surfaceRef.current
+        ?.querySelector<HTMLElement>("[data-discard-prompt]")
+        ?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
 
   return (
-    <AnimatePresence>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex overflow-y-auto bg-overlay px-4 py-6 sm:px-6"
+      onClick={requestClose}
+    >
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-night-950/50 px-4 py-6"
-        onClick={requestClose}
+        ref={surfaceRef}
+        initial={{ y: 12, scale: 0.98, opacity: 0 }}
+        animate={{ y: 0, scale: 1, opacity: 1 }}
+        exit={{ y: 8, scale: 0.98, opacity: 0 }}
+        transition={transition.overlay}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.nativeEvent.isComposing || !onSubmit || saving) return;
+          const tag = (event.target as HTMLElement).tagName;
+          if (tag !== "INPUT" && tag !== "TEXTAREA") return;
+          if (tag === "TEXTAREA" && !(event.metaKey || event.ctrlKey)) return;
+          event.preventDefault();
+          onSubmit();
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="m-auto w-full max-w-md rounded-card border border-line bg-surface p-5 text-fg shadow-pop"
       >
-        <motion.div
-          ref={surfaceRef}
-          initial={{ y: 12, scale: 0.98 }}
-          animate={{ y: 0, scale: 1 }}
-          exit={{ y: 8, scale: 0.98 }}
-          transition={transition.overlay}
-          onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-          aria-label={title}
-          className="w-full max-w-md rounded-2xl border border-mist-200 bg-white p-5 shadow-pop dark:border-white/10 dark:bg-night-900"
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[15px] font-bold">{title}</h3>
-            <button onClick={requestClose} disabled={saving} aria-label="Close">
-              <X className="h-4 w-4 text-ink-400" />
-            </button>
-          </div>
-          <div
-            className="flex flex-col gap-2.5"
-            ref={(el) => {
-              if (el && !firstField.current) {
-                const input = el.querySelector("input");
-                if (input instanceof HTMLInputElement) {
-                  firstField.current = input;
-                  input.focus();
-                }
-              }
-            }}
+        <div className="mb-3 flex items-center justify-between gap-3 border-b border-line pb-2.5">
+          <h3 className="text-heading-sm font-bold tracking-tight">{title}</h3>
+          <IconButton
+            variant="ghost"
+            size="sm"
+            label="Close"
+            onClick={requestClose}
+            disabled={saving}
+            className="-mr-1"
           >
-            {children}
-          </div>
-          <div className="mt-4 flex flex-col gap-2">
-            {confirming && dirty && !saving && (
-              <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-2.5 text-[12.5px] dark:border-amber-500/30 dark:bg-amber-500/10">
-                <p className="font-medium text-amber-800 dark:text-amber-200">
-                  Discard unsaved changes?
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <GhostButton className="h-8" onClick={() => setConfirming(false)}>
-                    Keep editing
-                  </GhostButton>
-                  <GhostButton className="h-8" onClick={onClose}>
-                    Discard
-                  </GhostButton>
-                </div>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+        <div className="flex flex-col gap-2.5">{children}</div>
+        <div className="mt-4 flex flex-col gap-2">
+          {confirming && dirty && !saving && (
+            <div
+              data-discard-prompt
+              tabIndex={-1}
+              className="rounded-control border border-warning-line bg-warning-soft p-2.5"
+            >
+              <p className="text-caption font-semibold text-warning-fg">
+                Discard unsaved changes?
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" variant="secondary" onClick={() => setConfirming(false)}>
+                  Keep editing
+                </Button>
+                <Button size="sm" variant="destructive" onClick={onClose}>
+                  Discard
+                </Button>
               </div>
-            )}
-            <div className="flex gap-2">{footer}</div>
-          </div>
-        </motion.div>
+            </div>
+          )}
+          <div className="flex gap-2">{footer}</div>
+          {onSubmit && (
+            <p className="text-micro text-fg-subtle">
+              Enter saves · Esc closes
+            </p>
+          )}
+        </div>
       </motion.div>
-    </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -234,11 +265,17 @@ export function SaveFooter({
   const saving = phase === "saving";
   return (
     <>
-        <PrimaryButton onClick={onSave} disabled={saving} className={cn("flex-1 justify-center", saving && "opacity-70")}>
-        {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+      <Button
+        type="button"
+        loading={saving}
+        onClick={onSave}
+        className="flex-1 justify-center"
+      >
         {saving ? "Saving…" : saveLabel}
-      </PrimaryButton>
-      <GhostButton onClick={onClose} disabled={saving}>Cancel</GhostButton>
+      </Button>
+      <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
+        Cancel
+      </Button>
     </>
   );
 }

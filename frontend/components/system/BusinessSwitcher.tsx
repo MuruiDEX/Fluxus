@@ -64,7 +64,7 @@ export function BusinessSwitcher() {
       title="Select business"
       value={currentBusinessId ?? ""}
       onChange={(e) => selectBusiness(e.target.value)}
-      className="h-9 w-auto max-w-[220px] truncate bg-surface-sunken text-body-sm text-fg hover:border-brand/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+      className="h-9 w-auto max-w-[220px] bg-surface-sunken text-body-sm text-fg"
     >
       {businesses.map((id) => (
         <option key={id} value={id}>

@@ -2,6 +2,7 @@
 
 import { Loader2, Play } from "lucide-react";
 import { useLiveExecution, type TaskRun } from "@/lib/store/execution";
+import { Button } from "@/components/system/controls";
 import { cn } from "@/lib/cn";
 
 export type RunTone = "ok" | "bad" | "warn" | "info";
@@ -61,7 +62,7 @@ function ProviderTag() {
   return (
     <span
       title="Results are produced server-side. This client cannot verify which LLM provider ran the task — the server default is the offline mock (APP_LLM_PROVIDER). Treat results as a pipeline check, not confirmed live AI."
-      className="text-[10.5px] text-ink-400 dark:text-slate-500"
+      className="text-micro text-fg-subtle"
     >
       server-run · provider unverified
     </span>
@@ -72,11 +73,11 @@ function RunMessage({ tone, children }: { tone: "ok" | "bad" | "warn" | "info"; 
   return (
     <p
       className={cn(
-        "text-[11.5px] leading-5",
-        tone === "ok" && "text-emerald-700 dark:text-emerald-300",
-        tone === "bad" && "text-red-600 dark:text-red-300",
-        tone === "warn" && "text-amber-700 dark:text-amber-300",
-        tone === "info" && "text-ink-500 dark:text-slate-400",
+        "text-label leading-5",
+        tone === "ok" && "text-success-fg",
+        tone === "bad" && "text-danger-fg",
+        tone === "warn" && "text-warning-fg",
+        tone === "info" && "text-fg-muted",
       )}
     >
       {children}
@@ -113,17 +114,19 @@ export function TaskRunButton({
     return (
       <div className="mt-2 flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 items-center gap-1.5 rounded-lg bg-brand-500/10 px-2.5 text-[12px] font-semibold text-brand-600 dark:text-sky-300">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Running…
+          <span className="flex h-7 items-center gap-1.5 rounded-full bg-info-soft px-2.5 text-caption font-semibold text-info-fg">
+            <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" /> Running…
           </span>
           {view.showStop && (
-            <button
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => stopWaiting(businessId, projectId, taskId)}
               title="Stop waiting for the answer. The server may still be running the task — this does not cancel it."
-              className="h-7 rounded-lg border border-mist-200 px-2.5 text-[12px] font-medium text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:hover:bg-white/5"
+              className="h-7 px-2.5 text-caption"
             >
               Stop waiting
-            </button>
+            </Button>
           )}
         </div>
         <ProviderTag />
@@ -137,20 +140,23 @@ export function TaskRunButton({
         <RunMessage tone={view.tone}>{view.message}</RunMessage>
         <div className="flex items-center gap-2">
           {view.showRecheck && (
-            <button
+            <Button
+              size="sm"
               onClick={() => void reconcile(businessId, projectId, taskId)}
-              className="h-7 rounded-lg bg-brand-500 px-2.5 text-[12px] font-semibold text-white hover:opacity-90"
+              className="h-7 px-2.5 text-caption"
             >
               {view.kind === "uncertain" ? "Re-check result" : "Re-check"}
-            </button>
+            </Button>
           )}
           {view.showRunAgain && (
-            <button
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => void runTask(businessId, projectId, taskId)}
-              className="h-7 rounded-lg border border-mist-200 px-2.5 text-[12px] font-medium text-ink-500 hover:bg-mist-100 dark:border-white/10 dark:hover:bg-white/5"
+              className="h-7 px-2.5 text-caption"
             >
               Run again
-            </button>
+            </Button>
           )}
           <ProviderTag />
         </div>
@@ -161,12 +167,13 @@ export function TaskRunButton({
   return (
     <div className="mt-2 flex flex-col gap-1">
       <div className="flex items-center gap-2">
-        <button
+        <Button
+          size="sm"
           onClick={() => void runTask(businessId, projectId, taskId)}
-          className="flex h-7 items-center gap-1.5 rounded-lg bg-gradient-to-r from-brand-500 to-sky-400 px-2.5 text-[12px] font-semibold text-white hover:opacity-90"
+          className="h-7 gap-1 px-2.5 text-caption"
         >
-          <Play className="h-3.5 w-3.5" /> Run
-        </button>
+          <Play aria-hidden className="h-3.5 w-3.5" /> Run
+        </Button>
       </div>
       <ProviderTag />
     </div>

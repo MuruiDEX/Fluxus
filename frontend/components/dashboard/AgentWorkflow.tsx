@@ -17,7 +17,7 @@ import { Card } from "@/components/system/ui";
 import { cn } from "@/lib/cn";
 import type { Agent, Approval, Project, Task } from "@/lib/domain/types";
 
-type NodeState = "active" | "waiting" | "complete" | "idle";
+type NodeState = "active" | "waiting" | "complete" | "failed" | "idle";
 
 const STATE_META: Record<NodeState, { label: string; chip: string; icon: string }> = {
   active: {
@@ -35,6 +35,11 @@ const STATE_META: Record<NodeState, { label: string; chip: string; icon: string 
     chip: "border-success-line bg-success-soft text-success-fg",
     icon: "bg-success-soft text-success-fg",
   },
+  failed: {
+    label: "Failed",
+    chip: "border-danger-line bg-danger-soft text-danger-fg",
+    icon: "bg-danger-soft text-danger-fg",
+  },
   idle: {
     label: "Idle",
     chip: "border-line bg-surface-sunken text-fg-subtle",
@@ -50,14 +55,28 @@ function stateShell(state: NodeState) {
       return "border-warning-line/80 bg-warning-soft/20";
     case "complete":
       return "border-success-line/70 bg-success-soft/20";
+    case "failed":
+      return "border-danger-line/80 bg-danger-soft/20";
     default:
       return "border-line bg-surface/60";
   }
 }
 
+/** The stage number doubles as the state anchor, so a run can be scanned at a glance. */
+const STATE_NUMBER: Record<NodeState, string> = {
+  active: "border-brand/25 bg-brand-soft text-brand",
+  waiting: "border-warning-line bg-warning-soft text-warning-fg",
+  complete: "border-success-line bg-success-soft text-success-fg",
+  failed: "border-danger-line bg-danger-soft text-danger-fg",
+  idle: "border-line bg-surface-sunken text-fg-subtle",
+};
+
 function Connector({ active }: { active: boolean }) {
   return (
-    <div aria-hidden="true" className="hidden min-w-5 max-w-14 flex-1 items-center gap-1 lg:flex">
+    <div
+      aria-hidden="true"
+      className="mt-[3.25rem] flex min-w-4 max-w-14 flex-1 self-start items-center gap-1"
+    >
       <span className="flux-connector flex-1" data-active={active ? "true" : "false"} />
       <ChevronRight
         className={cn(
@@ -91,14 +110,19 @@ function NodeShell({
     <li
       data-workflow-stage={dataStage}
       className={cn(
-        "flux-node relative flex min-w-0 flex-col rounded-card border p-3",
+        "flux-node relative flex min-w-0 snap-start flex-col rounded-card border p-3",
         stateShell(state),
         className,
       )}
       data-state={state}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-surface/80 px-1 text-micro font-bold tabular-nums text-fg-muted ring-1 ring-inset ring-line">
+        <span
+          className={cn(
+            "inline-flex h-5 min-w-5 items-center justify-center rounded-full border px-1 text-micro font-bold tabular-nums",
+            STATE_NUMBER[state],
+          )}
+        >
           {String(index).padStart(2, "0")}
         </span>
         <span
@@ -144,6 +168,7 @@ function agentTaskState(status: Task["status"] | undefined): NodeState {
     return "waiting";
   }
   if (status === "completed") return "complete";
+  if (status === "failed") return "failed";
   return "idle";
 }
 
@@ -175,16 +200,23 @@ export function AgentWorkflow({
     (project ? hired.find((agent) => project.teamIds.includes(agent.id)) : undefined) ??
     hired[0];
 
-  const activeTasks = tasks.filter((task) =>
-    ["working", "waiting_dependency", "waiting_assets", "waiting_approval", "not_started"].includes(
-      task.status,
-    ),
+  // Failed tasks stay in the stage: dropping them would hide an agent that
+  // needs attention and make the parallel lane look healthier than it is.
+  const stageTasks = tasks.filter((task) =>
+    [
+      "working",
+      "waiting_dependency",
+      "waiting_assets",
+      "waiting_approval",
+      "not_started",
+      "failed",
+    ].includes(task.status),
   );
   const completed = tasks.filter((task) => task.status === "completed");
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const failed = tasks.filter((task) => task.status === "failed");
 
-  const ownerIds = Array.from(new Set(activeTasks.map((task) => task.ownerAgentId)));
+  const ownerIds = Array.from(new Set(stageTasks.map((task) => task.ownerAgentId)));
   const parallelAgents = ownerIds
     .map((id) => hired.find((agent) => agent.id === id))
     .filter((agent): agent is Agent => Boolean(agent))
@@ -207,14 +239,16 @@ export function AgentWorkflow({
       ? "idle"
       : parallelAgents.some((a) => a.status === "working")
         ? "active"
-        : "waiting";
+        : stageTasks.some((task) => task.status === "failed")
+          ? "failed"
+          : "waiting";
   const approvalState: NodeState =
     pendingApprovals.length > 0 ? "waiting" : completed.length > 0 ? "complete" : "idle";
   const resultState: NodeState =
     !project || tasks.length === 0
       ? "idle"
       : failed.length > 0
-        ? "waiting"
+        ? "failed"
         : tasks.every((task) => task.status === "completed")
           ? "complete"
           : "active";
@@ -268,10 +302,10 @@ export function AgentWorkflow({
           Scroll horizontally to follow the execution path.
         </p>
 
-        <div className="relative -mx-1 mt-3 overflow-x-auto px-1 pb-1">
+        <div className="relative -mx-1 mt-3 snap-x snap-proximity overflow-x-auto scroll-px-1 px-1 pb-1 xl:snap-none">
           <ol
             aria-label="Agent execution workflow from user goal to final result"
-            className="flex min-w-[900px] items-stretch gap-1 xl:min-w-0"
+            className="flex min-w-[900px] snap-x snap-proximity items-start gap-1 scroll-px-1 xl:min-w-0 xl:snap-none"
           >
             <NodeShell
               index={1}
@@ -370,15 +404,25 @@ export function AgentWorkflow({
                   </Link>
                 </div>
               ) : (
-                <div className="flex flex-1 flex-col gap-1.5">
+                <div className="relative flex flex-1 flex-col gap-1.5 pl-3">
+                  {/* One spine, one tick per agent: reads as a fan-out rather
+                      than a stack of unrelated rows. */}
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-1.5 left-[3px] top-1.5 w-px bg-line-strong"
+                  />
                   {parallelAgents.map((agent) => {
-                    const task = activeTasks.find((candidate) => candidate.ownerAgentId === agent.id);
+                    const task = stageTasks.find((candidate) => candidate.ownerAgentId === agent.id);
                     const nodeState = agentTaskState(task?.status);
                     return (
                       <details
                         key={agent.id}
-                        className="group rounded-control border border-line bg-surface/80 p-2 transition-colors open:border-brand/25 open:bg-surface"
+                        className="group relative rounded-control border border-line bg-surface/80 p-2 transition-colors open:border-brand/25 open:bg-surface"
                       >
+                        <span
+                          aria-hidden="true"
+                          className="absolute -left-3 top-1/2 h-px w-3 bg-line-strong"
+                        />
                         <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
                           <Avatar name={agent.name} hue={agent.avatarHue} size={22} />
                           <span className="min-w-0 flex-1">
@@ -390,7 +434,8 @@ export function AgentWorkflow({
                             </span>
                           </span>
                           <span
-                            aria-hidden="true"
+                            role="img"
+                            aria-label={STATE_META[nodeState].label}
                             className={cn(
                               "h-1.5 w-1.5 shrink-0 rounded-full",
                               nodeState === "active"
@@ -399,7 +444,9 @@ export function AgentWorkflow({
                                   ? "bg-warning-fg"
                                   : nodeState === "complete"
                                     ? "bg-success-fg"
-                                    : "bg-fg-subtle",
+                                    : nodeState === "failed"
+                                      ? "bg-danger-fg"
+                                      : "bg-fg-subtle",
                             )}
                           />
                           <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle transition-transform group-open:rotate-90" />
@@ -430,6 +477,15 @@ export function AgentWorkflow({
                       </details>
                     );
                   })}
+                  {ownerIds.length > parallelAgents.length && (
+                    <Link
+                      href="/tasks"
+                      className="pl-1 text-micro font-semibold text-brand transition-colors hover:text-brand-hover"
+                    >
+                      +{ownerIds.length - parallelAgents.length} more agent
+                      {ownerIds.length - parallelAgents.length === 1 ? "" : "s"}
+                    </Link>
+                  )}
                 </div>
               )}
             </NodeShell>
@@ -470,14 +526,14 @@ export function AgentWorkflow({
               index={5}
               dataStage="result"
               title="Final result"
-              icon={CheckCircle2}
+              icon={resultState === "failed" ? CircleAlert : CheckCircle2}
               state={resultState}
               className="w-[152px] shrink-0"
             >
               <p className="font-semibold">
                 {resultState === "complete"
                   ? "Delivered"
-                  : resultState === "waiting"
+                  : resultState === "failed"
                     ? "Needs attention"
                     : project
                       ? "In progress"
@@ -515,6 +571,9 @@ export function AgentWorkflow({
           </span>
           <span className="inline-flex items-center gap-1">
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success-fg" /> Complete
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-danger-fg" /> Failed
           </span>
           <span className="inline-flex items-center gap-1">
             <Circle aria-hidden="true" className="h-2 w-2 text-fg-subtle" /> Idle

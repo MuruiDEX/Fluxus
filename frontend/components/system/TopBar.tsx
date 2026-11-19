@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bell, LogIn, LogOut, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -19,6 +19,7 @@ import { buttonClass, IconButton } from "./controls";
 import { PrimaryLink } from "./ui";
 import { transition } from "@/lib/motion";
 import { useModalSurface } from "@/lib/use-modal-surface";
+import { Tooltip } from "./Tooltip";
 
 export function TopBar() {
   const { setCommandOpen } = useUI();
@@ -52,16 +53,7 @@ export function TopBar() {
           ? { label: "Online · server data", dot: "bg-success-fg", tone: "text-success-fg" }
           : { label: "Demo · simulated", dot: "bg-brand", tone: "text-brand" };
 
-  useModalSurface(drawerRef, menuOpen);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [menuOpen]);
+  useModalSurface(drawerRef, menuOpen, { onEscape: () => setMenuOpen(false) });
 
   return (
     <>
@@ -99,47 +91,52 @@ export function TopBar() {
             />
             <span className={system.tone}>{system.label}</span>
           </span>
-          <IconButton
-            variant="outline"
-            label="Toggle theme"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            <Sun className="hidden h-4 w-4 dark:block" />
-            <Moon className="h-4 w-4 dark:hidden" />
-          </IconButton>
-          <Link
-            href="/approvals"
-            className={buttonClass({ variant: "outline", iconOnly: true })}
-            aria-label="Approvals"
-          >
-            <Bell className="h-4 w-4" />
-            {pending > 0 && (
-              <Badge
-                tone="danger"
-                size="xs"
-                className="absolute -right-1 -top-1 h-4 min-w-4 justify-center px-1 py-0 leading-none shadow-card"
-              >
-                {pending}
-              </Badge>
-            )}
-          </Link>
+          <Tooltip label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
+            <IconButton
+              variant="outline"
+              label="Toggle theme"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              <Sun className="hidden h-4 w-4 dark:block" />
+              <Moon className="h-4 w-4 dark:hidden" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip label={pending > 0 ? `${pending} pending approvals` : "Approvals"}>
+            <Link
+              href="/approvals"
+              className={buttonClass({ variant: "outline", iconOnly: true })}
+              aria-label="Approvals"
+            >
+              <Bell className="h-4 w-4" />
+              {pending > 0 && (
+                <Badge
+                  tone="danger"
+                  size="xs"
+                  className="absolute -right-1 -top-1 h-4 min-w-4 justify-center px-1 py-0 leading-none shadow-card"
+                >
+                  {pending}
+                </Badge>
+              )}
+            </Link>
+          </Tooltip>
           <PrimaryLink href="/projects/new" className="hidden rounded-full sm:inline-flex">
             <Plus className="h-4 w-4" /> New Project
           </PrimaryLink>
           <Avatar name={displayName} hue={217} />
           <BusinessSwitcher />
           {status === "authenticated" && user ? (
-            <IconButton
-              variant="outline"
-              label="Log out"
-              title={`Log out ${user.email}`}
-              onClick={async () => {
-                await logout();
-                router.push("/login");
-              }}
-            >
-              <LogOut className="h-4 w-4" />
-            </IconButton>
+            <Tooltip label={`Log out ${user.email}`}>
+              <IconButton
+                variant="outline"
+                label="Log out"
+                onClick={async () => {
+                  await logout();
+                  router.push("/login");
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+              </IconButton>
+            </Tooltip>
           ) : (
             status !== "unknown" && (
               <Link
