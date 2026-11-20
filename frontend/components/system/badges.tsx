@@ -37,7 +37,7 @@ export function badgeClass({
   className?: string;
 } = {}) {
   return cn(
-    "inline-flex items-center gap-1.5 rounded-full border",
+    "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border transition-colors duration-150 motion-reduce:transition-none",
     badgeSizes[size],
     badgeTones[tone],
     className,
@@ -121,7 +121,7 @@ export function AgentStatusBadge({ status, live }: { status: AgentStatus; live?:
       {live && active && (
         <span
           aria-hidden="true"
-          className="animate-pulse-dot h-1.5 w-1.5 rounded-full bg-current"
+          className="animate-pulse-dot h-1.5 w-1.5 rounded-full bg-current motion-reduce:animate-none"
         />
       )}
       {agentLabels[status]}
@@ -182,7 +182,7 @@ export function ProgressBar({
       className={cn("h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken", className)}
     >
       <div
-        className="h-full origin-left rounded-full bg-gradient-to-r from-brand-solid via-brand to-accent transition-transform duration-500"
+        className="h-full origin-left rounded-full bg-gradient-to-r from-brand-solid via-brand to-accent transition-transform duration-500 motion-reduce:transition-none"
         style={{ transform: `scaleX(${clamped / 100})` }}
       />
     </div>

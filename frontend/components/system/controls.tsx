@@ -144,13 +144,16 @@ export const IconButton = React.forwardRef<
 
 /** Shared form-chrome base: tokens give light/dark, focus, disabled, read-only and invalid states. */
 const controlBaseClass =
-  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-[color,background-color,border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-focus read-only:cursor-default read-only:bg-surface-sunken read-only:text-fg-muted read-only:hover:border-line disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:hover:border-disabled-line aria-invalid:border-danger aria-invalid:ring-1 aria-invalid:ring-danger/30 aria-invalid:hover:border-danger";
+  "w-full rounded-control border border-line bg-surface text-body-sm text-fg transition-[color,background-color,border-color,box-shadow] placeholder:text-fg-subtle hover:border-line-strong focus:border-focus focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus read-only:cursor-default read-only:bg-surface-sunken read-only:text-fg-muted read-only:hover:border-line disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled-bg disabled:text-disabled-fg disabled:placeholder:text-disabled-fg disabled:hover:border-disabled-line aria-invalid:border-danger aria-invalid:ring-1 aria-invalid:ring-danger/30 aria-invalid:hover:border-danger";
 
 export const inputClass = cn(controlBaseClass, "h-10 px-3");
 
 export const textareaClass = cn(controlBaseClass, "min-h-20 px-3 py-2");
 
-export const selectClass = cn(controlBaseClass, "h-10 cursor-pointer px-3 pr-9");
+export const selectClass = cn(
+  controlBaseClass,
+  "h-10 cursor-pointer px-3 pr-9 active:bg-surface-sunken motion-reduce:transition-none",
+);
 
 export const checkboxClass =
   "h-4 w-4 shrink-0 cursor-pointer rounded border-line align-middle accent-brand-solid transition-colors hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-60 aria-invalid:outline aria-invalid:outline-2 aria-invalid:outline-offset-2 aria-invalid:outline-danger";

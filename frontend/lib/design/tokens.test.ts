@@ -156,6 +156,12 @@ describe("semantic design tokens", () => {
     expect(css).toContain("background: var(--flux-selection);");
   });
 
+  it("removes the tooltip entrance under reduced motion", () => {
+    const reduced = block("@media (prefers-reduced-motion: reduce)");
+    expect(reduced).toContain('.flux-tooltip[data-state="delayed-open"]');
+    expect(reduced).toContain("animation: none;");
+  });
+
   it("keeps legacy status aliases pointing at the new status triads", () => {
     for (const status of ["success", "warning", "danger", "info"]) {
       expect(css).toContain(`--flux-${status}: var(--flux-${status}-fg);`);

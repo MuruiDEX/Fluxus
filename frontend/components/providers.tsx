@@ -12,10 +12,13 @@ import { TooltipProvider } from "@/components/system/Tooltip";
  *
  * The tooltip provider sits here so every icon control shares one open/close
  * delay instead of each call site inventing its own.
+ *
+ * `enableSystem` lets the account Appearance section offer a real System
+ * preference; the explicit theme still wins once the user picks one.
  */
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <NextThemesProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    <NextThemesProvider attribute="class" defaultTheme="light" enableSystem>
       <MotionConfig reducedMotion="user">
         <TooltipProvider>{children}</TooltipProvider>
       </MotionConfig>

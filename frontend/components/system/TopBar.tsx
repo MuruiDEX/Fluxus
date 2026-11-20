@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { Bell, LogIn, LogOut, Menu, Moon, Plus, Search, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { toggledTheme } from "@/lib/account";
 import { useApprovals, useUI } from "@/lib/store/app";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveApprovals } from "@/lib/store/live";
@@ -23,7 +24,7 @@ import { Tooltip } from "./Tooltip";
 
 export function TopBar() {
   const { setCommandOpen } = useUI();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const { status, user, logout, currentBusinessId } = useSession();
@@ -65,6 +66,8 @@ export function TopBar() {
         <IconButton
           variant="outline"
           label="Open navigation"
+          aria-expanded={menuOpen}
+          aria-controls="mobile-navigation"
           onClick={() => setMenuOpen(true)}
           className="shrink-0 lg:hidden"
         >
@@ -74,6 +77,7 @@ export function TopBar() {
           <FluxusMark size={28} />
         </Link>
         <button
+          type="button"
           onClick={() => setCommandOpen(true)}
           className="group flex h-10 min-w-0 max-w-lg flex-1 items-center gap-2 rounded-full border border-line/80 bg-surface/60 px-3.5 text-body-sm text-fg-muted shadow-card backdrop-blur transition-colors hover:border-brand/35 hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
         >
@@ -91,11 +95,15 @@ export function TopBar() {
             />
             <span className={system.tone}>{system.label}</span>
           </span>
-          <Tooltip label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
+          <Tooltip
+            label={
+              resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"
+            }
+          >
             <IconButton
               variant="outline"
               label="Toggle theme"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              onClick={() => setTheme(toggledTheme(resolvedTheme))}
             >
               <Sun className="hidden h-4 w-4 dark:block" />
               <Moon className="h-4 w-4 dark:hidden" />
@@ -122,7 +130,15 @@ export function TopBar() {
           <PrimaryLink href="/projects/new" className="hidden rounded-full sm:inline-flex">
             <Plus className="h-4 w-4" /> New Project
           </PrimaryLink>
-          <Avatar name={displayName} hue={217} />
+          <Tooltip label="Account settings">
+            <Link
+              href="/settings"
+              aria-label="Account settings"
+              className="rounded-full transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            >
+              <Avatar name={displayName} hue={217} />
+            </Link>
+          </Tooltip>
           <BusinessSwitcher />
           {status === "authenticated" && user ? (
             <Tooltip label={`Log out ${user.email}`}>
@@ -151,46 +167,44 @@ export function TopBar() {
         </div>
       </header>
 
-      <AnimatePresence>
-        {menuOpen && (
+      {menuOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={transition.fast}
+          className="fixed inset-0 z-50 bg-overlay lg:hidden"
+          onClick={() => setMenuOpen(false)}
+        >
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-overlay lg:hidden"
-            onClick={() => setMenuOpen(false)}
+            ref={drawerRef}
+            initial={{ x: -280, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={transition.base}
+            onClick={(e) => e.stopPropagation()}
+            id="mobile-navigation"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation"
+            className="flex h-full w-[276px] flex-col gap-4 overflow-y-auto overscroll-contain border-r border-line bg-surface px-3 pb-4 pt-3"
           >
-            <motion.div
-              ref={drawerRef}
-              initial={{ x: -280 }}
-              animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={transition.base}
-              onClick={(e) => e.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Navigation"
-              className="flex h-full w-[276px] flex-col gap-4 overflow-y-auto border-r border-line bg-surface px-3 pb-4 pt-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <SidebarBrand />
-                <IconButton
-                  variant="ghost"
-                  size="sm"
-                  label="Close navigation"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  <X className="h-4 w-4" />
-                </IconButton>
-              </div>
-              <div className="flux-hairline h-px w-full" />
-              <div onClick={() => setMenuOpen(false)}>
-                <SidebarLinks />
-              </div>
-            </motion.div>
+            <div className="flex items-center justify-between gap-2">
+              <SidebarBrand />
+              <IconButton
+                variant="ghost"
+                size="sm"
+                label="Close navigation"
+                onClick={() => setMenuOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </IconButton>
+            </div>
+            <div className="flux-hairline h-px w-full" />
+            <div onClick={() => setMenuOpen(false)}>
+              <SidebarLinks />
+            </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+        </motion.div>
+      )}
     </>
   );
 }

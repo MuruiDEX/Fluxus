@@ -782,6 +782,11 @@ body {
     opacity: 1;
   }
 
+  .flux-tooltip[data-state="delayed-open"],
+  .flux-tooltip[data-state="instant-open"] {
+    animation: none;
+  }
+
   .flux-orbit-ring,
   .flux-orbit-ring-reverse,
   .flux-scan,

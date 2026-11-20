@@ -114,6 +114,7 @@ export function CommandBar() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={transition.fast}
           className="fixed inset-0 z-50 flex items-start justify-center bg-overlay px-4 pb-6 pt-[12vh] backdrop-blur-sm"
           onClick={close}
         >
@@ -145,6 +146,7 @@ export function CommandBar() {
                 role="combobox"
                 aria-label="What do you want to accomplish?"
                 aria-expanded={results.length > 0}
+                aria-haspopup="listbox"
                 aria-controls="command-results"
                 aria-autocomplete="list"
                 aria-activedescendant={activeResult ? OPTION_ID(activeIndex) : undefined}
@@ -154,6 +156,7 @@ export function CommandBar() {
                 Ctrl K
               </kbd>
               <button
+                type="button"
                 onClick={close}
                 aria-label="Close"
                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-slate-400 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300"
@@ -165,6 +168,7 @@ export function CommandBar() {
               {tabs.map((t) => (
                 <button
                   key={t}
+                  type="button"
                   onClick={() => {
                     setTab(t);
                     setActive(0);
@@ -186,7 +190,7 @@ export function CommandBar() {
               id="command-results"
               role="listbox"
               aria-label="Suggested goals"
-              className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto p-3"
+              className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto overscroll-contain p-3"
             >
               {results.map((s, i) => (
                 <div
@@ -227,6 +231,7 @@ export function CommandBar() {
               )}
               {value.trim() && (
                 <button
+                  type="button"
                   onClick={() => go(value.trim())}
                   className="mt-1 flex items-center gap-3 rounded-xl border border-dashed border-white/20 px-3 py-2.5 text-left text-sky-200 transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300"
                 >

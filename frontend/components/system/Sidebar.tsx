@@ -60,7 +60,7 @@ const primary: NavItem[] = [
   { href: "/automations", label: "Automation", icon: Zap, planned: true },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/brain", label: "Knowledge Base", icon: BookOpen },
-  { href: "/settings", label: "Settings", icon: Settings, planned: true },
+  { href: "/settings", label: "Account", icon: Settings },
 ];
 
 const groups: { label: string; items: NavItem[] }[] = [

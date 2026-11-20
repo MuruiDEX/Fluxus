@@ -3,7 +3,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [contenteditable]:not([contenteditable="false"]), audio[controls], video[controls], [tabindex]:not([tabindex="-1"])';
 
 /** Form controls are the intent of a form dialog; a close button is not. */
 const FORM_CONTROL =
@@ -18,6 +18,9 @@ const FORM_CONTROL =
 let locks = 0;
 let savedOverflow = "";
 let savedPaddingRight = "";
+
+/** Only the topmost surface owns Escape and focus containment. */
+const surfaceStack: object[] = [];
 
 type ModalSurfaceOptions = {
   /**
@@ -54,6 +57,9 @@ export function useModalSurface(
 
   useEffect(() => {
     if (!active) return;
+    const token = {};
+    surfaceStack.push(token);
+    const isTopmost = () => surfaceStack[surfaceStack.length - 1] === token;
     const previous = document.activeElement;
     const body = document.body;
     if (locks === 0) {
@@ -72,11 +78,13 @@ export function useModalSurface(
       surface?.querySelector<HTMLElement>("[data-autofocus]") ??
       surface?.querySelector<HTMLElement>(FORM_CONTROL) ??
       surface?.querySelector<HTMLElement>(FOCUSABLE);
-    target?.focus();
+    target?.focus({ preventScroll: true });
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!isTopmost()) return;
       // An IME composition owns Escape (it cancels the candidate list).
       if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented) {
+        event.preventDefault();
         onEscapeRef.current?.();
         return;
       }
@@ -97,9 +105,28 @@ export function useModalSurface(
       }
     };
 
+    // Pointer/programmatic focus cannot escape while this surface is topmost.
+    const onFocusIn = (event: FocusEvent) => {
+      const currentSurface = surfaceRef.current;
+      const targetNode = event.target;
+      if (
+        !isTopmost() ||
+        !currentSurface ||
+        !(targetNode instanceof Node) ||
+        currentSurface.contains(targetNode)
+      ) {
+        return;
+      }
+      currentSurface.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
+    };
+
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("focusin", onFocusIn);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("focusin", onFocusIn);
+      const stackIndex = surfaceStack.lastIndexOf(token);
+      if (stackIndex !== -1) surfaceStack.splice(stackIndex, 1);
       locks = Math.max(0, locks - 1);
       if (locks === 0) {
         body.style.overflow = savedOverflow;

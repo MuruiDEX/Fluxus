@@ -89,7 +89,7 @@ const cardVariants: Record<CardVariant, string> = {
   // The wrapping <Link> owns focus, so the card echoes it with `focus-within`:
   // a keyboard user sees which card the next Enter will open.
   interactive:
-    "transition-transform duration-200 hover:-translate-y-0.5 hover:border-line-strong focus-within:border-brand/40 motion-reduce:hover:translate-y-0",
+    "transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card focus-within:border-brand/40 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
 };
 
 export function Card({

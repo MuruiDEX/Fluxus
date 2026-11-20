@@ -168,6 +168,8 @@ describe("form controls", () => {
     expect(markup).toContain("rounded-control");
     expect(markup).toContain("placeholder:text-fg-subtle");
     expect(markup).toContain("focus:border-focus");
+    expect(markup).toContain("focus-visible:outline-focus");
+    expect(markup).toContain("disabled:placeholder:text-disabled-fg");
   });
 
   it("exposes disabled, read-only and invalid input states", () => {
@@ -217,6 +219,9 @@ describe("form controls", () => {
     expect(markup).toContain("rounded-control");
     expect(markup).toContain("pr-9");
     expect(markup).toContain("focus:border-focus");
+    expect(markup).toContain("focus-visible:outline-focus");
+    expect(markup).toContain("active:bg-surface-sunken");
+    expect(markup).toContain("motion-reduce:transition-none");
   });
 
   it("renders a native checkbox that keeps checked and disabled semantics", () => {
@@ -394,8 +399,11 @@ describe("Card", () => {
 
   it("adds the hover lift only for the interactive variant", () => {
     const markup = html(<Card variant="interactive">Body</Card>);
-    expect(markup).toContain("transition-transform");
+    expect(markup).toContain("transition-[transform,border-color,box-shadow]");
     expect(markup).toContain("hover:-translate-y-0.5");
+    expect(markup).toContain("hover:shadow-card");
+    expect(markup).toContain("motion-reduce:transition-none");
+    expect(markup).toContain("motion-reduce:hover:translate-y-0");
     // Interaction still belongs to the wrapping link, not the surface.
     expect(markup).not.toContain("tabindex");
     expect(markup).not.toContain("role=");
@@ -436,6 +444,8 @@ describe("Badge", () => {
       expect(markup).toContain(surface);
       expect(markup).toContain(ink);
       expect(markup).toContain("rounded-full");
+      expect(markup).toContain("whitespace-nowrap");
+      expect(markup).toContain("transition-colors");
       expect(markup).toContain(tone);
     });
   }
@@ -526,6 +536,7 @@ describe("domain status badges", () => {
   it("marks the live pulse dot decorative and only for active agent states", () => {
     const working = html(<AgentStatusBadge status="working" live />);
     expect(working).toContain("animate-pulse-dot");
+    expect(working).toContain("motion-reduce:animate-none");
     expect(working).toContain('aria-hidden="true"');
 
     expect(html(<AgentStatusBadge status="available" live />)).not.toContain("animate-pulse-dot");

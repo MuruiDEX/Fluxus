@@ -37,8 +37,11 @@ export function Tooltip({
       <RadixTooltip.Portal>
         <RadixTooltip.Content
           side={side}
-          sideOffset={6}
-          collisionPadding={8}
+          sideOffset={7}
+          align="center"
+          avoidCollisions
+          collisionPadding={10}
+          hideWhenDetached
           className="flux-tooltip z-50 max-w-56 rounded-lg border border-line-subtle bg-surface-inverse px-2 py-1 text-label font-medium text-fg-inverse shadow-pop"
         >
           {label}

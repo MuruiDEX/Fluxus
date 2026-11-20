@@ -7,6 +7,7 @@ import { Card, GhostButton, LiveBadge, PageHeader, PrimaryButton } from "@/compo
 import { Badge } from "@/components/system/badges";
 import { ChoiceChip, IconButton, Input, Textarea } from "@/components/system/controls";
 import { useModalSurface } from "@/lib/use-modal-surface";
+import { transition } from "@/lib/motion";
 import { BrainCreateButton } from "@/components/system/BrainCreate";
 import { useSession } from "@/lib/store/auth";
 import { isLiveContext, useLiveBrain } from "@/lib/store/live";
@@ -131,7 +132,8 @@ function DemoBrainView() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex overflow-y-auto bg-overlay px-4 py-6"
+            transition={transition.fast}
+            className="fixed inset-0 z-50 flex overflow-y-auto overscroll-contain bg-overlay px-4 py-6 sm:px-6"
             onClick={() => setModal(null)}
           >
             <motion.div
@@ -139,6 +141,7 @@ function DemoBrainView() {
               initial={{ y: 12, scale: 0.98, opacity: 0 }}
               animate={{ y: 0, scale: 1, opacity: 1 }}
               exit={{ y: 8, scale: 0.98, opacity: 0 }}
+              transition={transition.overlay}
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               aria-modal="true"

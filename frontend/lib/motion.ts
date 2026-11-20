@@ -37,8 +37,13 @@ export const transition = {
   slow: { duration: duration.slow, ease: easing.out },
   /** Interactive elements that should feel physical, not slow. */
   spring: { type: "spring", stiffness: 420, damping: 34, mass: 0.8 },
-  /** Overlay/dialog springs are softer so they do not snap. */
-  overlay: { type: "spring", stiffness: 300, damping: 30, mass: 0.9 },
+  /**
+   * Overlay/dialog motion uses a tween, not a spring: it completes reliably
+   * under reduced-motion mode (where transform animation is stripped) so
+   * AnimatePresence can unmount an exited dialog instead of leaving a
+   * transparent surface in the tab order.
+   */
+  overlay: { duration: duration.slow, ease: easing.out },
 } satisfies Record<string, Transition>;
 
 /** Enter-only variants (App Router unmounts the old tree, so no exit pass). */
