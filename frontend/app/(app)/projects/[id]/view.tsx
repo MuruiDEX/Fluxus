@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, Badge, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
-import { PlanDriverPanel } from "@/components/system/PlanDriver";
+import { ProjectWorkflowPanel } from "@/components/system/PlanDriver";
 import { ProjectEditButton } from "@/components/system/ProjectEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { UsagePanel } from "@/components/system/UsagePanel";
@@ -235,10 +235,6 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
   const agents = useLiveAgents((s) => s.agents);
   const ensureAgents = useLiveAgents((s) => s.ensure);
   const resetAgents = useLiveAgents((s) => s.reset);
-  // Optional brief deep-link (?brief=...): wires the driver to the persisted
-  // plan so terminal graphs offer server-side finalization in place.
-  // Absent by default — plain project views never assume a brief.
-  const briefId = useSearchParams().get("brief") ?? undefined;
 
   useEffect(() => {
     void load(businessId, projectId);
@@ -252,7 +248,9 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId, projectId]);
 
-  if (status === "loading" || status === "idle") {
+  if (status === "loading" || status === "idle" || (project && (
+    project.businessId !== businessId || project.id !== projectId
+  ))) {
     return (
       <>
         <PageHeader title="Project" sub="Loading from server…" badge={<LiveBadge />} />
@@ -307,7 +305,7 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
       projectEditSlot={<ProjectEditButton businessId={businessId} project={project} />}
       engineSlot={
         <div className="flex flex-wrap items-center gap-2">
-          <PlanDriverPanel businessId={businessId} projectId={project.id} briefId={briefId} />
+          <ProjectWorkflowPanel businessId={businessId} projectId={project.id} />
           <span
             title="Each task runs on the server when you press its Run button."
             className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
@@ -332,7 +330,13 @@ export function ProjectDetail() {
   const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
   const { status, currentBusinessId } = useSession();
   if (isLiveContext(status, currentBusinessId)) {
-    return <LiveProjectDetail businessId={currentBusinessId} projectId={rawId} />;
+    return (
+      <LiveProjectDetail
+        key={`${currentBusinessId}/${rawId}`}
+        businessId={currentBusinessId}
+        projectId={rawId}
+      />
+    );
   }
   return <DemoProjectDetail id={rawId} />;
 }

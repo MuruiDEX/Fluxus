@@ -142,6 +142,38 @@ class ReservationStatus(StrEnum):
     RECONCILED = "reconciled"
 
 
+class IntegrationConnectionStatus(StrEnum):
+    """Lifecycle of one external service connection (Stage 19).
+
+    Only `connected` may be used by capabilities. `revoked` is terminal for
+    the stored credentials (tokens are wiped); reconnecting creates a fresh
+    authorization. `error` keeps the row visible for a safe operator hint but
+    is never treated as usable.
+    """
+
+    CONNECTED = "connected"
+    REVOKED = "revoked"
+    ERROR = "error"
+
+
+class IntegrationActionStatus(StrEnum):
+    """Lifecycle of a human-approved external side effect.
+
+    `pending` is the only state a capability creates. The approval decision
+    claims it (`executing`), then records exactly one outcome. `unknown` means
+    the provider may have performed the action (ambiguous network/5xx result)
+    and it is never retried automatically. `rejected` follows a rejected human
+    approval and can never execute.
+    """
+
+    PENDING = "pending"
+    EXECUTING = "executing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
 class UsageReconciliationOutcome(StrEnum):
     """Audited outcome of a manual ambiguous-reservation reconciliation.
 

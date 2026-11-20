@@ -101,6 +101,23 @@ class Settings(BaseSettings):
     execution_max_write_calls_per_run: int = 3
     execution_capability_result_chars: int = 4000
     execution_capability_timeout_s: float = 10.0
+
+    # --- External integrations (Stage 19). Secrets only via environment. ---
+    # Missing config never pretends to work: the provider list reports
+    # `configured: false` and connect/refresh/action paths fail closed.
+    # Generate the Fernet key with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    integration_encryption_key: str | None = None
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    # Exact URI registered in Google Cloud. Google rejects mismatches.
+    integration_oauth_redirect_uri: str = "http://127.0.0.1:8000/api/v1/integrations/oauth/callback"
+    # Where the OAuth callback redirects the browser (never user-controlled).
+    integration_frontend_url: str = "http://localhost:3000"
+    # OAuth state lifetime and provider HTTP bounds.
+    integration_oauth_state_ttl_s: int = 600
+    integration_http_timeout_s: float = 8.0
+    integration_http_max_retries: int = 1
     # Recovery staleness threshold. Startup validation (below) requires it to
     # strictly exceed the worst-case live run plus _RECOVERY_CUTOFF_MARGIN_S.
     recovery_stale_minutes: int = _DEFAULT_RECOVERY_STALE_MINUTES
@@ -239,6 +256,31 @@ class Settings(BaseSettings):
     def _positive_capability_timeout(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
             raise ValueError("execution_capability_timeout_s must be a finite positive number")
+        return value
+
+    @field_validator("integration_oauth_state_ttl_s")
+    @classmethod
+    def _bounded_oauth_state_ttl(cls, value: int) -> int:
+        # A long-lived state is a replay/CSRF window; a very short one makes
+        # the consent screen unusable.
+        if not 60 <= value <= 3600:
+            raise ValueError("integration_oauth_state_ttl_s must be between 60 and 3600")
+        return value
+
+    @field_validator("integration_http_timeout_s")
+    @classmethod
+    def _positive_integration_timeout(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("integration_http_timeout_s must be a finite positive number")
+        return value
+
+    @field_validator("integration_http_max_retries")
+    @classmethod
+    def _bounded_integration_retries(cls, value: int) -> int:
+        # External side effects are never retried automatically; this budget is
+        # only for safe reads/token refresh.
+        if not 0 <= value <= 3:
+            raise ValueError("integration_http_max_retries must be between 0 and 3")
         return value
 
     @model_validator(mode="after")

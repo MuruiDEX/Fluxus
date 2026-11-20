@@ -149,6 +149,73 @@ class AgentCapabilitiesResponse(Contracted):
     capabilities: list[AgentCapabilityResponse] = Field(default_factory=list)
 
 
+class IntegrationCapabilityResponse(BaseModel):
+    id: str
+    title: str
+    risk: str
+
+
+class IntegrationProviderResponse(Contracted):
+    id: str
+    name: str
+    description: str
+    docs_url: str = Field(alias="docsUrl")
+    read_scopes: list[str] = Field(default_factory=list, alias="readScopes")
+    write_scopes: list[str] = Field(default_factory=list, alias="writeScopes")
+    capabilities: list[IntegrationCapabilityResponse] = Field(default_factory=list)
+    configured: bool
+    missing_configuration: list[str] = Field(default_factory=list, alias="missingConfiguration")
+
+
+class IntegrationProviderListResponse(Contracted):
+    providers: list[IntegrationProviderResponse] = Field(default_factory=list)
+
+
+class IntegrationConnectRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    include_writes: bool = Field(default=False, alias="includeWrites")
+
+
+class IntegrationConnectResponse(Contracted):
+    authorization_url: str = Field(alias="authorizationUrl")
+    provider: str
+    scopes: list[str] = Field(default_factory=list)
+    expires_at: str = Field(alias="expiresAt")
+
+
+class IntegrationConnectionCapabilityResponse(BaseModel):
+    id: str
+    title: str
+    risk: str
+    granted: bool
+
+
+class IntegrationConnectionResponse(Contracted):
+    id: str
+    provider: str
+    provider_name: str = Field(alias="providerName")
+    external_account_id: str = Field(alias="externalAccountId")
+    display_name: str = Field(alias="displayName")
+    status: str
+    health: str
+    scopes: list[str] = Field(default_factory=list)
+    capabilities: list[IntegrationConnectionCapabilityResponse] = Field(default_factory=list)
+    expires_at: str | None = Field(default=None, alias="expiresAt")
+    last_refreshed_at: str | None = Field(default=None, alias="lastRefreshedAt")
+    last_error: str = Field(default="", alias="lastError")
+    can_send: bool = Field(default=False, alias="canWrite")
+
+
+class IntegrationConnectionListResponse(Contracted):
+    connections: list[IntegrationConnectionResponse] = Field(default_factory=list)
+
+
+class IntegrationDisconnectResponse(Contracted):
+    outcome: str
+    connection_id: str = Field(alias="connectionId")
+
+
 class ApprovalResponse(Contracted):
     id: str
     business_id: str = Field(alias="businessId")
@@ -506,6 +573,12 @@ class FinalizeLearning(BaseModel):
     body: str
 
 
+class IntegrationActionReconciliationResponse(Contracted):
+    approval_id: str = Field(alias="approvalId")
+    action_id: str = Field(alias="actionId")
+    status: str
+
+
 class FinalizeResponse(Contracted):
     # Stage 8.5: the persisted finalization result — validated report from
     # saved rows, stored Brain learnings, and server-rendered ledger costs.
@@ -516,6 +589,15 @@ class FinalizeResponse(Contracted):
     report: dict = Field(default_factory=dict)
     learnings: list[FinalizeLearning] = Field(default_factory=list)
     costs: dict = Field(default_factory=dict)
+
+
+class ProjectWorkflowResponse(Contracted):
+    brief_id: str | None = Field(default=None, alias="briefId")
+    phase: Literal[
+        "ready", "running", "waiting_approval", "blocked", "awaiting_finalization", "finalized"
+    ] = "ready"
+    message: str | None = None
+    finalization: FinalizeResponse | None = None
 
 
 class MarketplaceResponse(Contracted):

@@ -10,7 +10,7 @@
  * concrete UI state.
  */
 import { expect, test } from "@playwright/test";
-import { ensureAuth, sidebarGo } from "./live-helpers";
+import { ensureAuth, liveCard, sidebarGo } from "./live-helpers";
 
 // One UI login per file (backend throttles repeated logins); the journey
 // reuses the saved session. Deleted by globalSetup before every run.
@@ -113,8 +113,8 @@ test.describe.serial("LIVE intake to Brain", () => {
   });
 
   test("execution runs, gate approves, finalize reports to Brain", async ({ page }) => {
-    // Full cycle in one test: leaving the page stops the driver (by design),
-    // so the ?brief= deep link captured at planning time is reused to return.
+    // Leaving the project stops the browser driver. The project list links
+    // directly to the project, and the server restores its workflow.
     await page.goto("/projects/new");
     await expect(page.getByText("What do you want to accomplish?")).toBeVisible({
       timeout: 30_000,
@@ -130,31 +130,36 @@ test.describe.serial("LIVE intake to Brain", () => {
     await expect(page.getByText("Planned — server confirmed.")).toBeVisible({ timeout: 60_000 });
     const projectHref = await page.getByRole("link", { name: "Open project" }).getAttribute("href");
     expect(projectHref).toMatch(/\/projects\/[^/]+\?brief=[^&]+/);
-    await page.getByRole("link", { name: "Open project" }).click();
-    await expect(page.getByText("Task graph")).toBeVisible({ timeout: 30_000 });
+    const plainProjectHref = projectHref!.split("?")[0];
+    const reopenFromProjectList = async () => {
+      await page.goto("/projects");
+      await page.locator(`a[href="${plainProjectHref}"]`).click();
+      await expect(page.getByText("Task graph")).toBeVisible({ timeout: 30_000 });
+      expect(new URL(page.url()).search).toBe("");
+    };
+    await reopenFromProjectList();
 
     await page.getByTestId("plan-driver").getByRole("button", { name: "Start" }).click();
     // First task runs; the gated one parks for approval.
     await expect(page.getByText(/Waiting for approval/)).toBeVisible({ timeout: 120_000 });
+    await reopenFromProjectList();
+    await expect(page.getByTestId("plan-driver").getByText(/Waiting for approval/)).toBeVisible();
     // Direct navigation (the sidebar badge renames the link): leaving stops
     // the driver by design; we resume explicitly after deciding.
     await page.goto("/approvals");
-    await expect(page.getByText("Approve intake slice").first()).toBeVisible({ timeout: 30_000 });
+    const cards = liveCard(page, "Approve intake slice");
+    await expect(cards.first()).toBeVisible({ timeout: 30_000 });
     // Both intake runs of this file gate identically-titled approvals: decide
     // every pending one, leaving other files' fixture gates untouched (each
     // click is a real audited decision). Settle between clicks: the list
     // mutates as rows leave Pending.
     for (let i = 0; i < 5; i++) {
-      const cards = page.locator('main div.grid > div.rounded-2xl:has-text("Approve intake slice")');
       const n = await cards.count();
       if (n === 0) break;
       await cards.first().getByRole("button", { name: "Approve", exact: true }).click();
       await expect
         .poll(
-          () =>
-            page
-              .locator('main div.grid > div.rounded-2xl:has-text("Approve intake slice")')
-              .count(),
+          () => cards.count(),
           { timeout: 30_000 },
         )
         .toBeLessThan(n);
@@ -162,23 +167,33 @@ test.describe.serial("LIVE intake to Brain", () => {
     // Our intake gates are decided; the fixture gate from another file may
     // still be pending — assert our card on the Approved tab instead.
     await page.getByRole("button", { name: /Approved \(\d+\)/ }).click();
-    const decided = page.locator('main div.grid > div.rounded-2xl:has-text("Approve intake slice")');
+    const decided = liveCard(page, "Approve intake slice");
     await expect(decided.getByText(/Decided — recorded in the audit trail/).first()).toBeVisible({
       timeout: 30_000,
     });
 
     // Returning reloads the page (fresh store): start again explicitly.
-    await page.goto(projectHref!);
-    await expect(page.getByText("Task graph")).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId("plan-driver").getByRole("button", { name: "Start" }).click();
+    await reopenFromProjectList();
+    await page.getByTestId("plan-driver").getByRole("button", { name: /Start|Resume/ }).click();
     await expect(page.getByRole("button", { name: "Finalize brief" })).toBeVisible({
       timeout: 180_000,
     });
+    await reopenFromProjectList();
     await page.getByRole("button", { name: "Finalize brief" }).click();
     await expect(page.getByTestId("final-report")).toBeVisible({ timeout: 180_000 });
     await expect(page.getByText("Final report")).toBeVisible();
     await expect(page.getByText("Learnings saved to Brain (1)")).toBeVisible();
     await expect(page.getByText("E2E intake learning")).toBeVisible();
+    const finalizeRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/finalize")) {
+        finalizeRequests.push(request.url());
+      }
+    });
+    await reopenFromProjectList();
+    await expect(page.getByTestId("final-report")).toBeVisible();
+    await expect(page.getByText("E2E intake learning")).toBeVisible();
+    expect(finalizeRequests).toHaveLength(0);
 
     await sidebarGo(page, "Business Brain", /\/brain$/);
     await expect(page.getByText("E2E intake learning").first()).toBeVisible({ timeout: 30_000 });

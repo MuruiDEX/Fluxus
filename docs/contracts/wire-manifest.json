@@ -73,6 +73,11 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/approvals/{approval_id}/reconcile-action",
+      "response": "IntegrationActionReconciliationResponse"
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/businesses/{business_id}/approvals/{approval_id}/reject",
       "response": "DecisionResponse"
     },
@@ -110,6 +115,31 @@
       "method": "POST",
       "path": "/api/v1/businesses/{business_id}/briefs/{brief_id}/plan",
       "response": "PlanResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/integrations",
+      "response": "IntegrationConnectionListResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/integrations/providers",
+      "response": "IntegrationProviderListResponse"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/businesses/{business_id}/integrations/{connection_id}",
+      "response": "IntegrationDisconnectResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/integrations/{connection_id}",
+      "response": "IntegrationConnectionResponse"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/businesses/{business_id}/integrations/{provider}/connect",
+      "response": "IntegrationConnectResponse"
     },
     {
       "method": "GET",
@@ -188,6 +218,11 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/businesses/{business_id}/projects/{project_id}/workflow",
+      "response": "ProjectWorkflowResponse"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/businesses/{business_id}/usage",
       "response": "UsageListResponse"
     },
@@ -215,6 +250,11 @@
       "method": "GET",
       "path": "/api/v1/health",
       "response": "HealthResponse"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/integrations/oauth/callback",
+      "response": ""
     },
     {
       "method": "GET",
@@ -1332,6 +1372,257 @@
         "status"
       ]
     },
+    "IntegrationActionReconciliationResponse": {
+      "properties": {
+        "actionId": {
+          "type": "string"
+        },
+        "approvalId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "approvalId",
+        "status"
+      ]
+    },
+    "IntegrationCapabilityResponse": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "risk",
+        "title"
+      ]
+    },
+    "IntegrationConnectRequest": {
+      "properties": {
+        "includeWrites": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": []
+    },
+    "IntegrationConnectResponse": {
+      "properties": {
+        "authorizationUrl": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "scopes": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "authorizationUrl",
+        "expiresAt",
+        "provider"
+      ]
+    },
+    "IntegrationConnectionCapabilityResponse": {
+      "properties": {
+        "granted": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "granted",
+        "id",
+        "risk",
+        "title"
+      ]
+    },
+    "IntegrationConnectionListResponse": {
+      "properties": {
+        "connections": {
+          "default": [],
+          "type": "array"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        }
+      },
+      "required": []
+    },
+    "IntegrationConnectionResponse": {
+      "properties": {
+        "canWrite": {
+          "default": false,
+          "type": "boolean"
+        },
+        "capabilities": {
+          "default": [],
+          "type": "array"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "externalAccountId": {
+          "type": "string"
+        },
+        "health": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lastError": {
+          "default": "",
+          "type": "string"
+        },
+        "lastRefreshedAt": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerName": {
+          "type": "string"
+        },
+        "scopes": {
+          "default": [],
+          "type": "array"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "externalAccountId",
+        "health",
+        "id",
+        "provider",
+        "providerName",
+        "status"
+      ]
+    },
+    "IntegrationDisconnectResponse": {
+      "properties": {
+        "connectionId": {
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connectionId",
+        "outcome"
+      ]
+    },
+    "IntegrationProviderListResponse": {
+      "properties": {
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "providers": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": []
+    },
+    "IntegrationProviderResponse": {
+      "properties": {
+        "capabilities": {
+          "default": [],
+          "type": "array"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "docsUrl": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "missingConfiguration": {
+          "default": [],
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "readScopes": {
+          "default": [],
+          "type": "array"
+        },
+        "writeScopes": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "required": [
+        "configured",
+        "description",
+        "docsUrl",
+        "id",
+        "name"
+      ]
+    },
     "MarketplaceListResponse": {
       "properties": {
         "contract": {
@@ -1840,6 +2131,34 @@
         "status",
         "title"
       ]
+    },
+    "ProjectWorkflowResponse": {
+      "properties": {
+        "briefId": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "contract": {
+          "default": "v1",
+          "type": "string"
+        },
+        "finalization": {
+          "default": null,
+          "nullable": true,
+          "type": "FinalizeResponse"
+        },
+        "message": {
+          "default": null,
+          "nullable": true,
+          "type": "string"
+        },
+        "phase": {
+          "default": "ready",
+          "type": "Literal"
+        }
+      },
+      "required": []
     },
     "RecoveryResponse": {
       "properties": {

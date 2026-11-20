@@ -23,12 +23,18 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.executions import _factory, _settings, _task_responses
 from app.api.v1.reads import _approval_response, _project_response
-from app.api.v1.schemas import BriefResponse, FinalizeResponse, PlanResponse
+from app.api.v1.schemas import (
+    BriefResponse,
+    FinalizeResponse,
+    PlanResponse,
+    ProjectWorkflowResponse,
+)
 from app.core.auth import check_client_contract
 from app.core.identity import require_business
+from app.integrations.repositories import IntegrationActionRepository
 from app.llm.base import create_provider
 from app.llm.types import LlmConfigurationError, LlmError, ProviderAuthError
-from app.persistence.enums import UsageCallKind
+from app.persistence.enums import IntegrationActionStatus, UsageCallKind
 from app.persistence.exceptions import AgentDisabledError, DanglingReferenceError, new_id
 from app.persistence.repositories.concrete import (
     AgentRepository,
@@ -59,6 +65,7 @@ _agents = AgentRepository()
 _projects = ProjectRepository()
 _tasks = TaskRepository()
 _approvals = ApprovalRepository()
+_integration_actions = IntegrationActionRepository()
 _planning = PlanningRepository()
 _finalizing = FinalizationRepository()
 
@@ -359,8 +366,16 @@ async def create_plan(business_id: str, brief_id: str, request: Request):
         summary = dict(brief.summary)
         roster = [
             {"id": a.id, "name": a.name, "role": a.role}
-            for a in await _agents.list(session, business_id)
+            for a in await _agents.list_assignable(session, business_id)
         ]
+        if not roster:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "no_eligible_agents",
+                    "message": "Hire or enable an agent in this business before building a plan.",
+                },
+            )
     try:
         provider = create_provider(settings)
     except LlmError as exc:
@@ -476,6 +491,69 @@ def _stored_finalization(brief, contract: str) -> FinalizeResponse:
     return _finalize_response(envelope, brief.id, contract)
 
 
+@router.get(
+    "/businesses/{business_id}/projects/{project_id}/workflow",
+    response_model=ProjectWorkflowResponse,
+    dependencies=_GUARD,
+)
+async def read_project_workflow(business_id: str, project_id: str, request: Request):
+    contract = _settings(request).contract_version
+    factory = _factory(request)
+    async with factory() as session:
+        if await _projects.get(session, business_id, project_id) is None:
+            raise HTTPException(status_code=404, detail="Project not found in scope.")
+        brief = await _briefs.get_for_project(session, business_id, project_id)
+        if brief is None:
+            return ProjectWorkflowResponse(contract=contract)
+        if brief.status == "completed":
+            return ProjectWorkflowResponse(
+                briefId=brief.id,
+                phase="finalized",
+                finalization=_stored_finalization(brief, contract),
+                contract=contract,
+            )
+        if brief.status == "running":
+            return ProjectWorkflowResponse(briefId=brief.id, phase="running", contract=contract)
+        if brief.status != "planned":
+            return ProjectWorkflowResponse(
+                briefId=brief.id, contract=contract, phase="blocked",
+                message=f"Brief is {brief.status} and cannot be finalized.",
+            )
+        tasks = await _tasks.list_for_project(session, business_id, project_id)
+        approvals = await _approvals.list_for_project(session, business_id, project_id)
+        actions = await _integration_actions.report_facts(session, business_id, project_id)
+        edges = await _tasks.dependency_map(session, [task.id for task in tasks])
+    phase, message = _workflow_phase(tasks, approvals, actions, edges)
+    return ProjectWorkflowResponse(
+        briefId=brief.id, phase=phase, message=message, contract=contract
+    )
+
+
+def _workflow_phase(tasks, approvals, actions, edges):
+    if any(task.status == "working" for task in tasks):
+        return "running", "A task is running on the server."
+    if _unfinished_task(tasks) is None:
+        if any(approval.status == "pending" for approval in approvals):
+            return "waiting_approval", "Waiting for approval."
+        if _undecided_approval(approvals) is None:
+            blocker = _external_action_blocker(actions)
+            if blocker:
+                return "blocked", blocker
+            return "awaiting_finalization", "All tasks reached a terminal state. Ready to finalize."
+    approvals_by_id = {approval.id: approval for approval in approvals}
+    completed_ids = {task.id for task in tasks if task.status == "completed"}
+    for task in tasks:
+        if task.status not in ("not_started", "failed") or not task.approval_gate_id:
+            continue
+        approval = approvals_by_id.get(task.approval_gate_id)
+        if approval is not None and approval.status == "pending":
+            if completed_ids.issuperset(edges.get(task.id, ())):
+                return "waiting_approval", f"Waiting for approval: {approval.title}."
+    if any(approval.status == "rejected" for approval in approvals):
+        return "blocked", "A rejected approval may block remaining tasks."
+    return "ready", None
+
+
 @router.post(
     "/businesses/{business_id}/briefs/{brief_id}/finalize",
     response_model=FinalizeResponse,
@@ -509,6 +587,7 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
             raise HTTPException(status_code=500, detail="Brief state unclear.")
         tasks = await _tasks.list_for_project(session, business_id, project_id)
         approvals = await _approvals.list_for_project(session, business_id, project_id)
+        external_actions = await _integration_actions.report_facts(session, business_id, project_id)
         facts = {
             "goal": goal,
             "tasks": [
@@ -525,41 +604,23 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
     # Pre-LLM eligibility: refuse early without spending the generation
     # budget. Revalidated inside the transaction — races re-check there.
     _require_finalizable(tasks, approvals)
-    try:
-        provider = create_provider(settings)
-    except LlmError as exc:
-        raise _provider_error_to_http(exc) from exc
-    # Project-scoped: the brief already has a project, so this call is
-    # budget-enforced (fail closed on unpriced budgets unless opted in).
-    meter = TeamLeadMeter(
-        factory,
-        settings,
-        business_id=business_id,
-        brief_id=brief_id,
-        call_kind=UsageCallKind.BRIEF_FINALIZE.value,
-        project_id=project_id,
-    )
-    try:
-        result = await generate_finalization(provider, settings, facts, meter=meter)
-    except MeteringRefused as exc:
-        raise _metering_error_to_http(exc) from exc
-    except BriefGenerationError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "validation_error",
-                "message": "Model output failed validation.",
-                "details": exc.violations,
-            },
-        ) from exc
-    except LlmError as exc:
-        raise _provider_error_to_http(exc) from exc
+    if external_actions:
+        facts["external_actions"] = external_actions
+        try:
+            result = _external_action_report(facts)
+        except FinalizeNotEligible as exc:
+            raise HTTPException(
+                status_code=409, detail={"code": "conflict", "message": str(exc)}
+            ) from exc
+    else:
+        result = await _generate_report(factory, settings, business_id, brief_id, project_id, facts)
     try:
         async with factory() as session:
             async with session.begin():
-                outcome = await _finalizing.finalize(session, business_id, brief_id, result=result)
+                outcome = await _finalizing.finalize(
+                    session, business_id, brief_id, result=result, external_actions=external_actions
+                )
                 if outcome is None:
-                    # Lost the race or vanished: roll back, re-read below.
                     raise _FinalizeRaceLost()
                 envelope, _, _ = outcome
                 response = _finalize_response(envelope, brief_id, settings.contract_version)
@@ -571,16 +632,11 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
     except _FinalizeRaceLost:
         pass
     except IntegrityError as exc:
-        # Unreachable after validation + scoped checks; fail closed.
         raise HTTPException(status_code=500, detail="Brief could not be finalized.") from exc
     except Exception as exc:
-        # Fail closed with a fixed safe message (never leak internals).
-        # CancelledError is BaseException, not Exception: cancellation still
-        # propagates untouched and stores nothing.
         raise HTTPException(status_code=500, detail="Brief could not be finalized.") from exc
     else:
         return response
-    # CAS lost: a concurrent finalization won — re-read under scope, never assume.
     async with factory() as session:
         current = await _briefs.get(session, business_id, brief_id)
         if current is None:
@@ -596,27 +652,111 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
         )
 
 
+async def _generate_report(factory, settings, business_id, brief_id, project_id, facts) -> dict:
+    try:
+        provider = create_provider(settings)
+    except LlmError as exc:
+        raise _provider_error_to_http(exc) from exc
+    # Project-scoped: the brief already has a project, so this call is
+    # budget-enforced (fail closed on unpriced budgets unless opted in).
+    meter = TeamLeadMeter(
+        factory,
+        settings,
+        business_id=business_id,
+        brief_id=brief_id,
+        call_kind=UsageCallKind.BRIEF_FINALIZE.value,
+        project_id=project_id,
+    )
+    try:
+        return await generate_finalization(provider, settings, facts, meter=meter)
+    except MeteringRefused as exc:
+        raise _metering_error_to_http(exc) from exc
+    except BriefGenerationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "validation_error",
+                "message": "Model output failed validation.",
+                "details": exc.violations,
+            },
+        ) from exc
+    except LlmError as exc:
+        raise _provider_error_to_http(exc) from exc
+
+
+_EXTERNAL_ACTION_OUTCOMES = {
+    IntegrationActionStatus.SUCCEEDED: "Provider confirmed the action.",
+    IntegrationActionStatus.FAILED: "Action failed. Provider success was not confirmed.",
+    IntegrationActionStatus.REJECTED: "Action was rejected before dispatch.",
+    IntegrationActionStatus.UNKNOWN: "Provider outcome is uncertain. Delivery is unconfirmed.",
+}
+
+
+def _external_action_blocker(actions) -> str | None:
+    for action in actions:
+        if action["status"] not in _EXTERNAL_ACTION_OUTCOMES:
+            return (
+                f"External action {action['id']} is {action['status']}. "
+                "Resolve dispatch before finalizing."
+            )
+    return None
+
+
+def _external_action_report(facts: dict) -> dict:
+    actions = facts["external_actions"]
+    blocker = _external_action_blocker(actions)
+    if blocker:
+        raise FinalizeNotEligible(blocker)
+    limitations = [
+        f"{action['capability']} ({action['id']}): {_EXTERNAL_ACTION_OUTCOMES[action['status']]}"
+        for action in actions
+    ]
+    # Task/model prose can conflate an approval with provider success. Render
+    # the report from persisted states alone when a project has external writes.
+    return {
+        "report": {
+            "goal": facts["goal"],
+            "completed_tasks": [
+                {"id": task["id"], "title": task["title"], "summary": "Task completed."}
+                for task in facts["tasks"]
+                if task["status"] == "completed"
+            ],
+            "failed_tasks": [
+                {"id": task["id"], "title": task["title"], "reason": "Task failed."}
+                for task in facts["tasks"]
+                if task["status"] == "failed"
+            ],
+            "limitations": limitations,
+            "recommendations": [],
+            "external_actions": facts["external_actions"],
+        },
+        "learnings": [],
+    }
+
+
 class _FinalizeRaceLost(Exception):
     """Internal signal: CAS lost, roll back and re-read the brief."""
 
 
+def _unfinished_task(tasks):
+    return next((task for task in tasks if task.status not in ("completed", "failed")), None)
+
+
+def _undecided_approval(approvals):
+    return next(
+        (approval for approval in approvals if approval.status not in ("approved", "rejected")),
+        None,
+    )
+
+
 def _require_finalizable(tasks, approvals) -> None:
     """Pre-LLM terminal-state check; revalidated in-transaction at commit."""
-    for task in tasks:
-        if task.status not in ("completed", "failed"):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "conflict",
-                    "message": f"Task {task.id} is {task.status}, not terminal.",
-                },
-            )
-    for approval in approvals:
-        if approval.status not in ("approved", "rejected"):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "conflict",
-                    "message": f"Approval {approval.id} is {approval.status}, not terminal.",
-                },
-            )
+    task = _unfinished_task(tasks)
+    approval = _undecided_approval(approvals)
+    if task is not None:
+        message = f"Task {task.id} is {task.status}, not terminal."
+    elif approval is not None:
+        message = f"Approval {approval.id} is {approval.status}, not terminal."
+    else:
+        return
+    raise HTTPException(status_code=409, detail={"code": "conflict", "message": message})

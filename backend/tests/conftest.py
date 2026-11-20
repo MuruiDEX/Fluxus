@@ -23,6 +23,9 @@ from app.persistence.engine import create_engine_from_url, session_factory
 from tests._pg_test_urls import database_url, select_pg_base_url
 
 TABLES = (
+    "integration_actions",
+    "integration_oauth_states",
+    "integration_connections",
     "usage_reconciliations",
     "usage_records",
     "budget_reservations",

@@ -54,6 +54,7 @@ from app.execution.prompts import (
     build_user_prompt,
     fit_envelope,
 )
+from app.integrations import bootstrap as _integration_bootstrap  # noqa: F401
 from app.llm.base import LlmProvider
 from app.llm.types import (
     BadResponseError,

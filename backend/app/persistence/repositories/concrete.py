@@ -115,6 +115,18 @@ class BusinessRepository(BaseRepository[Business]):
 class AgentRepository(BaseRepository[Agent]):
     model = Agent
 
+    async def list_assignable(self, session: AsyncSession, business_id: str) -> list[Agent]:
+        from sqlalchemy import select
+
+        # Match require_active, filtering before the planning roster limit.
+        rows = await session.scalars(
+            select(Agent)
+            .where(Agent.business_id == business_id, Agent.hired.is_(True))
+            .order_by(Agent.id)
+            .limit(200)
+        )
+        return list(rows)
+
     async def create(self, session: AsyncSession, business_id: str, data: dict[str, Any]) -> Agent:
         payload = dict(data)
         raw_id = payload.get("id")
@@ -909,6 +921,16 @@ class BrainRepository(BaseRepository[BrainEntry]):
 class BriefRepository(BaseRepository[Brief]):
     model = Brief
 
+    async def get_for_project(
+        self, session: AsyncSession, business_id: str, project_id: str
+    ) -> Brief | None:
+        from sqlalchemy import select
+
+        rows = await session.scalars(
+            select(Brief).where(Brief.business_id == business_id, Brief.project_id == project_id)
+        )
+        return rows.one_or_none()
+
     async def create(self, session: AsyncSession, business_id: str, data: dict[str, Any]) -> Brief:
         payload = dict(data)
         raw_id = payload.get("id")
@@ -1142,7 +1164,13 @@ class FinalizationRepository:
     _TERMINAL_APPROVALS = ("approved", "rejected")
 
     async def finalize(
-        self, session: AsyncSession, business_id: str, brief_id: str, *, result: dict
+        self,
+        session: AsyncSession,
+        business_id: str,
+        brief_id: str,
+        *,
+        result: dict,
+        external_actions: list[dict] | None = None,
     ) -> tuple[dict, list[BrainEntry], ActivityEvent] | None:
         briefs = BriefRepository()
         brief = await briefs.get(session, business_id, brief_id)
@@ -1168,6 +1196,13 @@ class FinalizationRepository:
                 raise FinalizeNotEligible(
                     f"Approval {approval.id} is {approval.status}, not terminal."
                 )
+        from app.integrations.repositories import IntegrationActionRepository
+
+        current_actions = await IntegrationActionRepository().report_facts(
+            session, business_id, project.id
+        )
+        if current_actions != (external_actions or []):
+            raise FinalizeNotEligible("External actions changed. Refresh and try again.")
         brains: list[BrainEntry] = []
         for learning in result["learnings"]:
             brains.append(
@@ -1184,9 +1219,8 @@ class FinalizationRepository:
             )
         completed = sum(1 for t in tasks if t.status == "completed")
         # Snapshot semantics (Stage 16.1): the metering layer settles the
-        # finalize call BEFORE this transaction, so `ai_spent` (confirmed only,
-        # task-linked + task-less project-scoped) already includes it. Estimated
-        # cost is reported separately and never folded into ai_spent.
+        # finalize call, when used, BEFORE this transaction, so `ai_spent`
+        # includes it. Estimated cost is tracked separately.
         from app.persistence.repositories.usage import UsageRepository
 
         status_totals = await UsageRepository().totals_by_status(
@@ -1200,7 +1234,7 @@ class FinalizationRepository:
             "ai_estimated": str(ai_estimated),
             "note": (
                 "Confirmed AI spend from the usage ledger (task-linked plus "
-                "project-scoped Team Lead calls, including this finalization). "
+                "project-scoped Team Lead calls). "
                 "Estimated cost is tracked separately and never presented as "
                 "confirmed spend."
             ),
@@ -1274,6 +1308,16 @@ class UserRepository:
 
 class MembershipRepository:
     """Access links user ↔ business. All reads filter by caller side."""
+
+    async def lock_owner(self, session: AsyncSession, user_id: str, business_id: str) -> bool:
+        from sqlalchemy import select
+
+        role = await session.scalar(
+            select(Membership.role)
+            .where(Membership.user_id == user_id, Membership.business_id == business_id)
+            .with_for_update()
+        )
+        return role == "owner"
 
     async def businesses_of(self, session: AsyncSession, user_id: str) -> list[Membership]:
         from sqlalchemy import select

@@ -22,16 +22,21 @@ import {
   apiActivateAgent,
   apiAnswerBrief,
   apiApproveApproval,
+  apiConnectIntegration,
   apiCreateBrain,
   apiCreateBrief,
   apiDisableAgent,
+  apiDisconnectIntegration,
   apiGetAgent,
   apiGetApproval,
   apiGetBusiness,
+  apiGetIntegrationConnection,
   apiGetListing,
   apiGetProject,
   apiGetTask,
   apiHireAgent,
+  apiListIntegrationConnections,
+  apiListIntegrationProviders,
   apiListActivity,
   apiListAgents,
   apiListApprovals,
@@ -347,6 +352,52 @@ const CASES: ClientCase[] = [
     fields: ["briefId", "project", "tasks", "approvals", "contract"],
     money: [],
   },
+  {
+    name: "apiListIntegrationProviders",
+    call: () => apiListIntegrationProviders(DUMMY),
+    template: "/api/v1/businesses/{business_id}/integrations/providers",
+    schema: "IntegrationProviderListResponse",
+    fields: ["providers", "contract"],
+    money: [],
+  },
+  {
+    name: "apiListIntegrationConnections",
+    call: () => apiListIntegrationConnections(DUMMY),
+    template: "/api/v1/businesses/{business_id}/integrations",
+    schema: "IntegrationConnectionListResponse",
+    fields: ["connections", "contract"],
+    money: [],
+  },
+  {
+    name: "apiGetIntegrationConnection",
+    call: () => apiGetIntegrationConnection(DUMMY, DUMMY),
+    template: "/api/v1/businesses/{business_id}/integrations/{connection_id}",
+    schema: "IntegrationConnectionResponse",
+    fields: [
+      "id", "provider", "providerName", "externalAccountId", "displayName",
+      "status", "health", "scopes", "capabilities", "expiresAt",
+      "lastRefreshedAt", "lastError", "canWrite", "contract",
+    ],
+    money: [],
+  },
+  {
+    name: "apiConnectIntegration",
+    call: () => apiConnectIntegration(DUMMY, DUMMY, true),
+    method: "POST",
+    template: "/api/v1/businesses/{business_id}/integrations/{provider}/connect",
+    schema: "IntegrationConnectResponse",
+    fields: ["authorizationUrl", "provider", "scopes", "expiresAt", "contract"],
+    money: [],
+  },
+  {
+    name: "apiDisconnectIntegration",
+    call: () => apiDisconnectIntegration(DUMMY, DUMMY),
+    method: "DELETE",
+    template: "/api/v1/businesses/{business_id}/integrations/{connection_id}",
+    schema: "IntegrationDisconnectResponse",
+    fields: ["outcome", "connectionId", "contract"],
+    money: [],
+  },
 ];
 
 // Item shapes are covered through their list/single endpoints above; this
@@ -375,12 +426,35 @@ const ITEM_SCHEMAS: Record<string, { fields: string[]; money: string[] }> = {
     money: ["confirmedCost", "estimatedCost"],
   },
   UsageReservationSummary: {
-    fields: ["active", "ambiguous", "consumed", "released", "writtenOff"],
-    money: ["active", "ambiguous", "consumed", "released", "writtenOff"],
+    fields: ["active", "ambiguous", "consumed", "released", "writtenOff", "reconciled"],
+    money: ["active", "ambiguous", "consumed", "released", "writtenOff", "reconciled"],
   },
   UsageSummary: {
     fields: ["confirmedCost", "estimatedCost", "unknownCount", "byCallKind", "reservations"],
     money: ["confirmedCost", "estimatedCost"],
+  },
+  IntegrationCapabilityResponse: {
+    fields: ["id", "title", "risk"],
+    money: [],
+  },
+  IntegrationProviderResponse: {
+    fields: [
+      "id", "name", "description", "docsUrl", "readScopes", "writeScopes",
+      "capabilities", "configured", "missingConfiguration", "contract",
+    ],
+    money: [],
+  },
+  IntegrationConnectionCapabilityResponse: {
+    fields: ["id", "title", "risk", "granted"],
+    money: [],
+  },
+  IntegrationConnectionResponse: {
+    fields: [
+      "id", "provider", "providerName", "externalAccountId", "displayName",
+      "status", "health", "scopes", "capabilities", "expiresAt",
+      "lastRefreshedAt", "lastError", "canWrite", "contract",
+    ],
+    money: [],
   },
 };
 

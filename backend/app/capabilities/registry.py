@@ -152,6 +152,29 @@ CAPABILITIES: tuple[CapabilitySpec, ...] = (
 
 _BY_ID: dict[str, CapabilitySpec] = {spec.id: spec for spec in CAPABILITIES}
 _ALIAS_TO_IDS: dict[str, tuple[str, ...]] = {}
+# Provider-contributed capabilities register here at composition time
+# (`app.integrations.bootstrap`). Core capabilities stay static and ordered.
+_EXTRA_SPECS: list[CapabilitySpec] = []
+_CORE_CAPABILITIES: tuple[CapabilitySpec, ...] = CAPABILITIES
+
+
+def _rebuild_indexes() -> None:
+    global CAPABILITIES
+    CAPABILITIES = (*_CORE_CAPABILITIES, *_EXTRA_SPECS)
+    _BY_ID.clear()
+    _ALIAS_TO_IDS.clear()
+    for spec in CAPABILITIES:
+        _BY_ID[spec.id] = spec
+        alias_keys = [normalize_grant(alias) for alias in spec.aliases]
+        alias_keys.append(normalize_grant(spec.id))
+        for key in alias_keys:
+            if not key:
+                continue
+            existing = _ALIAS_TO_IDS.get(key, ())
+            if spec.id not in existing:
+                _ALIAS_TO_IDS[key] = (*existing, spec.id)
+
+
 for _spec in CAPABILITIES:
     _alias_keys = [normalize_grant(alias) for alias in _spec.aliases]
     _alias_keys.append(normalize_grant(_spec.id))
@@ -161,6 +184,24 @@ for _spec in CAPABILITIES:
         _existing = _ALIAS_TO_IDS.get(_key, ())
         if _spec.id not in _existing:
             _ALIAS_TO_IDS[_key] = (*_existing, _spec.id)
+
+
+def register_capabilities(specs: list[CapabilitySpec] | tuple[CapabilitySpec, ...]) -> None:
+    """Add provider capabilities without touching the core registry.
+
+    Idempotent by canonical id. Registration is composition-time only (module
+    import); execution never mutates the registry.
+    """
+    changed = False
+    for spec in specs:
+        if any(existing.id == spec.id for existing in _EXTRA_SPECS):
+            continue
+        if spec.id in _BY_ID:
+            raise ValueError(f"capability id already registered: {spec.id}")
+        _EXTRA_SPECS.append(spec)
+        changed = True
+    if changed:
+        _rebuild_indexes()
 
 
 def get_spec(capability_id: str) -> CapabilitySpec | None:
@@ -202,5 +243,6 @@ __all__ = [
     "CAPABILITIES",
     "get_spec",
     "normalize_grant",
+    "register_capabilities",
     "resolve_grants",
 ]

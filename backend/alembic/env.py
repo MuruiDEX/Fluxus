@@ -24,6 +24,7 @@ from app.persistence.models import (  # noqa: F401
     brain_entry,
     brief,
     business,
+    integration,
     marketplace_listing,
     membership,
     pack,

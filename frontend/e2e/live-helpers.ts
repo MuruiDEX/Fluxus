@@ -55,6 +55,12 @@ export async function sidebarGo(page: Page, name: string, url: RegExp) {
   await expect(page).toHaveURL(url);
 }
 
+export function liveCard(page: Page, title: string) {
+  return page.locator("main .grid > div").filter({
+    has: page.getByText(title, { exact: true }),
+  });
+}
+
 /**
  * Reuse the saved session when valid; fall back to a full UI login when the
  * spec runs standalone (empty state file) or the session lapsed. Keeps

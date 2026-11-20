@@ -17,6 +17,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.integrations.repositories import (
+    IntegrationActionRepository,
+    IntegrationConnectionRepository,
+)
 from app.llm.mock import MockProvider
 from app.llm.types import ProviderError
 from app.persistence.repositories.concrete import (
@@ -24,6 +28,7 @@ from app.persistence.repositories.concrete import (
     ApprovalRepository,
     BrainRepository,
     BriefRepository,
+    MembershipRepository,
     TaskRepository,
 )
 from app.persistence.repositories.usage import UsageRepository
@@ -52,6 +57,10 @@ GOAL = "Grow fast"
 
 def _final_url(brief_id: str, biz: str = BIZ) -> str:
     return f"{_brief_url(biz)}/{brief_id}/finalize"
+
+
+def _workflow_url(project_id: str, biz: str = BIZ) -> str:
+    return f"/api/v1/businesses/{biz}/projects/{project_id}/workflow"
 
 
 def _final_text(
@@ -159,6 +168,106 @@ async def _brief_row(session: AsyncSession, brief_id: str):
     row = await _briefs.get(session, BIZ, brief_id)
     assert row is not None
     return row
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("failed", "Action failed"),
+        ("unknown", "Delivery is unconfirmed"),
+        ("succeeded", "Provider confirmed"),
+        ("executing", "Resolve dispatch before finalizing"),
+        ("pending", "Resolve dispatch before finalizing"),
+    ],
+)
+async def test_finalization_reports_external_action_state(
+    session: AsyncSession,
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    expected: str,
+) -> None:
+    headers = await _authed(session, api_client)
+    brief_id, project_id, tasks, approvals = await _make_planned(api_client, headers, monkeypatch)
+    await _settle(session, tasks, approvals)
+    connection = await IntegrationConnectionRepository().create(
+        session, BIZ, {"provider": "gmail", "external_account_id": "mailbox@example.test"}
+    )
+    action = await IntegrationActionRepository().create(
+        session,
+        BIZ,
+        {
+            "project_id": project_id,
+            "approval_id": approvals[0]["id"],
+            "task_id": tasks[0]["id"],
+            "connection_id": connection.id,
+            "capability": "gmail.messages.send",
+            "status": status,
+            "payload_encrypted": "opaque-private-payload",
+        },
+    )
+    await session.commit()
+    workflow = await api_client.get(_workflow_url(project_id), headers=headers)
+    assert workflow.status_code == 200, workflow.text
+    expected_phase = "blocked" if status in {"pending", "executing"} else "awaiting_finalization"
+    assert workflow.json()["phase"] == expected_phase
+    if expected_phase == "blocked":
+        assert expected in workflow.json()["message"]
+    response = await api_client.post(_final_url(brief_id), headers=headers)
+    if status in {"pending", "executing"}:
+        assert response.status_code == 409, response.text
+        assert expected in response.json()["error"]["message"]
+        assert (await _brief_row(session, brief_id)).status == "planned"
+        return
+    assert response.status_code == 200, response.text
+    report = response.json()["report"]
+    assert report["external_actions"][0]["status"] == status
+    assert report["external_actions"][0]["id"] == action.id
+    assert expected in report["limitations"][0]
+    assert "opaque-private-payload" not in response.text
+    assert (await _brief_row(session, brief_id)).status == "completed"
+
+
+async def test_project_workflow_restores_brief_and_final_report(
+    session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = await _authed(session, api_client)
+    brief_id, project_id, tasks, approvals = await _make_planned(api_client, headers, monkeypatch)
+    url = _workflow_url(project_id)
+    standalone = await api_client.get(_workflow_url("proj_1"), headers=headers)
+    assert standalone.status_code == 200 and standalone.json()["briefId"] is None
+
+    ready = await api_client.get(url, headers=headers)
+    assert ready.json()["briefId"] == brief_id and ready.json()["phase"] == "ready"
+    await _tasks.update(session, BIZ, tasks[0]["id"], {"status": "working"})
+    await session.commit()
+    assert (await api_client.get(url, headers=headers)).json()["phase"] == "running"
+
+    await _tasks.update(session, BIZ, tasks[0]["id"], {"status": "completed"})
+    await session.commit()
+    assert (await api_client.get(url, headers=headers)).json()["phase"] == "waiting_approval"
+    assert await _approvals.decide(session, BIZ, approvals[0]["id"], to_status="rejected")
+    await session.commit()
+    assert (await api_client.get(url, headers=headers)).json()["phase"] == "blocked"
+
+    await _tasks.update(session, BIZ, tasks[1]["id"], {"status": "failed"})
+    await session.commit()
+    assert (await api_client.get(url, headers=headers)).json()["phase"] == "awaiting_finalization"
+    provider = MockProvider(texts=[_final_text(tasks, failed_ids={tasks[1]["id"]})])
+    _mocked(monkeypatch, provider)
+    result = await api_client.post(_final_url(brief_id), headers=headers)
+    assert result.status_code == 200, result.text
+    restored = await api_client.get(url, headers=headers)
+    assert restored.json()["phase"] == "finalized"
+    assert restored.json()["finalization"] == result.json()
+    assert (await api_client.post(_final_url(brief_id), headers=headers)).json() == result.json()
+    assert len(provider.calls) == 1
+
+    await make_business(session, BIZ_OTHER)
+    await MembershipRepository().grant(session, "u_operator", BIZ_OTHER)
+    await session.commit()
+    foreign = await api_client.get(_workflow_url(project_id, BIZ_OTHER), headers=headers)
+    assert foreign.status_code == 404
 
 
 def test_final_prompt_contains_facts_not_secrets() -> None:

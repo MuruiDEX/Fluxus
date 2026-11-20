@@ -21,6 +21,7 @@ from app.llm.mock import MockProvider
 from app.llm.types import ProviderError
 from app.persistence.models.task import TaskDependency
 from app.persistence.repositories.concrete import (
+    AgentRepository,
     ApprovalRepository,
     ProjectRepository,
     TaskRepository,
@@ -35,6 +36,7 @@ from tests.test_briefs import ANSWERS, SUMMARY_TEXT, VALID_TEXT, _authed, _brief
 _projects = ProjectRepository()
 _tasks = TaskRepository()
 _approvals = ApprovalRepository()
+_agents = AgentRepository()
 
 PLAN_TEXT = _json.dumps(
     {
@@ -102,6 +104,55 @@ async def _make_plannable(
 async def _edge_count(session: AsyncSession) -> int:
     res = await session.execute(select(func.count()).select_from(TaskDependency))
     return int(res.scalar_one())
+
+
+@pytest.mark.parametrize("eligible", [True, False])
+async def test_plan_sends_only_assignable_business_roster(
+    session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+    eligible: bool,
+) -> None:
+    headers = await _authed(session, api_client)
+    await make_agent(session, "ag_disabled", hired=False)
+    await make_business(session, BIZ_OTHER)
+    await make_agent(session, "ag_foreign", biz_id=BIZ_OTHER)
+    await _agents.set_hired(session, BIZ, "ag_1", eligible)
+    await session.commit()
+    brief_id, provider = await _make_plannable(api_client, headers, monkeypatch)
+
+    response = await api_client.post(_plan_url(brief_id), headers=headers)
+    if not eligible:
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "no_eligible_agents"
+        assert provider.calls == []
+        return
+    assert response.status_code == 200, response.text
+    assert len(provider.calls) == 1
+    prompt = provider.calls[0].messages[-1].content
+    assert "ag_1" in prompt
+    assert "ag_disabled" not in prompt
+    assert "ag_foreign" not in prompt
+
+
+async def test_plan_revalidates_agent_deactivated_during_generation(
+    session: AsyncSession, api_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = await _authed(session, api_client)
+    brief_id, _ = await _make_plannable(api_client, headers, monkeypatch)
+
+    class DeactivateDuringPlan(MockProvider):
+        async def complete(self, request):
+            await _agents.set_hired(session, BIZ, "ag_1", False)
+            await session.commit()
+            return await super().complete(request)
+
+    provider = DeactivateDuringPlan(texts=[PLAN_TEXT])
+    _mocked(monkeypatch, provider)
+    response = await api_client.post(_plan_url(brief_id), headers=headers)
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "agent_disabled"
+    brief = await api_client.get(f"{_brief_url()}/{brief_id}", headers=headers)
+    assert brief.json()["status"] == "brief_ready"
+    assert brief.json()["projectId"] is None
 
 
 def test_plan_prompt_contains_roster_not_secrets() -> None:

@@ -11,11 +11,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { apiFinalizeBrief, setCsrfToken, type ApiFinalize } from "@/lib/api";
+import { apiFinalizeBrief, apiGetProjectWorkflow, setCsrfToken, type ApiFinalize } from "@/lib/api";
 import {
   FinalizeSection,
   FinalReportView,
   describeFinalize,
+  finalizeProjectBrief,
+  PlanDriverPanel,
   shareFlight,
 } from "@/components/system/PlanDriver";
 
@@ -95,6 +97,45 @@ describe("apiFinalizeBrief client", () => {
     const err = await apiFinalizeBrief("biz_test", "brief_1").catch((e) => e);
     expect(err.code).toBe("conflict");
     expect(String(err.message)).toContain("not terminal");
+  });
+});
+
+describe("persisted project workflow", () => {
+  it("reads the report by business and project without a brief ID or a POST", async () => {
+    const report = finalizeJson();
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => jsonResponse(200, {
+      briefId: report.briefId, phase: "finalized", message: null, finalization: report, contract: "v1",
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const workflow = await apiGetProjectWorkflow("biz_test", "proj_1");
+    expect(workflow.finalization).toEqual(report);
+    expect(fetch.mock.calls[0][0]).toMatch(/\/businesses\/biz_test\/projects\/proj_1\/workflow$/);
+    expect(fetch.mock.calls[0][1]?.method).toBe("GET");
+  });
+
+  it("offers finalization from restored readiness and respects a blocked action", () => {
+    const props = { businessId: "biz_test", projectId: "proj_1" };
+    const workflow = {
+      briefId: "brief_1", phase: "awaiting_finalization",
+      message: "All tasks reached a terminal state.", finalization: null, contract: "v1",
+    } as const;
+    const ready = renderToStaticMarkup(createElement(PlanDriverPanel, { ...props, workflow }));
+    expect(ready).toContain("Finalize brief");
+    const blocked = renderToStaticMarkup(createElement(PlanDriverPanel, {
+      ...props, workflow: { ...workflow, phase: "blocked", message: "Resolve dispatch before finalizing." },
+    }));
+    expect(blocked).not.toContain("Finalize brief");
+    expect(blocked).toContain("Resolve dispatch before finalizing.");
+  });
+
+  it("shares concurrent finalization only within the same business and brief", async () => {
+    const fetch = vi.fn(async () => jsonResponse(200, finalizeJson()));
+    vi.stubGlobal("fetch", fetch);
+    setCsrfToken("csrf-1");
+    const first = finalizeProjectBrief("biz_test", "brief_1");
+    expect(finalizeProjectBrief("biz_test", "brief_1")).toBe(first);
+    await Promise.all([first, finalizeProjectBrief("biz_other", "brief_1")]);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
 

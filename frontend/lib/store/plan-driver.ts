@@ -25,9 +25,8 @@
  *   in `waiting_approval` until a human decides (on the Approvals page).
  * - Stop is honest: it halts the CLIENT loop and the client wait only. A
  *   server run already started keeps going; the label says so.
- * - Brief lifecycle is read-only here: a `completed` brief executes nothing;
- *   all tasks `completed` ends in `awaiting_finalization` — finalization
- *   (report/Brain) is a later stage, never fabricated here.
+ * - Brief lifecycle is read-only here: a completed brief executes nothing.
+ *   Terminal graphs return control to the server-backed finalization panel.
  * - DEMO ban: runs only with an authenticated session whose membership list
  *   contains the target business. The DEMO sim engine is untouched.
  */
@@ -219,16 +218,23 @@ function isTransient(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 0 || err.status >= 500);
 }
 
-async function listSnapshot(businessId: string, projectId: string): Promise<Snapshot> {
+async function listSnapshot(
+  businessId: string,
+  projectId: string,
+  alive: () => boolean,
+): Promise<Snapshot> {
   let last: unknown = null;
   for (let attempt = 0; attempt < LIST_RETRIES; attempt += 1) {
+    if (!alive()) throw new DOMException("Driver stopped", "AbortError");
     try {
       const [taskPage, approvalPage] = await Promise.all([
         apiListTasks(businessId, projectId, { limit: 200 }),
         apiListApprovals(businessId, { limit: 200 }),
       ]);
-      for (const t of taskPage.items) {
-        useLiveTasks.getState().upsertTask(toDomainTask(t));
+      if (!alive()) throw new DOMException("Driver stopped", "AbortError");
+      const tasks = useLiveTasks.getState();
+      if (tasks.key === `${businessId}/${projectId}`) {
+        for (const t of taskPage.items) tasks.upsertTask(toDomainTask(t));
       }
       const proj = useLiveProject.getState();
       if (proj.key === `${businessId}/${projectId}`) {
@@ -236,7 +242,10 @@ async function listSnapshot(businessId: string, projectId: string): Promise<Snap
         // project and unmounts the mounted detail view (including this
         // driver). Apply the server-confirmed row in place instead.
         try {
-          proj.replace(toDomainProject(await apiGetProject(businessId, projectId)));
+          const fresh = await apiGetProject(businessId, projectId);
+          if (alive() && useLiveProject.getState().key === `${businessId}/${projectId}`) {
+            proj.replace(toDomainProject(fresh));
+          }
         } catch {
           // Best effort: the tasks below are the snapshot payload; the
           // header refreshes on the next poll.
@@ -292,6 +301,10 @@ async function driveWork(
       const brief = await apiGetBrief(businessId, briefId);
       if (!alive()) return;
       briefStatus = brief.status;
+      if (brief.projectId !== projectId || brief.businessId !== businessId) {
+        finish({ phase: "error", message: "Brief does not belong to this project.", errorCode: "conflict" });
+        return;
+      }
       if (brief.status === "completed") {
         finish({
           phase: "awaiting_finalization",
@@ -330,7 +343,7 @@ async function driveWork(
     if (!alive()) return;
     let snap: Snapshot;
     try {
-      snap = await listSnapshot(businessId, projectId);
+      snap = await listSnapshot(businessId, projectId, alive);
     } catch (err) {
       if (isAbortError(err) || !alive()) return;
       finish({
@@ -348,15 +361,23 @@ async function driveWork(
     const c = classifyScope(snap.tasks, snap.approvals);
     const base = { briefStatus, total: c.total, completed: c.completed, currentTaskId: null as string | null, waitingApprovalId: null as string | null };
 
-    if (c.total === 0) {
+    if (c.total === 0 && briefId === undefined) {
       finish({ ...base, phase: "blocked", message: "No tasks in this project.", errorCode: null });
       return;
     }
-    if (c.completed === c.total) {
+    const tasksTerminal = briefId === undefined
+      ? c.completed === c.total
+      : snap.tasks.every((task) => task.status === "completed" || task.status === "failed");
+    const pendingDecision = briefId !== undefined && tasksTerminal
+      ? snap.approvals.find((approval) => approval.status === "pending")
+      : undefined;
+    if (tasksTerminal && !pendingDecision) {
       finish({
         ...base,
         phase: "awaiting_finalization",
-        message: "All tasks complete — finalization is pending and not done here.",
+        message: c.completed === c.total
+          ? "All tasks complete — finalization is pending and not done here."
+          : "All tasks reached a terminal state.",
         errorCode: null,
       });
       return;
@@ -375,7 +396,7 @@ async function driveWork(
       return;
     }
 
-    if (c.eligible !== null) {
+    if (c.eligible !== null && !pendingDecision) {
       const task = c.eligible;
       stuck.delete(task.id);
       finish({ ...base, phase: "running", currentTaskId: task.id, message: `Running ${task.title}…`, errorCode: null });
@@ -390,7 +411,8 @@ async function driveWork(
         if (!alive()) return;
         if (fresh.status === "failed") {
           const domain = toDomainTask(fresh);
-          useLiveTasks.getState().upsertTask(domain);
+          const tasks = useLiveTasks.getState();
+          if (tasks.key === key) tasks.upsertTask(domain);
           finish({
             ...base,
             phase: "failed",
@@ -406,8 +428,8 @@ async function driveWork(
       continue;
     }
 
-    if (c.waitingApproval !== null) {
-      const gate = c.waitingApproval;
+    const gate = pendingDecision ?? c.waitingApproval;
+    if (gate) {
       finish({
         ...base,
         phase: "waiting_approval",

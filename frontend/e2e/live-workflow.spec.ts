@@ -11,7 +11,7 @@
  * No sleeps: every step waits on concrete UI state.
  */
 import { expect, test } from "@playwright/test";
-import { login } from "./live-helpers";
+import { liveCard, login } from "./live-helpers";
 
 // One UI login per file (backend throttles repeated logins); the journey
 // reuses the saved session. Deleted by globalSetup before every run.
@@ -53,6 +53,7 @@ test.describe.serial("LIVE core workflow", () => {
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("Saved — server confirmed.")).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.getByText(EDITED_GOAL)).toBeVisible();
     await page.reload();
     await expect(page.getByText(EDITED_GOAL)).toBeVisible({ timeout: 30_000 });
@@ -61,12 +62,13 @@ test.describe.serial("LIVE core workflow", () => {
   test("task PATCH persists across reload", async ({ page }) => {
     await page.goto("/tasks");
     await expect(page.getByText("Run me honestly")).toBeVisible({ timeout: 30_000 });
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Run me honestly")`);
+    const card = liveCard(page, "Run me honestly");
     await card.getByRole("button", { name: "Edit" }).click();
     await page.getByLabel("Summary").fill(EDITED_SUMMARY);
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.getByText("Saved — server confirmed.")).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page.getByText(EDITED_SUMMARY)).toBeVisible();
     await page.reload();
     await expect(page.getByText(EDITED_SUMMARY)).toBeVisible({ timeout: 30_000 });
@@ -77,20 +79,20 @@ test.describe.serial("LIVE core workflow", () => {
   }) => {
     await page.goto("/tasks");
     await expect(page.getByText("Run me honestly")).toBeVisible({ timeout: 30_000 });
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Run me honestly")`);
+    const card = liveCard(page, "Run me honestly");
     await card.getByRole("button", { name: "Run", exact: true }).click();
     // The validating provider path returns a schema-valid result envelope,
     // so the run completes openly — asserted, never faked.
     await expect(card.getByText("Completed", { exact: true })).toBeVisible({ timeout: 90_000 });
     await page.reload();
-    const reloaded = page.locator(`main div.grid > div.rounded-2xl:has-text("Run me honestly")`);
+    const reloaded = liveCard(page, "Run me honestly");
     await expect(reloaded.getByText("Completed", { exact: true })).toBeVisible({ timeout: 30_000 });
   });
 
   test("gated task refuses while the gate is pending", async ({ page }) => {
     await page.goto("/tasks");
     await expect(page.getByText("Deploy workflow service")).toBeVisible({ timeout: 30_000 });
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Deploy workflow service")`);
+    const card = liveCard(page, "Deploy workflow service");
     await card.getByRole("button", { name: "Run", exact: true }).click();
     // The gate is enforced before any execution — even on a completed task.
     await expect(page.getByText(/Waiting for approval/)).toBeVisible({ timeout: 60_000 });
@@ -99,19 +101,19 @@ test.describe.serial("LIVE core workflow", () => {
   test("approval decision records and persists", async ({ page }) => {
     await page.goto("/approvals");
     await expect(page.getByText("Approve workflow deploy")).toBeVisible({ timeout: 30_000 });
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Approve workflow deploy")`);
+    const card = liveCard(page, "Approve workflow deploy");
     await card.getByRole("button", { name: "Approve", exact: true }).click();
     // The decided row leaves Pending for Approved (other files' pending
     // gates may remain — assert our card, not the empty state).
     await page.getByRole("button", { name: /Approved \(\d+\)/ }).click();
-    const decided = page.locator(`main div.grid > div.rounded-2xl:has-text("Approve workflow deploy")`);
+    const decided = liveCard(page, "Approve workflow deploy");
     await expect(decided.getByText(/Decided — recorded in the audit trail/)).toBeVisible({
       timeout: 30_000,
     });
     await expect(decided.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
     await page.reload();
     await page.getByRole("button", { name: /Approved \(\d+\)/ }).click();
-    const reloaded = page.locator(`main div.grid > div.rounded-2xl:has-text("Approve workflow deploy")`);
+    const reloaded = liveCard(page, "Approve workflow deploy");
     await expect(reloaded.getByText(/Decided — recorded in the audit trail/)).toBeVisible({
       timeout: 30_000,
     });
@@ -120,12 +122,12 @@ test.describe.serial("LIVE core workflow", () => {
   test("gated task runs after approval (gate open, run completes)", async ({ page }) => {
     await page.goto("/tasks");
     await expect(page.getByText("Deploy workflow service")).toBeVisible({ timeout: 30_000 });
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Deploy workflow service")`);
+    const card = liveCard(page, "Deploy workflow service");
     await card.getByRole("button", { name: "Run", exact: true }).click();
     // Gate open now: the run proceeds and completes on the valid result.
     await expect(card.getByText("Completed", { exact: true })).toBeVisible({ timeout: 90_000 });
     await page.reload();
-    const reloaded = page.locator(`main div.grid > div.rounded-2xl:has-text("Deploy workflow service")`);
+    const reloaded = liveCard(page, "Deploy workflow service");
     await expect(reloaded.getByText("Completed", { exact: true })).toBeVisible({ timeout: 30_000 });
   });
 
@@ -138,7 +140,7 @@ test.describe.serial("LIVE core workflow", () => {
     // finalization. Watching forever would time this out.
     await expect(page.getByText(/All tasks complete/)).toBeVisible({ timeout: 150_000 });
     await page.reload();
-    const card = page.locator(`main div.grid > div.rounded-2xl:has-text("Stuck workflow task")`);
+    const card = liveCard(page, "Stuck workflow task");
     // Task graph on the detail page renders the recovered row.
     await expect(page.getByText("Task graph")).toBeVisible({ timeout: 30_000 });
     await expect(card.getByText("Completed", { exact: true })).toBeVisible({ timeout: 30_000 });
@@ -149,9 +151,9 @@ test.describe.serial("LIVE core workflow", () => {
     await page.getByRole("link", { name: /E2E Done Project/ }).first().click();
     await expect(page.getByText("Task graph")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("plan-driver").getByRole("button", { name: "Start" }).click();
-    // No finalize section without a brief deep-link by design; the driver
-    // honestly reports the terminal graph instead of inventing one.
+    // This fixture is a standalone project with no linked brief.
     await expect(page.getByText(/finalization is pending/)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole("button", { name: "Finalize brief" })).toHaveCount(0);
   });
 
   test("manual Brain entry persists across reload", async ({ page }) => {

@@ -377,6 +377,7 @@ export interface ApiUsageReservationSummary {
   consumed: Money;
   released: Money;
   writtenOff: Money;
+  reconciled: Money;
 }
 
 export interface ApiUsageCallKindSummary {
@@ -805,6 +806,21 @@ export interface ApiFinalize {
   contract: string;
 }
 
+export interface ApiProjectWorkflow {
+  briefId: string | null;
+  phase: "ready" | "running" | "waiting_approval" | "blocked" | "awaiting_finalization" | "finalized";
+  message: string | null;
+  finalization: ApiFinalize | null;
+  contract: string;
+}
+
+export async function apiGetProjectWorkflow(businessId: string, projectId: string, opts?: RequestOpts) {
+  return api<ApiProjectWorkflow>(
+    `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/workflow`,
+    { signal: opts?.signal },
+  );
+}
+
 export async function apiFinalizeBrief(
   businessId: string,
   briefId: string,
@@ -1093,5 +1109,135 @@ export async function apiPatchTask(
   return api<ApiTask>(
     `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/tasks/${id(taskId)}`,
     { method: "PATCH", body: patch, signal: opts?.signal },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stage 19 external integrations (provider catalog + OAuth connections).
+// No token, code, or PKCE verifier has a field here by construction — the
+// wire never carries credentials, and OAuth completes over a browser redirect
+// handled by the backend.
+// ---------------------------------------------------------------------------
+
+export type IntegrationRisk = "read" | "write";
+
+export interface ApiIntegrationCapability {
+  id: string;
+  title: string;
+  risk: IntegrationRisk;
+}
+
+export interface ApiIntegrationProvider {
+  id: string;
+  name: string;
+  description: string;
+  docsUrl: string;
+  readScopes: string[];
+  writeScopes: string[];
+  capabilities: ApiIntegrationCapability[];
+  /** False when server-side OAuth env is absent; never imagined as ready. */
+  configured: boolean;
+  /** Names of missing server settings, e.g. ["google_client_id"]. */
+  missingConfiguration: string[];
+  contract: string;
+}
+
+export interface ApiIntegrationProviderList {
+  providers: ApiIntegrationProvider[];
+  contract: string;
+}
+
+export interface ApiIntegrationConnectionCapability extends ApiIntegrationCapability {
+  granted: boolean;
+}
+
+export interface ApiIntegrationConnection {
+  id: string;
+  provider: string;
+  providerName: string;
+  externalAccountId: string;
+  displayName: string;
+  status: "connected" | "revoked" | "error" | string;
+  health: "ok" | "degraded" | "needs_reconnect" | "revoked" | string;
+  scopes: string[];
+  capabilities: ApiIntegrationConnectionCapability[];
+  expiresAt: string | null;
+  lastRefreshedAt: string | null;
+  lastError: string;
+  /** True only when every write scope was actually granted. */
+  canWrite: boolean;
+  contract: string;
+}
+
+export interface ApiIntegrationConnectionList {
+  connections: ApiIntegrationConnection[];
+  contract: string;
+}
+
+export interface ApiIntegrationConnect {
+  authorizationUrl: string;
+  provider: string;
+  scopes: string[];
+  expiresAt: string;
+  contract: string;
+}
+
+export interface ApiIntegrationDisconnect {
+  outcome: "disconnected" | string;
+  connectionId: string;
+  contract: string;
+}
+
+export async function apiListIntegrationProviders(
+  businessId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiIntegrationProviderList>(
+    `/api/v1/businesses/${id(businessId)}/integrations/providers`,
+    { signal: opts?.signal },
+  );
+}
+
+export async function apiListIntegrationConnections(
+  businessId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiIntegrationConnectionList>(
+    `/api/v1/businesses/${id(businessId)}/integrations`,
+    { signal: opts?.signal },
+  );
+}
+
+export async function apiGetIntegrationConnection(
+  businessId: string,
+  connectionId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiIntegrationConnection>(
+    `/api/v1/businesses/${id(businessId)}/integrations/${id(connectionId)}`,
+    { signal: opts?.signal },
+  );
+}
+
+export async function apiConnectIntegration(
+  businessId: string,
+  provider: string,
+  includeWrites: boolean,
+  opts?: RequestOpts,
+) {
+  return api<ApiIntegrationConnect>(
+    `/api/v1/businesses/${id(businessId)}/integrations/${id(provider)}/connect`,
+    { method: "POST", body: { includeWrites }, signal: opts?.signal },
+  );
+}
+
+export async function apiDisconnectIntegration(
+  businessId: string,
+  connectionId: string,
+  opts?: RequestOpts,
+) {
+  return api<ApiIntegrationDisconnect>(
+    `/api/v1/businesses/${id(businessId)}/integrations/${id(connectionId)}`,
+    { method: "DELETE", signal: opts?.signal },
   );
 }
