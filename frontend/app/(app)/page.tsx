@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useUI } from "@/lib/store/app";
 import {
   useActivity,
@@ -32,6 +32,9 @@ import {
   SystemOverview,
 } from "@/components/dashboard/panels";
 import { Card, LiveBadge, PageHeader, PrimaryButton, Skeleton } from "@/components/system/ui";
+import { LiveSyncStatus } from "@/components/system/LiveSyncStatus";
+import { combineRefreshReports, hasActiveWork } from "@/lib/live/live-refresh";
+import { useLiveRefresh } from "@/lib/live/use-live-refresh";
 
 function DashboardSkeleton() {
   return (
@@ -201,6 +204,34 @@ function LiveDashboard({ businessId }: { businessId: string }) {
   const spendError = useLiveUsage((s) => s.error);
   const setCommandOpen = useUI((s) => s.setCommandOpen);
 
+  // One poller for the dashboard: the workflow rows (tasks, agents, approvals)
+  // on the fast cadence and the heavier collections every Nth tick. Ids are
+  // memoised so the refresh callbacks stay stable while data re-renders.
+  const projectIds = useMemo(() => projects.map((project) => project.id), [projects]);
+  const refreshFast = useCallback(
+    () =>
+      Promise.all([
+        useLiveTasks.getState().refreshAll(businessId, projectIds),
+        useLiveAgentsList.getState().refresh(businessId),
+        useLiveApprovals.getState().refresh(businessId),
+      ]).then(combineRefreshReports),
+    [businessId, projectIds],
+  );
+  const refreshSlow = useCallback(
+    () =>
+      Promise.all([
+        useLiveProjects.getState().refresh(businessId),
+        useLiveBusiness.getState().refresh(businessId),
+        useLiveActivity.getState().refresh({ businessId }),
+        useLiveUsage.getState().refresh({ businessId }),
+      ]).then(combineRefreshReports),
+    [businessId],
+  );
+  const sync = useLiveRefresh(Boolean(business), hasActiveWork(tasks, agents), {
+    fast: refreshFast,
+    slow: refreshSlow,
+  });
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -289,6 +320,7 @@ function LiveDashboard({ businessId }: { businessId: string }) {
 
   return (
     <>
+      <LiveSyncStatus {...sync} className="mb-1" />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <DashboardHero
           mode="live"

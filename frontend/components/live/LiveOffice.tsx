@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import {
   Card,
   LiveBadge,
@@ -10,6 +10,9 @@ import {
   Skeleton,
 } from "@/components/system/ui";
 import { WorkflowView } from "@/components/workflow/WorkflowView";
+import { LiveSyncStatus } from "@/components/system/LiveSyncStatus";
+import { combineRefreshReports, hasActiveWork } from "@/lib/live/live-refresh";
+import { useLiveRefresh } from "@/lib/live/use-live-refresh";
 import {
   loadLiveOfficeTasksForProject,
   retryLiveOfficeApprovals,
@@ -150,6 +153,33 @@ export function LiveOffice({ businessId }: { businessId: string }) {
     );
   }, [businessId, projectsBusinessId, selectedProjectId]);
 
+  // The office is the screen where agent states move, so tasks, agents and
+  // approvals are re-read on the fast cadence; projects and activity ride the
+  // slow one. Refreshes are in-place, so an update never blanks the workflow.
+  const refreshFast = useCallback(
+    () =>
+      Promise.all([
+        selectedProjectId === null
+          ? Promise.resolve({ outcome: "skipped" as const })
+          : useLiveTasks.getState().refresh(businessId, selectedProjectId),
+        useLiveAgentsList.getState().refresh(businessId),
+        useLiveApprovals.getState().refresh(businessId),
+      ]).then(combineRefreshReports),
+    [businessId, selectedProjectId],
+  );
+  const refreshSlow = useCallback(
+    () =>
+      Promise.all([
+        useLiveProjects.getState().refresh(businessId),
+        useLiveActivity.getState().refresh({ businessId }),
+      ]).then(combineRefreshReports),
+    [businessId],
+  );
+  const sync = useLiveRefresh(true, hasActiveWork(tasks, agents), {
+    fast: refreshFast,
+    slow: refreshSlow,
+  });
+
   const taskSourceStatus = tasksKeyMatches ? tasksStatus : "loading";
   const taskSourceError = tasksKeyMatches ? tasksError : null;
 
@@ -215,6 +245,8 @@ export function LiveOffice({ businessId }: { businessId: string }) {
               : "Loading AI team…"
         }
       />
+
+      <LiveSyncStatus {...sync} className="mt-1" />
 
       {approvalsStatus === "error" && (
         <Card className="mt-4 border-amber-200 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
