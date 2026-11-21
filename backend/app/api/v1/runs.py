@@ -52,8 +52,22 @@ async def _require_project(session: AsyncSession, business_id: str, project_id: 
         raise HTTPException(404, detail="Project not found in scope.")
 
 
-def _view(
-    run: ProjectRun | None, actor_id: str, role: str, contract: str, *, can_start: bool = False
+def _matches_active_fence(run: ProjectRun, task: Task) -> bool:
+    return run.active_task_id is None or (
+        run.active_task_id == task.id
+        and (run.recovered_task_generation or run.active_task_generation)
+        == task.execution_generation
+    )
+
+
+async def _view(
+    session: AsyncSession,
+    run: ProjectRun | None,
+    actor_id: str,
+    role: str,
+    contract: str,
+    *,
+    can_start: bool = False,
 ) -> ProjectRunResponse:
     if run is None:
         return ProjectRunResponse(
@@ -65,8 +79,18 @@ def _view(
         )
     controls = role == "owner" or run.authorizing_user_id == actor_id
     allowed = list(_TRANSITIONS.get(run.state, {})) if controls else []
-    if controls and run.state in _RETRY_STATES and (run.blocker_id or run.retry_task_id):
-        allowed.append("retry")
+    retry_target = None
+    task_id = run.retry_task_id or run.blocker_id
+    if controls and run.state in _RETRY_STATES and task_id is not None:
+        task = await TaskRepository().get(session, run.business_id, task_id)
+        if (
+            task is not None
+            and task.project_id == run.project_id
+            and _matches_active_fence(run, task)
+            and await retry_blocker(session, run, task, MAX_ATTEMPTS) is None
+        ):
+            retry_target = task
+            allowed.append("retry")
     return ProjectRunResponse(
         run_id=run.id,
         state=run.state,
@@ -78,6 +102,10 @@ def _view(
         active_task_generation=run.active_task_generation,
         recovered_task_generation=run.recovered_task_generation,
         retry_task_id=run.retry_task_id,
+        retry_target_task_id=retry_target.id if retry_target is not None else None,
+        retry_target_generation=(
+            retry_target.execution_generation if retry_target is not None else None
+        ),
         allowed_actions=allowed,
         updated_at=run.updated_at,
         contract=contract,
@@ -131,8 +159,13 @@ async def read_run(business_id: str, project_id: str, request: Request, identity
             brief = await BriefRepository().get_for_project(session, business_id, project_id)
             can_start = brief is not None and brief.status == "planned"
         role = "owner" if business_id in identity.owner_business_ids else "member"
-        return _view(
-            run, identity.user_id, role, _settings(request).contract_version, can_start=can_start
+        return await _view(
+            session,
+            run,
+            identity.user_id,
+            role,
+            _settings(request).contract_version,
+            can_start=can_start,
         )
 
 
@@ -164,7 +197,7 @@ async def _command(
                     and run.version == 1
                     and previous_actor == actor_id
                 ):
-                    return _view(run, actor_id, role, contract)
+                    return await _view(session, run, actor_id, role, contract)
                 raise _conflict("run_conflict", "This project already has a run.")
             if command.expected_version != 0:
                 raise _conflict("run_version_conflict", "The idle project has version 0.")
@@ -237,7 +270,7 @@ async def _command(
             },
         )
         await session.refresh(run)
-        return _view(run, actor_id, role, contract)
+        return await _view(session, run, actor_id, role, contract)
 
 
 @router.post(_PATH + "/start", response_model=ProjectRunResponse)
@@ -304,11 +337,7 @@ async def retry_run(
             raise HTTPException(404, detail="Task not found in scope.")
         if task.execution_generation != body.expected_task_generation:
             raise _conflict("retry_generation_conflict", "The task generation has changed.")
-        if run.active_task_id is not None and (
-            run.active_task_id != task.id
-            or (run.recovered_task_generation or run.active_task_generation)
-            != task.execution_generation
-        ):
+        if not _matches_active_fence(run, task):
             raise _conflict("retry_ownership_unresolved", "The active task fence has changed.")
         blocker = await retry_blocker(session, run, task, MAX_ATTEMPTS)
         if blocker is not None:
@@ -339,4 +368,4 @@ async def retry_run(
             },
         )
         await session.refresh(run)
-        return _view(run, actor, role, _settings(request).contract_version)
+        return await _view(session, run, actor, role, _settings(request).contract_version)

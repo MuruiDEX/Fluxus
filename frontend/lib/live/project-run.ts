@@ -21,11 +21,11 @@ export function acceptsRunResponse(activeScope: object | null, requestScope: obj
 }
 
 export function retryTarget(run: ApiProjectRun) {
-  if (!run.allowedActions.includes("retry") || !run.activeTaskId || run.blockerId !== run.activeTaskId) {
+  if (!run.allowedActions.includes("retry") || !run.retryTargetTaskId ||
+    run.retryTargetGeneration == null) {
     return null;
   }
-  const generation = run.recoveredTaskGeneration ?? run.activeTaskGeneration;
-  return generation == null ? null : { taskId: run.activeTaskId, expectedTaskGeneration: generation };
+  return { taskId: run.retryTargetTaskId, expectedTaskGeneration: run.retryTargetGeneration };
 }
 
 export function runCommandError(error: unknown) {

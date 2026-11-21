@@ -9,7 +9,7 @@
 # - Only Caddy publishes ports (80/443). PostgreSQL, backend, and frontend
 #   have NO published ports; the database lives on an internal-only network.
 # - One-shot `migrate` (alembic upgrade head) must complete successfully
-#   before `backend` starts. Migration failure blocks deployment — it never
+#   before `backend` or `worker` starts. Migration failure blocks deployment — it never
 #   reports success. Back up the database BEFORE migrating live data
 #   (see docs/deployment.md §12); there is no automatic backup here.
 # - `backend` is a single replica with a single uvicorn worker (see
@@ -111,6 +111,62 @@ services:
     # No published ports: reached only through Caddy.
     # Healthcheck comes from the image (GET / on :3000).
 
+  worker:
+    image: fluxus-api:prod
+    command: ["python", "-m", "app.execution.worker"]
+    environment:
+      APP_ENVIRONMENT: prod
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL in deploy/prod.env}
+      APP_LLM_PROVIDER: ${APP_LLM_PROVIDER:-mock}
+      APP_LLM_API_KEY: ${APP_LLM_API_KEY:-}
+      APP_LLM_BASE_URL: ${APP_LLM_BASE_URL:-https://api.openai.com/v1}
+      APP_LLM_MODEL: ${APP_LLM_MODEL:-gpt-4o-mini}
+      APP_LLM_MAX_TOKENS_PARAM: ${APP_LLM_MAX_TOKENS_PARAM:-max_tokens}
+      APP_LLM_MAX_TOKENS: ${APP_LLM_MAX_TOKENS:-1024}
+      APP_LLM_TIMEOUT_S: ${APP_LLM_TIMEOUT_S:-30}
+      APP_LLM_MAX_RETRIES: ${APP_LLM_MAX_RETRIES:-2}
+      APP_USAGE_TARIFFS_JSON: ${APP_USAGE_TARIFFS_JSON:-}
+      APP_USAGE_UNPRICED_RESERVE_AMOUNT: ${APP_USAGE_UNPRICED_RESERVE_AMOUNT:-1}
+      APP_EXECUTION_CAPABILITIES_ENABLED: ${APP_EXECUTION_CAPABILITIES_ENABLED:-true}
+      APP_EXECUTION_MAX_TIMEOUT_S: ${APP_EXECUTION_MAX_TIMEOUT_S:-300}
+      APP_EXECUTION_MAX_LLM_CALLS: ${APP_EXECUTION_MAX_LLM_CALLS:-4}
+      APP_EXECUTION_MAX_TOOL_REQUESTS_PER_STEP: ${APP_EXECUTION_MAX_TOOL_REQUESTS_PER_STEP:-4}
+      APP_EXECUTION_MAX_WRITE_CALLS_PER_RUN: ${APP_EXECUTION_MAX_WRITE_CALLS_PER_RUN:-3}
+      APP_EXECUTION_CAPABILITY_RESULT_CHARS: ${APP_EXECUTION_CAPABILITY_RESULT_CHARS:-4000}
+      APP_EXECUTION_CAPABILITY_TIMEOUT_S: ${APP_EXECUTION_CAPABILITY_TIMEOUT_S:-10}
+      APP_EXECUTION_LEASE_TTL_S: ${APP_EXECUTION_LEASE_TTL_S:-300}
+      APP_EXECUTION_LEASE_WALL_S: ${APP_EXECUTION_LEASE_WALL_S:-2400}
+      APP_EXECUTION_HEARTBEAT_INTERVAL_S: ${APP_EXECUTION_HEARTBEAT_INTERVAL_S:-60}
+      APP_RECOVERY_STALE_MINUTES: ${APP_RECOVERY_STALE_MINUTES:-40}
+      APP_DB_STATEMENT_TIMEOUT_MS: ${APP_DB_STATEMENT_TIMEOUT_MS:-30000}
+      APP_INTEGRATION_ENCRYPTION_KEY: ${APP_INTEGRATION_ENCRYPTION_KEY:-}
+      APP_GOOGLE_OAUTH_CLIENT_ID: ${APP_GOOGLE_OAUTH_CLIENT_ID:-}
+      APP_GOOGLE_OAUTH_CLIENT_SECRET: ${APP_GOOGLE_OAUTH_CLIENT_SECRET:-}
+      APP_EXECUTION_WORKER_CONCURRENCY: ${APP_EXECUTION_WORKER_CONCURRENCY:-2}
+      APP_EXECUTION_WORKER_POLL_S: ${APP_EXECUTION_WORKER_POLL_S:-1}
+      APP_EXECUTION_WORKER_DRAIN_S: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend_net
+      - worker_egress
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 90s
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 64
+    healthcheck:
+      # Override the shared image's API HTTP healthcheck.
+      test: ["CMD", "python", "-m", "app.execution.worker", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+
   caddy:
     image: caddy:2-alpine
     environment:
@@ -136,6 +192,7 @@ services:
 
 networks:
   frontend_net: {}
+  worker_egress: {}
   # Database traffic never leaves this network.
   backend_net:
     internal: true
