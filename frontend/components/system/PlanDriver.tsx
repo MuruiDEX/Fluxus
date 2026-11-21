@@ -12,6 +12,12 @@ import {
 import { driverKeyOf, usePlanDriver, type DriverPhase, type DriverRecord } from "@/lib/store/plan-driver";
 import { cn } from "@/lib/cn";
 import { useLiveRefresh } from "@/lib/live/use-live-refresh";
+import { useProjectRun } from "@/lib/live/use-project-run";
+import { combineRefreshReports } from "@/lib/live/live-refresh";
+import { scopedRunValue } from "@/lib/live/project-run";
+import { useLiveApprovals, useLiveTasks } from "@/lib/store/live";
+import { ProjectRunActions, ProjectRunStatus } from "@/components/system/ProjectRun";
+import type { Agent, Approval, Task } from "@/lib/domain/types";
 import type { LiveRefreshReport } from "@/lib/store/live";
 
 export type DriverTone = "ok" | "bad" | "warn" | "info";
@@ -120,81 +126,129 @@ export function describeDriver(record: DriverRecord | undefined): DriverView {
   }
 }
 
-/**
- * LIVE plan-driver panel (Stage 8.4). Rendered only in LIVE branches — never
- * in DEMO (the driver itself also refuses non-member contexts).
- *
- * - One driver per mounted instance: Start while active is a no-op (shared
- *   promise), unmount stops the loop but keeps the record for resume.
- * - "Stop" halts the client loop and the client wait; the label says the
- *   server may still be running the task.
- */
-export function ProjectWorkflowPanel({ businessId, projectId }: { businessId: string; projectId: string }) {
-  const [workflow, setWorkflow] = useState<ApiProjectWorkflow | null>(null);
-  const [error, setError] = useState<string | null>(null);
+/** The project page owns one visibility-aware poll for workflow, run and task facts. */
+export function useProjectWorkflow(businessId: string, projectId: string, enabled: boolean) {
+  const run = useProjectRun(businessId, enabled ? projectId : null);
+  const key = JSON.stringify([businessId, projectId]);
+  const [snapshot, setWorkflow] = useState<{ key: string; value: ApiProjectWorkflow } | null>(null);
+  const workflow = scopedRunValue(snapshot, key);
   const request = useRef<AbortController | null>(null);
   const mounted = useRef(false);
-
-  const refresh = useCallback(async (): Promise<LiveRefreshReport> => {
+  const readWorkflow = useCallback(async (): Promise<LiveRefreshReport> => {
     if (!mounted.current || request.current) return { outcome: "skipped" };
     const controller = new AbortController();
     request.current = controller;
     try {
       const next = await apiGetProjectWorkflow(businessId, projectId, { signal: controller.signal });
       if (controller.signal.aborted) return { outcome: "skipped" };
-      setWorkflow((current) => current?.phase === "finalized" ? current : next);
-      setError(null);
+      setWorkflow((current) => scopedRunValue(current, key)?.finalization
+        ? current : { key, value: next });
       return { outcome: "ok" };
     } catch {
       if (controller.signal.aborted) return { outcome: "skipped" };
-      const message = "Couldn't load the project workflow.";
-      setError(message);
-      return { outcome: "error", error: message };
+      return { outcome: "error", error: "Workflow data is unavailable." };
     } finally {
       if (request.current === controller) request.current = null;
     }
-  }, [businessId, projectId]);
+  }, [businessId, projectId, key, setWorkflow]);
+  const refreshRun = run.refresh;
+  const refresh = useCallback(() => Promise.all([
+    refreshRun(),
+    readWorkflow(),
+    ...(run.run?.schedulingMode === "managed" ? [
+      useLiveTasks.getState().refresh(businessId, projectId),
+      useLiveApprovals.getState().refresh(businessId),
+    ] : []),
+  ]).then(combineRefreshReports), [
+    businessId, projectId, readWorkflow, refreshRun, run.run?.schedulingMode,
+  ]);
+  const [initial, setInitialError] = useState<{ key: string; value: string | null } | null>(null);
+  const initialError = scopedRunValue(initial, key);
 
   useEffect(() => {
+    if (!enabled) return;
     mounted.current = true;
-    const initial = setTimeout(() => void refresh(), 0);
+    let cancelled = false;
+    const initial = setTimeout(() => {
+      if (document.hidden) return;
+      void Promise.all([refreshRun(), readWorkflow()]).then((reports) => {
+        if (!cancelled) setInitialError({ key, value: combineRefreshReports(reports).error ?? null });
+      });
+    }, 0);
     return () => {
+      cancelled = true;
       mounted.current = false;
       clearTimeout(initial);
       request.current?.abort();
       request.current = null;
     };
-  }, [refresh]);
+  }, [enabled, readWorkflow, refreshRun, key]);
 
-  const poll = !!workflow?.briefId && workflow.phase !== "finalized";
-  useLiveRefresh(poll, workflow?.phase !== "ready", { fast: refresh });
+  const { state, activeTaskId } = run.run ?? {};
+  const active = state === "running" || state === "waiting_approval"
+    || Boolean(activeTaskId && state !== "needs_attention" && !run.run?.reasonCode);
+  const sync = useLiveRefresh(enabled && !workflow?.finalization, active, { fast: refresh });
+  const saveReport = (result: ApiFinalize) => setWorkflow({
+    key,
+    value: {
+      briefId: result.briefId,
+      phase: "finalized",
+      message: null,
+      finalization: result,
+      contract: result.contract,
+    },
+  });
 
-  if (!workflow) {
+  return { run, workflow, error: run.error ?? sync.error ?? (workflow ? null : initialError), refresh, saveReport };
+}
+
+export function ProjectWorkflowPanel({
+  businessId, projectId, execution, tasks, approvals, agents,
+}: {
+  businessId: string;
+  projectId: string;
+  execution: ReturnType<typeof useProjectWorkflow>;
+  tasks: readonly Task[];
+  approvals: readonly Approval[];
+  agents: readonly Agent[];
+}) {
+  const { run, workflow, error, refresh, saveReport } = execution;
+  if (workflow?.finalization) return <FinalReportView result={workflow.finalization} />;
+  if (run.mode === "unknown" || (run.mode === "manual" && (!workflow || run.error))) {
     return error ? (
-      <div className="text-[12px] text-ink-500">
+      <div className="text-caption text-fg-muted">
         <p role="alert">{error}</p>
-        <button className="font-semibold underline" onClick={() => void refresh()}>Retry</button>
+        <button className="font-semibold underline" onClick={() => void refresh()}>Retry refresh</button>
       </div>
-    ) : <p role="status" className="text-[12px] text-ink-500">Loading workflow…</p>;
+    ) : <p role="status" className="text-caption text-fg-muted">Loading workflow…</p>;
   }
-  if (workflow.finalization) return <FinalReportView result={workflow.finalization} />;
+  if (run.mode === "manual") {
+    return (
+      <div className="flex flex-col gap-1">
+        <PlanDriverPanel businessId={businessId} projectId={projectId}
+          workflow={workflow ?? undefined} onSettled={refresh} onFinalized={saveReport} />
+        {error && <p role="status" className="text-caption text-warning-fg">{error} Showing last known state.</p>}
+      </div>
+    );
+  }
+  if (!run.run) return null;
+  const finalizableBrief = workflow?.phase === "awaiting_finalization"
+    && workflow.briefId
+    && !run.run.activeTaskId && !["running", "waiting_approval"].includes(run.run.state);
   return (
-    <div className="flex flex-col gap-1">
-      <PlanDriverPanel
-        businessId={businessId}
-        projectId={projectId}
-        workflow={workflow}
-        onSettled={refresh}
-        onFinalized={(result) => setWorkflow({
-          briefId: result.briefId,
-          phase: "finalized",
-          message: null,
-          finalization: result,
-          contract: result.contract,
-        })}
-      />
-      {error && <p role="status" className="text-[12px] text-ink-500">{error} Showing last known state.</p>}
-    </div>
+    <section aria-label="Project execution" className="space-y-2 rounded-card border border-line bg-surface-sunken px-3 py-2.5">
+      <ProjectRunStatus run={run.run} tasks={tasks} approvals={approvals} agents={agents} stale={!!error} />
+      <ProjectRunActions run={run.run} pending={run.pending} disabled={!!run.error}
+        issue={(command) => void run.issue(command)} commandError={run.commandError} />
+      {error && (
+        <p role="status" className="text-caption text-warning-fg">
+          {error} <button className="underline" onClick={() => void refresh()}>Refresh</button>
+        </p>
+      )}
+      {finalizableBrief && workflow.briefId && (
+        <FinalizeSection businessId={businessId} briefId={workflow.briefId} onFinalized={saveReport} />
+      )}
+    </section>
   );
 }
 

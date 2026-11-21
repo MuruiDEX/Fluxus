@@ -6,18 +6,19 @@ import { CheckCircle2, Circle, Loader2, Lock } from "lucide-react";
 import { Avatar, Badge, ProgressBar, TaskStatusBadge } from "@/components/system/badges";
 import { Card, GhostLink, LiveBadge, PageHeader, PrimaryButton } from "@/components/system/ui";
 import { EngineControls } from "@/components/system/EngineControls";
-import { ProjectWorkflowPanel } from "@/components/system/PlanDriver";
+import { ProjectWorkflowPanel, useProjectWorkflow } from "@/components/system/PlanDriver";
 import { ProjectEditButton } from "@/components/system/ProjectEdit";
 import { TaskRunButton } from "@/components/system/TaskRun";
 import { UsagePanel } from "@/components/system/UsagePanel";
 import { useSession } from "@/lib/store/auth";
-import { isLiveContext, useLiveAgents, useLiveProject, useLiveTasks } from "@/lib/store/live";
+import { isLiveContext, useLiveAgents, useLiveApprovals, useLiveProject, useLiveTasks } from "@/lib/store/live";
 import { useAgents, useApprovals, useProjects } from "@/lib/store/app";
 import { PROJECT_STATUS_BADGE_TONE, projectStatusView } from "@/lib/project-status";
 import { cn } from "@/lib/cn";
 import type { Agent, Approval, Project, Task } from "@/lib/domain/types";
 
 const tabs = ["Overview", "Tasks", "Team", "Research", "Finance", "Brand", "Website", "Marketing", "CRM", "Docs"] as const;
+const EMPTY_AGENTS: Agent[] = [];
 
 function ProjectLayout({
   project,
@@ -28,6 +29,7 @@ function ProjectLayout({
   engineSlot,
   renderTaskAction,
   projectEditSlot,
+  managed = false,
 }: {
   project: Project;
   projectTasks: Task[];
@@ -38,11 +40,19 @@ function ProjectLayout({
   renderTaskAction?: (task: Task) => ReactNode;
   /** LIVE-only slot (project edit). DEMO callers omit it. */
   projectEditSlot?: ReactNode;
+  managed?: boolean;
 }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Overview");
   const agentOf = (agentId: string) => agents.find((a) => a.id === agentId);
   const taskTitle = (taskId: string) => projectTasks.find((t) => t.id === taskId)?.title ?? taskId;
   const status = projectStatusView(project.status);
+  const completed = useMemo(
+    () => new Set(projectTasks.filter((task) => task.status === "completed").map((task) => task.id)),
+    [projectTasks],
+  );
+  const progress = managed && projectTasks.length > 0
+    ? Math.round(100 * completed.size / projectTasks.length)
+    : project.progress;
 
   return (
     <>
@@ -114,18 +124,19 @@ function ProjectLayout({
           <Card className="p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-[13px] font-bold">Task graph</h3>
-              <span className="text-[12px] tabular-nums text-ink-400">{project.progress}%</span>
+              <span className="text-[12px] tabular-nums text-ink-400">{progress}%</span>
             </div>
-            <ProgressBar value={project.progress} className="mb-3" />
+            <ProgressBar value={progress} className="mb-3 motion-reduce:[&_*]:transition-none" />
             <div className="grid gap-2 sm:grid-cols-2">
               {projectTasks.map((t) => {
                 const a = agentOf(t.ownerAgentId);
-                const blocked = t.dependsOn.length > 0 && t.status !== "completed";
+                const blocked = t.status !== "completed" && (managed
+                  ? t.dependsOn.some((dep) => !completed.has(dep)) : t.dependsOn.length > 0);
                 return (
                   <div key={t.id} className="rounded-2xl border border-mist-200 p-3 dark:border-white/10">
                     <div className="flex items-start justify-between gap-2">
                       <p className="flex items-center gap-1.5 text-[13px] font-semibold">
-                        {t.status === "working" && <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500" />}
+                        {t.status === "working" && <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-500 motion-reduce:animate-none" />}
                         {blocked && t.status !== "working" && <Lock className="h-3.5 w-3.5 text-amber-500" />}
                         {t.title}
                       </p>
@@ -232,18 +243,28 @@ function DemoProjectDetail({ id }: { id: string }) {
 function LiveProjectDetail({ businessId, projectId }: { businessId: string; projectId: string }) {
   const { status, project, notFound, error, load, reset } = useLiveProject();
   const tasksSlice = useLiveTasks();
-  const agents = useLiveAgents((s) => s.agents);
+  const agents = useLiveAgents((s) => s.businessId === businessId ? s.agents : EMPTY_AGENTS);
   const ensureAgents = useLiveAgents((s) => s.ensure);
   const resetAgents = useLiveAgents((s) => s.reset);
+  const approvalBusiness = useLiveApprovals((s) => s.businessId);
+  const allApprovals = useLiveApprovals((s) => s.approvals);
+  const approvals = useMemo(() => approvalBusiness === businessId
+    ? allApprovals.filter((item) => item.projectId === projectId) : [],
+  [allApprovals, approvalBusiness, businessId, projectId]);
+  const projectTasks = tasksSlice.key === `${businessId}/${projectId}` ? tasksSlice.tasks : [];
+  const enabled = status === "ready" && project?.businessId === businessId && project.id === projectId;
+  const execution = useProjectWorkflow(businessId, projectId, enabled);
 
   useEffect(() => {
     void load(businessId, projectId);
     void tasksSlice.load(businessId, projectId);
     void ensureAgents(businessId);
+    void useLiveApprovals.getState().load(businessId);
     return () => {
       reset();
       tasksSlice.reset();
       resetAgents();
+      useLiveApprovals.getState().reset();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId, projectId]);
@@ -298,25 +319,20 @@ function LiveProjectDetail({ businessId, projectId }: { businessId: string; proj
     <>
     <ProjectLayout
       project={project}
-      projectTasks={tasksSlice.tasks}
+      projectTasks={projectTasks}
       agents={agents}
-      approvals={[]}
+      approvals={approvals}
+      managed={execution.run.run?.schedulingMode === "managed"}
       badge={<LiveBadge />}
       projectEditSlot={<ProjectEditButton businessId={businessId} project={project} />}
       engineSlot={
-        <div className="flex flex-wrap items-center gap-2">
-          <ProjectWorkflowPanel businessId={businessId} projectId={project.id} />
-          <span
-            title="Each task runs on the server when you press its Run button."
-            className="rounded-full bg-mist-100 px-2.5 py-1 text-[11.5px] font-medium text-ink-500 dark:bg-white/5 dark:text-slate-400"
-          >
-            Server-side runs
-          </span>
-        </div>
+        <ProjectWorkflowPanel businessId={businessId} projectId={project.id}
+          execution={execution} tasks={projectTasks} approvals={approvals} agents={agents} />
       }
-      renderTaskAction={(t) => (
+      renderTaskAction={execution.run.mode === "manual" && !execution.run.error
+        && !execution.workflow?.finalization ? (t) => (
         <TaskRunButton businessId={businessId} projectId={project.id} taskId={t.id} />
-      )}
+      ) : undefined}
     />
     <div className="mt-3">
       <UsagePanel businessId={businessId} projectId={project.id} />

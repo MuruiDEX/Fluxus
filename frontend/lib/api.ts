@@ -814,6 +814,51 @@ export interface ApiProjectWorkflow {
   contract: string;
 }
 
+export type ProjectRunState = "idle" | "running" | "waiting_approval" | "paused"
+  | "needs_attention" | "completed" | "cancelled";
+export type ProjectRunAction = "start" | "pause" | "resume" | "cancel" | "retry";
+
+export interface ApiProjectRun {
+  runId: string | null;
+  state: ProjectRunState;
+  version: number;
+  schedulingMode: "manual" | "managed";
+  reasonCode: string | null;
+  blockerId: string | null;
+  activeTaskId: string | null;
+  activeTaskGeneration: number | null;
+  recoveredTaskGeneration: number | null;
+  retryTaskId: string | null;
+  allowedActions: ProjectRunAction[];
+  updatedAt: string | null;
+  contract: string;
+}
+
+export type ProjectRunCommand =
+  | { action: "start" | "pause" | "cancel" }
+  | { action: "resume"; assumeResponsibility?: boolean }
+  | { action: "retry"; taskId: string; expectedTaskGeneration: number };
+
+function projectRunPath(businessId: string, projectId: string) {
+  return `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/run`;
+}
+
+export function apiGetProjectRun(businessId: string, projectId: string, opts?: RequestOpts) {
+  return api<ApiProjectRun>(projectRunPath(businessId, projectId), { signal: opts?.signal });
+}
+
+export function apiCommandProjectRun(
+  businessId: string, projectId: string, expectedVersion: number, command: ProjectRunCommand,
+  opts?: RequestOpts,
+) {
+  const { action, ...fields } = command;
+  return api<ApiProjectRun>(`${projectRunPath(businessId, projectId)}/${action}`, {
+    method: "POST",
+    body: { expectedVersion, ...fields },
+    signal: opts?.signal,
+  });
+}
+
 export async function apiGetProjectWorkflow(businessId: string, projectId: string, opts?: RequestOpts) {
   return api<ApiProjectWorkflow>(
     `/api/v1/businesses/${id(businessId)}/projects/${id(projectId)}/workflow`,

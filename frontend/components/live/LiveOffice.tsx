@@ -11,8 +11,10 @@ import {
 } from "@/components/system/ui";
 import { WorkflowView } from "@/components/workflow/WorkflowView";
 import { LiveSyncStatus } from "@/components/system/LiveSyncStatus";
+import { ProjectRunStatus } from "@/components/system/ProjectRun";
 import { combineRefreshReports, hasActiveWork } from "@/lib/live/live-refresh";
 import { useLiveRefresh } from "@/lib/live/use-live-refresh";
+import { useProjectRun } from "@/lib/live/use-project-run";
 import {
   loadLiveOfficeTasksForProject,
   retryLiveOfficeApprovals,
@@ -140,6 +142,8 @@ export function LiveOffice({ businessId }: { businessId: string }) {
     businessId,
   );
   const selectedProjectId = selectedProject?.id ?? null;
+  const execution = useProjectRun(businessId, selectedProjectId);
+  const refreshRun = execution.refresh;
   const expectedTaskKey =
     selectedProjectId === null ? null : `${businessId}/${selectedProjectId}`;
   const tasksKeyMatches =
@@ -153,6 +157,11 @@ export function LiveOffice({ businessId }: { businessId: string }) {
     );
   }, [businessId, projectsBusinessId, selectedProjectId]);
 
+  useEffect(() => {
+    if (selectedProjectId === null || document.hidden) return;
+    void refreshRun();
+  }, [refreshRun, selectedProjectId]);
+
   // The office is the screen where agent states move, so tasks, agents and
   // approvals are re-read on the fast cadence; projects and activity ride the
   // slow one. Refreshes are in-place, so an update never blanks the workflow.
@@ -164,8 +173,9 @@ export function LiveOffice({ businessId }: { businessId: string }) {
           : useLiveTasks.getState().refresh(businessId, selectedProjectId),
         useLiveAgentsList.getState().refresh(businessId),
         useLiveApprovals.getState().refresh(businessId),
+        refreshRun(),
       ]).then(combineRefreshReports),
-    [businessId, selectedProjectId],
+    [businessId, selectedProjectId, refreshRun],
   );
   const refreshSlow = useCallback(
     () =>
@@ -175,7 +185,9 @@ export function LiveOffice({ businessId }: { businessId: string }) {
       ]).then(combineRefreshReports),
     [businessId],
   );
-  const sync = useLiveRefresh(true, hasActiveWork(tasks, agents), {
+  const run = execution.mode === "server" ? execution.run : null;
+  const active = run?.state === "running" || run?.state === "waiting_approval";
+  const sync = useLiveRefresh(true, active || (!run && hasActiveWork(tasks, agents)), {
     fast: refreshFast,
     slow: refreshSlow,
   });
@@ -299,7 +311,11 @@ export function LiveOffice({ businessId }: { businessId: string }) {
       {result.status === "no_project" && <NoProject />}
 
       {result.status === "ready" && (
-        <WorkflowView model={result.model} className="mt-4" />
+        <WorkflowView model={result.model} className="mt-4" runStatus={run ? (
+          <ProjectRunStatus run={run} tasks={tasksKeyMatches ? tasks : []}
+            approvals={approvalsBusinessId === businessId ? approvals : []}
+            agents={agentsBelongToBusiness ? agents : []} stale={!!execution.error || !!sync.error} />
+        ) : execution.error && <span className="text-caption text-warning-fg">{execution.error}</span>} />
       )}
     </>
   );

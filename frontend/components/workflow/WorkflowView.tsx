@@ -45,6 +45,7 @@ import type {
 export interface WorkflowViewProps {
   readonly model: WorkflowModel;
   readonly className?: string;
+  readonly runStatus?: ReactNode;
 }
 
 const STAGE_ACCENTS: Record<WorkflowStage["key"], string> = {
@@ -372,7 +373,7 @@ function renderStage(stage: WorkflowStage, model: WorkflowModel, index: number) 
   }
 }
 
-function WorkflowSpine({ model }: { model: WorkflowModel }) {
+function WorkflowSpine({ model, runStatus }: { model: WorkflowModel; runStatus?: ReactNode }) {
   return (
     <section aria-labelledby="workflow-spine-title">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -387,7 +388,7 @@ function WorkflowSpine({ model }: { model: WorkflowModel }) {
             Goal → Team Lead → Parallel work → Approvals → Review → Brain
           </p>
         </div>
-        <Badge tone="neutral">Read-only office view</Badge>
+        {runStatus || <Badge tone="neutral">Read-only office view</Badge>}
       </div>
       <ol
         aria-label="Workflow stages from Goal to Brain"
@@ -885,12 +886,12 @@ function Limitations({ model }: { model: WorkflowModel }) {
   );
 }
 
-export function WorkflowView({ model, className }: WorkflowViewProps) {
+export function WorkflowView({ model, className, runStatus }: WorkflowViewProps) {
   const showApprovalQueue =
     model.approvals.state === "available" || model.approvals.state === "empty";
   return (
     <div className={cn("flex flex-col gap-4", className)}>
-      <WorkflowSpine model={model} />
+      <WorkflowSpine model={model} runStatus={runStatus} />
       {model.parallelWork.state === "unavailable" ? (
         <ProjectUnavailable model={model} />
       ) : (

@@ -1,9 +1,13 @@
 "use client";
 
 import { Loader2, Play } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { useLiveExecution, type TaskRun } from "@/lib/store/execution";
 import { Button } from "@/components/system/controls";
 import { cn } from "@/lib/cn";
+import { apiGetProjectRun } from "@/lib/api";
+import { isLegacyRunRoute, runMode } from "@/lib/live/project-run";
 
 export type RunTone = "ok" | "bad" | "warn" | "info";
 
@@ -109,6 +113,49 @@ export function TaskRunButton({
   const reconcile = useLiveExecution((s) => s.reconcile);
   const stopWaiting = useLiveExecution((s) => s.stopWaiting);
   const view = describeRun(run);
+  const lookup = useRef<AbortController | null>(null);
+  const [check, setCheck] = useState<{ key: string; state: "checking" | "server" | "error" } | null>(null);
+  const mode = check?.key === key ? check.state : null;
+
+  useEffect(() => () => {
+    lookup.current?.abort();
+    lookup.current = null;
+  }, [key]);
+
+  async function executeManualTask() {
+    if (lookup.current) return;
+    const controller = new AbortController();
+    lookup.current = controller;
+    setCheck({ key, state: "checking" });
+    try {
+      const found = await apiGetProjectRun(businessId, projectId, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const resolved = runMode(found);
+      if (resolved !== "manual") {
+        setCheck({ key, state: resolved === "server" ? "server" : "error" });
+        return;
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (!isLegacyRunRoute(error, businessId, projectId)) {
+        setCheck({ key, state: "error" });
+        return;
+      }
+    } finally {
+      if (lookup.current === controller) lookup.current = null;
+    }
+    if (!controller.signal.aborted) {
+      setCheck(null);
+      void runTask(businessId, projectId, taskId);
+    }
+  }
+
+  if (mode === "server") {
+    return <Link href={`/projects/${encodeURIComponent(projectId)}`}
+      className="mt-2 inline-block text-caption text-brand underline">
+      Open project run controls
+    </Link>;
+  }
 
   if (view.kind === "running") {
     return (
@@ -152,7 +199,8 @@ export function TaskRunButton({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => void runTask(businessId, projectId, taskId)}
+              loading={mode === "checking"}
+              onClick={() => void executeManualTask()}
               className="h-7 px-2.5 text-caption"
             >
               Run again
@@ -160,6 +208,7 @@ export function TaskRunButton({
           )}
           <ProviderTag />
         </div>
+        {mode === "error" && <p role="alert" className="text-caption text-danger-fg">Run status could not be verified.</p>}
       </div>
     );
   }
@@ -169,13 +218,15 @@ export function TaskRunButton({
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          onClick={() => void runTask(businessId, projectId, taskId)}
+          loading={mode === "checking"}
+          onClick={() => void executeManualTask()}
           className="h-7 gap-1 px-2.5 text-caption"
         >
           <Play aria-hidden className="h-3.5 w-3.5" /> Run
         </Button>
       </div>
       <ProviderTag />
+      {mode === "error" && <p role="alert" className="text-caption text-danger-fg">Run status could not be verified.</p>}
     </div>
   );
 }

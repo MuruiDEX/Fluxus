@@ -23,6 +23,7 @@ import {
   apiAnswerBrief,
   apiApproveApproval,
   apiConnectIntegration,
+  apiCommandProjectRun,
   apiCreateBrain,
   apiCreateBrief,
   apiDisableAgent,
@@ -33,6 +34,7 @@ import {
   apiGetIntegrationConnection,
   apiGetListing,
   apiGetProject,
+  apiGetProjectRun,
   apiGetTask,
   apiHireAgent,
   apiListIntegrationConnections,
@@ -49,6 +51,7 @@ import {
   apiPatchTask,
   apiPlanBrief,
   apiRejectApproval,
+  type ProjectRunCommand,
 } from "@/lib/api";
 import manifest from "../../docs/contracts/wire-manifest.json";
 
@@ -81,8 +84,35 @@ interface ClientCase {
 }
 
 const DUMMY = "x";
+const RUN_PATH = "/api/v1/businesses/{business_id}/projects/{project_id}/run";
+const RUN_FIELDS = [
+  "runId", "state", "version", "schedulingMode", "reasonCode", "blockerId", "activeTaskId",
+  "activeTaskGeneration", "recoveredTaskGeneration", "retryTaskId", "allowedActions",
+  "updatedAt", "contract",
+];
+const RUN_COMMANDS: ProjectRunCommand[] = [
+  { action: "start" }, { action: "pause" }, { action: "resume", assumeResponsibility: true },
+  { action: "cancel" }, { action: "retry", taskId: DUMMY, expectedTaskGeneration: 2 },
+];
 
 const CASES: ClientCase[] = [
+  {
+    name: "apiGetProjectRun",
+    call: () => apiGetProjectRun(DUMMY, DUMMY),
+    template: RUN_PATH,
+    schema: "ProjectRunResponse",
+    fields: RUN_FIELDS,
+    money: [],
+  },
+  ...RUN_COMMANDS.map((command): ClientCase => ({
+    name: `apiCommandProjectRun ${command.action}`,
+    call: () => apiCommandProjectRun(DUMMY, DUMMY, 4, command),
+    method: "POST",
+    template: `${RUN_PATH}/${command.action}`,
+    schema: "ProjectRunResponse",
+    fields: RUN_FIELDS,
+    money: [],
+  })),
   {
     name: "apiGetBusiness",
     call: () => apiGetBusiness(DUMMY),

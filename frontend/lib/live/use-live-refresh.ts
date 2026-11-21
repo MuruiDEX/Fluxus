@@ -42,12 +42,14 @@ export function useLiveRefresh(
   const [state, setState] = useState<LiveRefreshState>(INITIAL);
   const tasksRef = useRef(tasks);
   const activeRef = useRef(active);
+  const wakeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     tasksRef.current = tasks;
   });
   useEffect(() => {
     activeRef.current = active;
+    if (active) wakeRef.current?.();
   });
 
   useEffect(() => {
@@ -56,6 +58,7 @@ export function useLiveRefresh(
     let timer: ReturnType<typeof setTimeout> | null = null;
     let failures = 0;
     let tick = 0;
+    let inFlight = false;
 
     function schedule(ms: number) {
       if (cancelled) return;
@@ -64,19 +67,20 @@ export function useLiveRefresh(
 
     async function run(): Promise<void> {
       timer = null;
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
       // A hidden tab has nothing to render; skip the request and try again on
       // the next tick (a visibility change wakes the loop immediately).
       if (typeof document !== "undefined" && document.hidden) {
         schedule(liveIntervalMs(activeRef.current, failures));
         return;
       }
+      inFlight = true;
       setState((s) => (s.refreshing ? s : { ...s, refreshing: true }));
       let report: LiveRefreshReport;
       try {
         report = await tasksRef.current.fast();
         tick += 1;
-        if (report.outcome !== "error" && isSlowTick(tick)) {
+        if (!cancelled && report.outcome !== "error" && isSlowTick(tick)) {
           const slow = tasksRef.current.slow;
           if (slow) {
             const slowReport = await slow();
@@ -89,6 +93,7 @@ export function useLiveRefresh(
           error: err instanceof Error ? err.message : "Background refresh failed.",
         };
       }
+      inFlight = false;
       if (cancelled) return;
       if (report.outcome === "error") failures += 1;
       else if (report.outcome === "ok") failures = 0;
@@ -124,10 +129,12 @@ export function useLiveRefresh(
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("online", onOnline);
+    wakeRef.current = wake;
     schedule(liveIntervalMs(activeRef.current, failures));
 
     return () => {
       cancelled = true;
+      wakeRef.current = null;
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("online", onOnline);
