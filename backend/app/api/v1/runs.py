@@ -4,13 +4,14 @@ from graphlib import CycleError, TopologicalSorter
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.executions import _factory, _settings
-from app.api.v1.schemas import ProjectRunResponse, ResumeRunCommand, RunCommand
+from app.api.v1.schemas import ProjectRunResponse, ResumeRunCommand, RetryRunCommand, RunCommand
 from app.core.auth import check_client_contract
 from app.core.identity import Identity, require_business
+from app.execution.executor import MAX_ATTEMPTS
 from app.persistence.exceptions import new_id
 from app.persistence.models.approval import Approval
 from app.persistence.models.project_run import ProjectRun, RunState
@@ -26,6 +27,7 @@ from app.persistence.repositories.project_runs import (
     get_project_run,
     has_working_task,
     lock_project_admission,
+    retry_blocker,
 )
 
 router = APIRouter(dependencies=[Depends(check_client_contract)])
@@ -38,6 +40,7 @@ _TRANSITIONS = {
     RunState.PAUSED: {"resume": RunState.RUNNING, "cancel": RunState.CANCELLED},
     RunState.NEEDS_ATTENTION: {"resume": RunState.RUNNING, "cancel": RunState.CANCELLED},
 }
+_RETRY_STATES = (RunState.NEEDS_ATTENTION, RunState.PAUSED)
 
 
 def _conflict(code: str, message: str) -> HTTPException:
@@ -61,6 +64,9 @@ def _view(
             contract=contract,
         )
     controls = role == "owner" or run.authorizing_user_id == actor_id
+    allowed = list(_TRANSITIONS.get(run.state, {})) if controls else []
+    if controls and run.state in _RETRY_STATES and (run.blocker_id or run.retry_task_id):
+        allowed.append("retry")
     return ProjectRunResponse(
         run_id=run.id,
         state=run.state,
@@ -70,7 +76,9 @@ def _view(
         blocker_id=run.blocker_id,
         active_task_id=run.active_task_id,
         active_task_generation=run.active_task_generation,
-        allowed_actions=list(_TRANSITIONS.get(run.state, {})) if controls else [],
+        recovered_task_generation=run.recovered_task_generation,
+        retry_task_id=run.retry_task_id,
+        allowed_actions=allowed,
         updated_at=run.updated_at,
         contract=contract,
     )
@@ -187,8 +195,23 @@ async def _command(
                     )
                 if run.active_task_id is not None:
                     raise _conflict("run_task_in_flight", "Wait for the active task to settle.")
+                prior_attempt = select(Task.id).where(
+                    Task.business_id == business_id,
+                    Task.project_id == project_id,
+                    or_(
+                        Task.status == "failed",
+                        (
+                            (Task.status != "completed")
+                            & or_(Task.execution_generation > 0, Task.attempts > 0)
+                        ),
+                    ),
+                )
+                if await session.scalar(select(prior_attempt.exists())):
+                    raise _conflict("retry_required", "Authorize a task retry explicitly.")
                 await _validate_plan(session, business_id, project_id)
                 run.authorizing_user_id = actor_id
+            if action == "cancel":
+                run.retry_task_id = run.retry_task_generation = None
             run.state = target
             run.version += 1
         if run.active_task_id is None:
@@ -251,3 +274,69 @@ async def cancel_run(
     business_id: str, project_id: str, body: RunCommand, request: Request, identity: Actor
 ):
     return await _command("cancel", business_id, project_id, request, identity, body)
+
+
+@router.post(_PATH + "/retry", response_model=ProjectRunResponse)
+async def retry_run(
+    business_id: str, project_id: str, body: RetryRunCommand, request: Request, identity: Actor
+):
+    actor = identity.user_id
+    async with _factory(request)() as session, session.begin():
+        await lock_project_admission(session, business_id, project_id)
+        role = await MembershipRepository().lock_role(session, actor, business_id)
+        if role is None:
+            raise HTTPException(404, detail="Business not found in scope.")
+        await _require_project(session, business_id, project_id)
+        run = await get_project_run(session, business_id, project_id)
+        if run is None:
+            raise _conflict("run_conflict", "Start the project before retrying a task.")
+        if role != "owner" and run.authorizing_user_id != actor:
+            raise HTTPException(403, detail="Run authorizer or business owner required.")
+        if run.version != body.expected_version:
+            raise _conflict("run_version_conflict", "The run has changed. Refresh and retry.")
+        if run.state not in _RETRY_STATES or body.task_id not in (
+            run.blocker_id,
+            run.retry_task_id,
+        ):
+            raise _conflict("retry_conflict", "The task is not the current run blocker.")
+        task = await TaskRepository().lock_for_update(session, business_id, body.task_id)
+        if task is None or task.project_id != project_id:
+            raise HTTPException(404, detail="Task not found in scope.")
+        if task.execution_generation != body.expected_task_generation:
+            raise _conflict("retry_generation_conflict", "The task generation has changed.")
+        if run.active_task_id is not None and (
+            run.active_task_id != task.id
+            or (run.recovered_task_generation or run.active_task_generation)
+            != task.execution_generation
+        ):
+            raise _conflict("retry_ownership_unresolved", "The active task fence has changed.")
+        blocker = await retry_blocker(session, run, task, MAX_ATTEMPTS)
+        if blocker is not None:
+            raise _conflict(
+                blocker, "The task cannot be retried with the current execution evidence."
+            )
+        await _validate_plan(session, business_id, project_id)
+        previous_actor = run.authorizing_user_id
+        run.active_task_id = run.active_task_generation = run.recovered_task_generation = None
+        run.retry_task_id, run.retry_task_generation = task.id, task.execution_generation
+        run.authorizing_user_id = actor
+        run.state = RunState.RUNNING
+        run.version += 1
+        run.reason_code, run.blocker_id = "retry_authorized", None
+        run.next_check_at = await session.scalar(select(func.clock_timestamp()))
+        await ActivityRepository().append(
+            session,
+            business_id,
+            {
+                "project_id": project_id,
+                "kind": "system",
+                "agent_name": actor,
+                "text": (
+                    f"Run {run.id} retry authorized for {task.id} generation "
+                    f"{task.execution_generation} by {actor}. "
+                    f"Previous authorizer: {previous_actor}."
+                ),
+            },
+        )
+        await session.refresh(run)
+        return _view(run, actor, role, _settings(request).contract_version)

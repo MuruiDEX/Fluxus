@@ -27,6 +27,11 @@ class ResumeRunCommand(RunCommand):
     assume_responsibility: bool = Field(default=False, alias="assumeResponsibility")
 
 
+class RetryRunCommand(RunCommand):
+    task_id: str = Field(alias="taskId", min_length=1, max_length=128)
+    expected_task_generation: int = Field(alias="expectedTaskGeneration", ge=0, strict=True)
+
+
 class ProjectRunResponse(Contracted):
     run_id: str | None = Field(default=None, alias="runId")
     state: Literal[
@@ -38,6 +43,8 @@ class ProjectRunResponse(Contracted):
     blocker_id: str | None = Field(default=None, alias="blockerId")
     active_task_id: str | None = Field(default=None, alias="activeTaskId")
     active_task_generation: int | None = Field(default=None, alias="activeTaskGeneration")
+    recovered_task_generation: int | None = Field(default=None, alias="recoveredTaskGeneration")
+    retry_task_id: str | None = Field(default=None, alias="retryTaskId")
     allowed_actions: list[str] = Field(alias="allowedActions")
     updated_at: datetime | None = Field(default=None, alias="updatedAt")
 

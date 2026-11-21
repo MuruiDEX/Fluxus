@@ -87,6 +87,7 @@ from app.persistence.repositories.project_runs import (
     get_project_run,
     lock_project_admission,
     manual_admission_blocker,
+    retry_blocker,
     unresolved_task_hold,
 )
 from app.persistence.repositories.spend import recalculate_project_spend
@@ -353,16 +354,24 @@ async def _authorize_worker_claim(
     if agent.updated_at != agent_updated_at:
         raise _WorkerRefused("run_candidate_stale")
     task = await _tasks.lock_for_update(session, business_id, request.task_id)
+    is_retry = (run.retry_task_id, run.retry_task_generation) == (
+        request.task_id, worker.task_generation
+    )
     if (
         task is None
         or task.project_id != project_id
         or task.owner_agent_id != agent_id
-        or task.status != TaskStatus.NOT_STARTED
+        or task.status not in (_CLAIMABLE if is_retry else (TaskStatus.NOT_STARTED,))
+        or (run.retry_task_id is not None and not is_retry)
         or task.execution_generation != worker.task_generation
         or task.attempts != pre_attempts
     ):
         raise _WorkerRefused("run_candidate_stale")
-    if task.attempts != 0 or task.execution_generation != 0:
+    if is_retry:
+        blocker = await retry_blocker(session, run, task, MAX_ATTEMPTS)
+        if blocker is not None:
+            raise _WorkerRefused(blocker)
+    elif task.attempts != 0 or task.execution_generation != 0:
         raise _WorkerRefused("retry_requires_attention")
     if await unresolved_task_hold(session, business_id, project_id, task_id=task.id) is not None:
         raise _WorkerRefused("ambiguous_execution")
@@ -858,6 +867,7 @@ async def _execute_inner(
     claimed = False
     lease_owner = f"executor:{uuid.uuid4().hex}"
     authorizer_id: str | None = None
+    managed_retry = False
     try:
         async with session.begin():
             await lock_project_admission(session, business_id, project_id)
@@ -921,6 +931,8 @@ async def _execute_inner(
                 reservation_id = reservation.id
                 reservation_key = reservation.idempotency_key
                 if run is not None:
+                    managed_retry = run.retry_task_id is not None
+                    run.retry_task_id = run.retry_task_generation = None
                     run.active_task_id = task_id
                     run.active_task_generation = ownership.execution_generation
                     authorizer_id = run.authorizing_user_id
@@ -1013,7 +1025,7 @@ async def _execute_inner(
             task_title=task_title,
             agent_id=agent_id,
             agent_name=agent_name,
-            attempt=pre_attempts,
+            attempt=max(pre_attempts, int(managed_retry)),
             execution_generation=ownership.execution_generation,
             lease_owner=ownership.lease_owner,
             settings=settings,

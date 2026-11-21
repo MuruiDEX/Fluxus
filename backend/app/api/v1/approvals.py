@@ -28,6 +28,7 @@ from app.persistence.repositories.concrete import (
     ApprovalRepository,
     UserRepository,
 )
+from app.persistence.repositories.project_runs import wake_project_run
 
 router = APIRouter()
 _approvals = ApprovalRepository()
@@ -51,6 +52,7 @@ async def _decide(
     settings = _settings(request)
     factory = _factory(request)
     decision: DecisionResponse | JSONResponse
+    project_id: str
     async with factory() as session:
         async with session.begin():
             external = await service.actions.get_for_approval(session, business_id, approval_id)
@@ -66,6 +68,7 @@ async def _decide(
                 if approval is None:  # pragma: no cover - decided implies present
                     # Never assume: roll back instead of recording a stray event.
                     raise HTTPException(status_code=500, detail="Approval state unclear.")
+                project_id = approval.project_id
                 if external is not None and to_status == "rejected":
                     await service.reject_action(session, external)
                 user = await _users.get(session, identity.user_id)
@@ -92,6 +95,7 @@ async def _decide(
                 current = await _approvals.get(session, business_id, approval_id)
                 if current is None:
                     raise HTTPException(status_code=404, detail="Approval not found in scope.")
+                project_id = current.project_id
                 if current.status == to_status:
                     decision = DecisionResponse(
                         outcome=f"already_{to_status}",
@@ -122,6 +126,8 @@ async def _decide(
             status=decision.outcome,
             user_id=identity.user_id,
         )
+    if isinstance(decision, DecisionResponse):
+        await wake_project_run(factory, business_id, project_id)
     return decision
 
 
@@ -172,9 +178,12 @@ async def reconcile_approval_action(
             action = await service.reconcile_action(session, business_id, approval_id)
             if action is None:
                 raise HTTPException(status_code=404, detail="External action not found in scope.")
-            return {
+            project_id = action.project_id
+            payload = {
                 "approvalId": approval_id,
                 "actionId": action.id,
                 "status": action.status,
                 "contract": _settings(request).contract_version,
             }
+    await wake_project_run(factory, business_id, project_id)
+    return payload

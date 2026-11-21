@@ -15,8 +15,6 @@ The audit event and the pre-existing reservation reconciliation run in the
 SAME transaction as a successful recovery. Refusal paths write nothing.
 """
 
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -24,21 +22,12 @@ from app.api.v1.executions import _factory, _settings
 from app.api.v1.schemas import RecoveryResponse
 from app.core.auth import check_client_contract
 from app.core.identity import require_business
-from app.execution.recovery import (
-    MODE_LEASE_TAKEOVER,
-    NOT_FOUND,
-    RECOVERED,
-)
-from app.execution.recovery import (
-    recover_task as recover_task_ownership,
-)
-from app.persistence.repositories.concrete import ActivityRepository, TaskRepository
+from app.execution.recovery import NOT_FOUND, RECOVERED, recover_task_transaction
+from app.persistence.repositories.concrete import TaskRepository
 from app.persistence.repositories.project_runs import get_project_run, lock_project_admission
-from app.usage.reconciliation import reconcile_task_reservations
 
 router = APIRouter()
 _tasks = TaskRepository()
-_activity = ActivityRepository()
 
 _GUARD = [Depends(check_client_contract), Depends(require_business)]
 
@@ -51,7 +40,6 @@ _GUARD = [Depends(check_client_contract), Depends(require_business)]
 async def recover_task(business_id: str, project_id: str, task_id: str, request: Request):
     settings = _settings(request)
     factory = _factory(request)
-    stale_seconds = float(settings.recovery_stale_minutes * 60)
     async with factory() as session:
         # Scope check first: the CAS below only filters business+id, so a
         # project mismatch must be rejected before anything is written.
@@ -69,15 +57,8 @@ async def recover_task(business_id: str, project_id: str, task_id: str, request:
                     409,
                     detail={"code": "run_managed", "message": "Use project run controls."},
                 )
-            outcome = await recover_task_ownership(
-                session,
-                business_id,
-                project_id,
-                task_id,
-                recovery_owner=f"recovery:{uuid.uuid4().hex}",
-                lease_ttl_seconds=settings.execution_lease_ttl_s,
-                lease_wall_seconds=settings.execution_lease_wall_s,
-                stale_seconds=stale_seconds,
+            outcome = await recover_task_transaction(
+                session, business_id, project_id, task_id, settings
             )
             if outcome.outcome != RECOVERED:
                 payload = RecoveryResponse(
@@ -91,39 +72,6 @@ async def recover_task(business_id: str, project_id: str, task_id: str, request:
                 # 409: the row exists but does not qualify (live lease, passed
                 # deadline, inconsistent state, lost race, or a finished run).
                 return JSONResponse(status_code=409, content=payload)
-            if outcome.mode == MODE_LEASE_TAKEOVER:
-                text = (
-                    f"Task {task_id} recovered from expired lease "
-                    f"(generation {outcome.generation}, reset to {outcome.status})."
-                )
-            else:
-                text = (
-                    f"Task {task_id} recovered from stale working state "
-                    f"(reset to {outcome.status})."
-                )
-            await _activity.append(
-                session,
-                business_id,
-                {
-                    "project_id": project_id,
-                    "agent_name": "recovery",
-                    "kind": "system",
-                    "text": text,
-                },
-            )
-            # The crashed run may have reached the provider: hold (never drop)
-            # its budget reservation so the exposure stays counted. On a lease
-            # takeover only NULL/older-generation holds are reconciled; the new
-            # generation's holds must remain untouched (S2.2.4.5). Ambiguous
-            # holds are never released by age (S2.2.4.6).
-            await reconcile_task_reservations(
-                session,
-                business_id,
-                task_id,
-                before_generation=(
-                    outcome.generation if outcome.mode == MODE_LEASE_TAKEOVER else None
-                ),
-            )
     return RecoveryResponse(
         outcome="recovered",
         taskId=task_id,

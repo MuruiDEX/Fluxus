@@ -185,7 +185,7 @@ async def test_managed_task_edits_and_old_browser_claims(session, api_client, mo
     task.status = "working"
     await session.commit()
     assert (await api_client.patch(TASK, headers=headers, json={"title": "new"})).status_code == 409
-    task.status = "failed"
+    task.status = "not_started"
     await session.commit()
     assert (await api_client.patch(TASK, headers=headers, json={"title": "new"})).status_code == 200
     assert (await _command(api_client, headers, "resume", 2)).status_code == 409

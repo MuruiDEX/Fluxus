@@ -46,6 +46,23 @@ class ProjectRun(IdMixin, TimestampMixin, Base):
             "AND (active_task_generation IS NULL OR active_task_generation > 0)",
             name="ck_project_runs_active_task",
         ),
+        ForeignKeyConstraint(
+            ["business_id", "project_id", "retry_task_id"],
+            ["tasks.business_id", "tasks.project_id", "tasks.id"],
+            name="fk_project_runs_retry_task",
+        ),
+        CheckConstraint(
+            "(retry_task_id IS NULL) = (retry_task_generation IS NULL) "
+            "AND (retry_task_generation IS NULL OR retry_task_generation >= 0) "
+            "AND (retry_task_id IS NULL OR active_task_id IS NULL)",
+            name="ck_project_runs_retry_task",
+        ),
+        CheckConstraint(
+            "recovered_task_generation IS NULL OR "
+            "(active_task_generation IS NOT NULL "
+            "AND recovered_task_generation = active_task_generation + 1)",
+            name="ck_project_runs_recovered_generation",
+        ),
     )
 
     business_id: Mapped[str] = mapped_column(String(ID_LEN))
@@ -58,4 +75,7 @@ class ProjectRun(IdMixin, TimestampMixin, Base):
     blocker_id: Mapped[str | None] = mapped_column(String(ID_LEN))
     active_task_id: Mapped[str | None] = mapped_column(String(ID_LEN))
     active_task_generation: Mapped[int | None]
+    recovered_task_generation: Mapped[int | None]
+    retry_task_id: Mapped[str | None] = mapped_column(String(ID_LEN))
+    retry_task_generation: Mapped[int | None]
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

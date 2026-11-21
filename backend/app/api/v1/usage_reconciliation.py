@@ -32,6 +32,7 @@ from app.persistence.repositories.concrete import (
     TaskRepository,
     UserRepository,
 )
+from app.persistence.repositories.project_runs import wake_project_run
 from app.usage.manual_reconciliation import (
     ChargeCommand,
     NoChargeCommand,
@@ -202,7 +203,7 @@ async def confirm_charge(
                 reservation = result.reservation
                 record = result.usage_record
                 reconciliation = result.reconciliation
-                return ConfirmChargeResponse(
+                response = ConfirmChargeResponse(
                     outcome="reconciled",
                     reservationId=reservation.id,
                     status=ReservationStatus.RECONCILED.value,
@@ -224,6 +225,9 @@ async def confirm_charge(
                     projectSpend=result.project_spend,
                     contract=settings.contract_version,
                 )
+        if response.project_id is not None:
+            await wake_project_run(factory, business_id, response.project_id, observe_active=True)
+        return response
     except ReconciliationNotFound as exc:
         raise _not_found() from exc
     except ReconciliationConflict as exc:
@@ -274,7 +278,7 @@ async def confirm_no_charge_resolution(
                 )
                 reservation = result.reservation
                 reconciliation = result.reconciliation
-                return ConfirmNoChargeResponse(
+                response = ConfirmNoChargeResponse(
                     outcome="no_charge",
                     reservationId=reservation.id,
                     status=ReservationStatus.RELEASED.value,
@@ -294,6 +298,9 @@ async def confirm_no_charge_resolution(
                     projectSpend=result.project_spend,
                     contract=settings.contract_version,
                 )
+        if response.project_id is not None:
+            await wake_project_run(factory, business_id, response.project_id, observe_active=True)
+        return response
     except ReconciliationNotFound as exc:
         raise _not_found() from exc
     except ReconciliationConflict as exc:

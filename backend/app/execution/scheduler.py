@@ -9,9 +9,10 @@ from graphlib import CycleError, TopologicalSorter
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.execution.executor import ExecutionRequest, ExecutionResult, WorkerAdmission, execute_task
+from app.execution.recovery import LEASE_COMPLETE, RECOVERED, lease_state, recover_task_transaction
 from app.integrations.repositories import IntegrationActionRepository
 from app.llm.base import LlmProvider
 from app.persistence.models.approval import Approval
@@ -64,6 +65,7 @@ def select_task(
     edges: dict[str, list[str]],
     approvals: Sequence[Approval],
     actions: list[dict],
+    retry: tuple[str, int] | None = None,
 ) -> Selection:
     """Validate the complete graph and pick the first ready task by ID."""
     nodes = {task.id: task for task in sorted(tasks, key=lambda task: task.id)}
@@ -83,7 +85,16 @@ def select_task(
     except CycleError:
         return Selection(state=RunState.NEEDS_ATTENTION, reason="cyclic_plan")
 
-    for task in nodes.values():
+    retry_task = nodes.get(retry[0]) if retry is not None else None
+    if retry is not None and (
+        retry_task is None
+        or retry_task.execution_generation != retry[1]
+        or retry_task.status not in ("failed", "not_started")
+    ):
+        return Selection(
+            state=RunState.NEEDS_ATTENTION, reason="retry_generation_conflict", blocker=retry[0]
+        )
+    for task in nodes.values() if retry is None else ():
         if task.status == "failed":
             return Selection(state=RunState.NEEDS_ATTENTION, reason="task_failed", blocker=task.id)
         if task.status == "working" or (
@@ -101,7 +112,7 @@ def select_task(
             )
 
     for task in nodes.values():
-        if task.status != "not_started" or any(
+        if (task.status != "not_started" and retry != (task.id, task.execution_generation)) or any(
             nodes[dep].status != "completed" for dep in edges.get(task.id, ())
         ):
             continue
@@ -110,7 +121,8 @@ def select_task(
         if (gate is None or gate.status == "approved") and (
             action is None or action["status"] == "succeeded"
         ):
-            return Selection(task=task)
+            if retry is None or retry == (task.id, task.execution_generation):
+                return Selection(task=task)
 
     pending = next((gate for gate in approvals if gate.status == "pending"), None)
     if pending is not None:
@@ -183,41 +195,72 @@ def _attention(run: ProjectRun, reason: str, blocker: str | None = None) -> None
     _record(run, Selection(state=state, reason=reason, blocker=blocker), None)
 
 
-async def _observe_active(session: AsyncSession, run: ProjectRun, now: datetime) -> bool:
+async def _observe_active(
+    session: AsyncSession, run: ProjectRun, now: datetime, settings: Settings
+) -> bool:
     """Return true only when the recorded attempt completed and was settled."""
     task_id, generation = run.active_task_id, run.active_task_generation
-    task = await TaskRepository().get(session, run.business_id, task_id)
-    if task is None or task.project_id != run.project_id or task.execution_generation != generation:
+    task = await TaskRepository().lock_for_update(session, run.business_id, task_id)
+    expected_generation = run.recovered_task_generation or generation
+    if (
+        task is None
+        or task.project_id != run.project_id
+        or task.execution_generation != expected_generation
+    ):
         _attention(run, "task_generation_mismatch", task_id)
         return False
     if task.status == "working":
-        if task.lease_expires_at is None or task.lease_expires_at <= now:
-            _attention(run, "lease_recovery_required", task_id)
-        else:
+        if (
+            run.recovered_task_generation is not None
+            or lease_state(task) != LEASE_COMPLETE
+            or task.lease_expires_at > task.lease_deadline_at
+        ):
+            _attention(run, "inconsistent_lease", task_id)
+            return False
+        if task.lease_expires_at > now:
             run.next_check_at = now + _SCAN_DELAY
-        return False
-    reservation = await session.scalar(
-        select(BudgetReservation.status)
-        .where(
-            BudgetReservation.business_id == run.business_id,
-            BudgetReservation.project_id == run.project_id,
-            BudgetReservation.task_id == task_id,
-            BudgetReservation.execution_generation == generation,
+            return False
+        outcome = await recover_task_transaction(
+            session, run.business_id, run.project_id, task_id, settings
         )
-        .limit(1)
-    )
-    if reservation not in ("consumed", "released"):
+        if outcome.outcome != RECOVERED:
+            if outcome.reason == "lease_active":
+                run.next_check_at = now + _SCAN_DELAY
+            else:
+                _attention(run, outcome.reason or "lease_recovery_required", task_id)
+            return False
+        run.recovered_task_generation = outcome.generation
+        await session.refresh(task)
+    statuses = (
+        await session.scalars(
+            select(BudgetReservation.status)
+            .where(
+                BudgetReservation.business_id == run.business_id,
+                BudgetReservation.project_id == run.project_id,
+                BudgetReservation.task_id == task_id,
+                BudgetReservation.execution_generation == generation,
+            )
+            .limit(2)
+        )
+    ).all()
+    reservation = statuses[0] if len(statuses) == 1 else None
+    if reservation not in ("consumed", "released", "reconciled"):
         _attention(run, "ambiguous_execution", task_id)
         return False
     if task.status == "completed" and reservation != "consumed":
         _attention(run, "execution_settlement_mismatch", task_id)
         return False
+    recovered = run.recovered_task_generation is not None
+    run.recovered_task_generation = None
     run.active_task_id = None
     run.active_task_generation = None
     if task.status != "completed":
-        _attention(
-            run, "task_failed" if task.status == "failed" else "attempt_interrupted", task_id
+        reason = (
+            "retry_required"
+            if recovered
+            else ("task_failed" if task.status == "failed" else "attempt_interrupted")
         )
+        _attention(run, reason, task_id)
         return False
     run.next_check_at = now if run.state in _RUNNABLE_STATES else None
     return True
@@ -226,13 +269,16 @@ async def _observe_active(session: AsyncSession, run: ProjectRun, now: datetime)
 async def prepare_candidate(
     factory: async_sessionmaker[AsyncSession],
     scope: RunScope,
+    settings: Settings | None = None,
 ) -> Candidate | None:
     async with factory() as session, session.begin():
         run = await _lock_run(session, scope)
         if run is None:
             return None
         now = await _now(session)
-        if run.active_task_id is not None and not await _observe_active(session, run, now):
+        if run.active_task_id is not None and not await _observe_active(
+            session, run, now, settings or get_settings()
+        ):
             return None
         if run.state not in _RUNNABLE_STATES:
             return None
@@ -263,7 +309,12 @@ async def prepare_candidate(
         actions = await IntegrationActionRepository().report_facts(
             session, scope.business_id, scope.project_id
         )
-        selection = select_task(tasks, edges, approvals, actions)
+        retry = (
+            (run.retry_task_id, run.retry_task_generation)
+            if run.retry_task_id is not None
+            else None
+        )
+        selection = select_task(tasks, edges, approvals, actions, retry)
         _record(run, selection, now + _SCAN_DELAY if selection.state in _RUNNABLE_STATES else None)
         if selection.task is None:
             return None
@@ -274,6 +325,7 @@ async def _finish_candidate(
     factory: async_sessionmaker[AsyncSession],
     candidate: Candidate,
     result: ExecutionResult,
+    settings: Settings,
 ) -> None:
     async with factory() as session, session.begin():
         run = await _lock_run(session, candidate.scope)
@@ -284,7 +336,7 @@ async def _finish_candidate(
                 candidate.task_id,
                 candidate.generation + 1,
             ):
-                await _observe_active(session, run, await _now(session))
+                await _observe_active(session, run, await _now(session), settings)
             return
         if (
             run.state != RunState.RUNNING
@@ -309,7 +361,7 @@ async def run_once(
     scope = await claim_due_run(factory)
     if scope is None:
         return False
-    candidate = await prepare_candidate(factory, scope)
+    candidate = await prepare_candidate(factory, scope, settings)
     if candidate is None or stopping.is_set():
         return True
     async with factory() as session:
@@ -326,7 +378,7 @@ async def run_once(
                 worker=WorkerAdmission(scope.id, candidate.version, candidate.generation, stopping),
             ),
         )
-    await _finish_candidate(factory, candidate, result)
+    await _finish_candidate(factory, candidate, result, settings)
     log.info(
         "worker task outcome",
         extra={

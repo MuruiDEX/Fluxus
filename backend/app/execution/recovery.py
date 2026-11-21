@@ -1,9 +1,7 @@
 """Expired-lease recovery takeover (Stage 18 S2.2.4.4).
 
-The existing recovery entry point is the explicit
-`POST .../tasks/{task_id}/recover` endpoint; there is no background recovery
-loop in this codebase. This module supplies the eligibility decision and the
-takeover sequence used by that endpoint:
+The manual recovery endpoint and managed scheduler share the same eligibility
+decision and takeover sequence:
 
 1. load the task in scope (read only);
 2. classify its ownership fields;
@@ -25,18 +23,70 @@ makes the task safely claimable again. A later normal claim/execute starts the
 next attempt under its own fresh generation and lease.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.core.logging import get_logger
-from app.persistence.repositories.concrete import TaskOwnership, TaskRepository
+from app.persistence.repositories.concrete import ActivityRepository, TaskOwnership, TaskRepository
+from app.usage.reconciliation import reconcile_task_reservations
 
 log = get_logger(__name__)
 
 _tasks = TaskRepository()
+
+
+async def recover_task_transaction(
+    session: AsyncSession,
+    business_id: str,
+    project_id: str,
+    task_id: str,
+    settings: Settings,
+) -> RecoveryOutcome:
+    """Apply the fence, audit and hold reconciliation in the caller's transaction."""
+    outcome = await recover_task(
+        session,
+        business_id,
+        project_id,
+        task_id,
+        recovery_owner=f"recovery:{uuid4().hex}",
+        lease_ttl_seconds=settings.execution_lease_ttl_s,
+        lease_wall_seconds=settings.execution_lease_wall_s,
+        stale_seconds=float(settings.recovery_stale_minutes * 60),
+    )
+    if outcome.outcome != RECOVERED:
+        return outcome
+    takeover = outcome.mode == MODE_LEASE_TAKEOVER
+    text = (
+        f"Task {task_id} recovered from expired lease "
+        f"(generation {outcome.generation}, reset to {outcome.status})."
+        if takeover
+        else f"Task {task_id} recovered from stale working state (reset to {outcome.status})."
+    )
+    await ActivityRepository().append(
+        session,
+        business_id,
+        {
+            "project_id": project_id,
+            "agent_name": "recovery",
+            "kind": "system",
+            "text": text,
+        },
+    )
+    await reconcile_task_reservations(
+        session,
+        business_id,
+        task_id,
+        before_generation=outcome.generation if takeover else None,
+    )
+    return outcome
+
 
 LEASE_NONE = "none"
 LEASE_INCOMPLETE = "incomplete"

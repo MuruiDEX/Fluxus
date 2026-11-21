@@ -367,8 +367,9 @@ async def test_expired_slot_parks_without_recovery_or_replay(session, api_client
     provider = _provider()
     assert await _tick(factory, provider)
     parked = await _read(factory)
-    assert parked.state == "needs_attention" and parked.reason_code == "lease_recovery_required"
+    assert parked.state == "needs_attention" and parked.reason_code == "ambiguous_execution"
     assert parked.active_task_generation == 1
+    assert parked.recovered_task_generation == 2
     assert not await _tick(factory, provider)
     assert provider.calls == []
 
