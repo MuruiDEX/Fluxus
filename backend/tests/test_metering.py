@@ -1023,9 +1023,11 @@ async def test_teamlead_reserve_and_settlement_do_not_deadlock(
         return await real_supersede(self, sess, business_id, key)
 
     async def recording_project_lock(self, sess, business_id, project_id):
-        pid = int((await sess.execute(text("SELECT pg_backend_pid()"))).scalar_one())
-        a_pid["pid"] = pid
-        a_attempting_project_lock.set()
+        # Admission now calls this lock helper as well. Observe only settlement.
+        if asyncio.current_task() is settle_task:
+            pid = int((await sess.execute(text("SELECT pg_backend_pid()"))).scalar_one())
+            a_pid["pid"] = pid
+            a_attempting_project_lock.set()
         return await real_project_lock(self, sess, business_id, project_id)
 
     monkeypatch.setattr(BudgetReservationRepository, "_supersede_attempt", paused_supersede)

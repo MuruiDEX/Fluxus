@@ -27,6 +27,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -38,6 +39,7 @@ from app.persistence.enums import TaskStatus, literal_check
 class Task(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     __tablename__ = "tasks"
     __table_args__ = (
+        UniqueConstraint("business_id", "project_id", "id", name="uq_tasks_project_id"),
         literal_check("status", TaskStatus, "ck_tasks_status"),
         CheckConstraint("progress >= 0 AND progress <= 100", name="ck_tasks_progress"),
         CheckConstraint("cost_accrued >= 0", name="ck_tasks_cost_nonneg"),

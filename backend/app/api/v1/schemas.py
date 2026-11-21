@@ -6,6 +6,7 @@ notes) and secrets never appear. No schema change vs the frozen contract.
 Stage 7.0 adds read shapes for the entities §1 already froze — same rules.
 """
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -16,6 +17,29 @@ class Contracted(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     contract: str = "v1"
+
+
+class RunCommand(BaseModel):
+    expected_version: int = Field(alias="expectedVersion", ge=0, strict=True)
+
+
+class ResumeRunCommand(RunCommand):
+    assume_responsibility: bool = Field(default=False, alias="assumeResponsibility")
+
+
+class ProjectRunResponse(Contracted):
+    run_id: str | None = Field(default=None, alias="runId")
+    state: Literal[
+        "idle", "running", "waiting_approval", "paused", "needs_attention", "completed", "cancelled"
+    ]
+    version: int
+    scheduling_mode: Literal["manual", "managed"] = Field(alias="schedulingMode")
+    reason_code: str | None = Field(default=None, alias="reasonCode")
+    blocker_id: str | None = Field(default=None, alias="blockerId")
+    active_task_id: str | None = Field(default=None, alias="activeTaskId")
+    active_task_generation: int | None = Field(default=None, alias="activeTaskGeneration")
+    allowed_actions: list[str] = Field(alias="allowedActions")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
 
 
 class TaskResponse(Contracted):

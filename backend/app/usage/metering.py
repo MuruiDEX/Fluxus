@@ -9,7 +9,7 @@ discipline as the executor:
 3. settle afterwards in its own committed transaction (ledger row + reservation
    CAS + project-spend recompute).
 
-Project-scoped calls reserve against `Project.ai_budget`. Business-scoped calls
+Project-scoped calls reserve against both applicable budgets. Business-scoped calls
 (questions/summary/plan, which have no project) reserve against
 `Business.ai_budget`. A business with no configured budget (zero/NULL) has no
 monetary limit, but still creates a zero-amount `best_effort` reservation: it
@@ -34,8 +34,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.llm.base import LlmProvider
 from app.llm.types import BadResponseError, LlmError, LlmRequest, LlmResponse
+from app.persistence.models.business import Business
+from app.persistence.models.project import Project
 from app.persistence.repositories.base import quantize_money
-from app.persistence.repositories.concrete import BusinessRepository, ProjectRepository
+from app.persistence.repositories.concrete import ProjectRepository
 from app.persistence.repositories.spend import recalculate_project_spend
 from app.persistence.repositories.usage import BudgetReservationRepository
 from app.usage import pricing
@@ -47,7 +49,6 @@ from app.usage.settlement import (
 )
 
 _projects = ProjectRepository()
-_businesses = BusinessRepository()
 _reservations = BudgetReservationRepository()
 
 
@@ -73,7 +74,7 @@ class BudgetExhaustedError(MeteringRefused):
     def __init__(self) -> None:
         super().__init__(
             "budget_exceeded",
-            "Concurrent calls exhausted the project AI budget; reservation refused.",
+            "Call would exceed the project or business AI budget; reservation refused.",
         )
 
 
@@ -104,6 +105,26 @@ class BusinessBudgetExhaustedError(BudgetExhaustedError):
             "budget_exceeded",
             "Concurrent calls exhausted the business AI budget; reservation refused.",
         )
+
+
+def project_reservation_terms(
+    project: Project,
+    business: Business,
+    bound: pricing.CostQuote | None,
+    settings: Settings,
+) -> tuple[Decimal, str]:
+    """Choose the hold from current, locked budget and opt-in settings."""
+    if bound is not None and bound.cost is not None:
+        return bound.cost, "guaranteed"
+    project_limited = (project.ai_budget or 0) > 0
+    business_limited = (business.ai_budget or 0) > 0
+    if project_limited and not project.allow_unpriced_ai:
+        raise BudgetUnpricedError()
+    if business_limited and not business.allow_unpriced_ai:
+        raise BusinessBudgetUnpricedError()
+    if project_limited or business_limited:
+        return quantize_money(settings.usage_unpriced_reserve_amount), "best_effort"
+    return Decimal("0"), "best_effort"
 
 
 def _input_bound(request: LlmRequest) -> int:
@@ -207,30 +228,15 @@ class TeamLeadMeter:
             async with session.begin():
                 if self.project_id is None:
                     return await self._reserve_business(session, bound, attempt_key)
-                project = await _projects.get(session, self.business_id, self.project_id)
+                business = await _reservations.lock_business(session, self.business_id)
+                if business is None:
+                    raise TargetMissingError("business")
+                project = await _projects.lock_for_update(
+                    session, self.business_id, self.project_id
+                )
                 if project is None:
                     raise TargetMissingError("project")
-                # Lock and refresh before choosing a reservation branch: a
-                # concurrent PATCH must not leave us deciding from the
-                # identity-map copy loaded before the lock.
-                await session.refresh(project, with_for_update=True)
-                ai_budget = project.ai_budget if project.ai_budget is not None else 0
-                if bound is not None:
-                    # Tariff + real output cap: a conservative bound exists.
-                    amount = bound.cost or Decimal("0")
-                    mode = "guaranteed"
-                elif ai_budget > 0 and not project.allow_unpriced_ai:
-                    # Budgeted project without a conservative bound -> fail
-                    # closed BEFORE the provider (Stage 18 S1).
-                    raise BudgetUnpricedError()
-                elif project.allow_unpriced_ai and ai_budget > 0:
-                    amount = quantize_money(self.settings.usage_unpriced_reserve_amount)
-                    mode = "best_effort"
-                else:
-                    # No budget to protect and no conservative bound: nothing
-                    # is guaranteed, so nothing may be labelled `guaranteed`.
-                    amount = Decimal("0")
-                    mode = "best_effort"
+                amount, mode = project_reservation_terms(project, business, bound, self.settings)
                 reservation = await _reservations.reserve(
                     session,
                     self.business_id,
@@ -250,12 +256,9 @@ class TeamLeadMeter:
         bound: pricing.CostQuote | None,
         attempt_key: str,
     ) -> tuple[str | None, str | None]:
-        business = await _businesses.get(session, self.business_id, self.business_id)
+        business = await _reservations.lock_business(session, self.business_id)
         if business is None:
             raise TargetMissingError("business")
-        # The unlocked get above may race a concurrent budget PATCH. Refresh
-        # under the row lock so the branch below uses the committed value.
-        await session.refresh(business, with_for_update=True)
         ai_budget = business.ai_budget if business.ai_budget is not None else 0
         if ai_budget <= 0:
             # No business limit: still reserve, so every attempt keeps a stable

@@ -139,6 +139,7 @@ class CapabilityContext:
     settings: "Settings"
     # Per-run write budget (shared by every write capability call).
     writes_used: int = 0
+    authorizer_id: str | None = None
 
     def consume_write(self) -> None:
         self.writes_used += 1

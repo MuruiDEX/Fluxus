@@ -47,6 +47,11 @@ from app.persistence.repositories.concrete import (
     ProjectRepository,
     TaskRepository,
 )
+from app.persistence.repositories.project_runs import (
+    finalization_blocked,
+    get_project_run,
+    lock_project_admission,
+)
 from app.teamlead.finalize import generate_finalization
 from app.teamlead.planning import generate_plan
 from app.teamlead.questions import BriefGenerationError, generate_questions
@@ -567,6 +572,9 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
         if brief is None:
             # Uniform 404: never distinguish "missing" from "foreign scope".
             raise HTTPException(status_code=404, detail="Brief not found in scope.")
+        if brief.project_id:
+            await lock_project_admission(session, business_id, brief.project_id)
+            await session.refresh(brief)
         if brief.status == "completed":
             # Idempotent repeat: the stored report, no LLM call.
             return _stored_finalization(brief, settings.contract_version)
@@ -582,11 +590,13 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
             raise HTTPException(status_code=500, detail="Brief state unclear.")
         goal = brief.goal
         project_id = brief.project_id
+        run_version = await _finalization_run_version(session, business_id, project_id)
         project = await _projects.get(session, business_id, project_id)
         if project is None:
             raise HTTPException(status_code=500, detail="Brief state unclear.")
-        tasks = await _tasks.list_for_project(session, business_id, project_id)
-        approvals = await _approvals.list_for_project(session, business_id, project_id)
+        tasks = await _tasks.list_for_project(session, business_id, project_id, limit=None)
+        approvals = await _approvals.list_for_project(session, business_id, project_id, limit=None)
+        task_snapshot = _finalizing.task_snapshot(tasks)
         external_actions = await _integration_actions.report_facts(session, business_id, project_id)
         facts = {
             "goal": goal,
@@ -617,8 +627,16 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
     try:
         async with factory() as session:
             async with session.begin():
+                await lock_project_admission(session, business_id, project_id)
+                if await _finalization_run_version(session, business_id, project_id) != run_version:
+                    raise FinalizeNotEligible("The project run changed. Refresh and try again.")
                 outcome = await _finalizing.finalize(
-                    session, business_id, brief_id, result=result, external_actions=external_actions
+                    session,
+                    business_id,
+                    brief_id,
+                    result=result,
+                    external_actions=external_actions,
+                    task_snapshot=task_snapshot,
                 )
                 if outcome is None:
                     raise _FinalizeRaceLost()
@@ -631,6 +649,8 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
         ) from exc
     except _FinalizeRaceLost:
         pass
+    except HTTPException:
+        raise
     except IntegrityError as exc:
         raise HTTPException(status_code=500, detail="Brief could not be finalized.") from exc
     except Exception as exc:
@@ -650,6 +670,19 @@ async def finalize_brief(business_id: str, brief_id: str, request: Request):
                 "message": f"Brief is {current.status}, not finalizable.",
             },
         )
+
+
+async def _finalization_run_version(session, business_id: str, project_id: str) -> int | None:
+    run = await get_project_run(session, business_id, project_id)
+    if finalization_blocked(run):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "run_plan_locked",
+                "message": "Pause the run and wait for active tasks to settle before finalizing.",
+            },
+        )
+    return run.version if run is not None else None
 
 
 async def _generate_report(factory, settings, business_id, brief_id, project_id, facts) -> dict:

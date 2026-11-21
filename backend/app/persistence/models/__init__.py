@@ -5,4 +5,4 @@ moment any model is imported (conftest's `create_all`, migrations metadata
 checks, etc.), independent of which repository happens to be imported first.
 """
 
-from app.persistence.models import integration, usage  # noqa: F401
+from app.persistence.models import integration, project_run, usage  # noqa: F401

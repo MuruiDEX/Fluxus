@@ -11,7 +11,8 @@ from alembic.config import Config
 from sqlalchemy import inspect, text
 
 from alembic import command
-from app.persistence.engine import create_engine_from_url
+from app.persistence.engine import create_engine_from_url, session_factory
+from tests.factories import make_world
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -122,12 +123,27 @@ async def test_upgrade_downgrade_cycle(mig_db_url: str, monkeypatch: pytest.Monk
     )
     cfg = _alembic_config(mig_db_url)
 
+    command.upgrade(cfg, "0013_integrations")
+    engine = create_engine_from_url(mig_db_url)
+    try:
+        async with session_factory(engine)() as session, session.begin():
+            await make_world(session)
+        command.upgrade(cfg, "head")
+        async with engine.connect() as conn:
+            assert await conn.scalar(text("SELECT count(*) FROM projects")) == 1
+            assert await conn.scalar(text("SELECT count(*) FROM project_runs")) == 0
+        command.downgrade(cfg, "0013_integrations")
+        assert "project_runs" not in await _table_names(mig_db_url)
+    finally:
+        await engine.dispose()
+
     command.upgrade(cfg, "head")
     names = await _table_names(mig_db_url)
     for expected in (
         "businesses",
         "agents",
         "projects",
+        "project_runs",
         "tasks",
         "task_dependencies",
         "approvals",

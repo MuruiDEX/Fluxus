@@ -746,7 +746,7 @@ class TaskRepository(BaseRepository[Task]):
         business_id: str,
         project_id: str,
         *,
-        limit: int = 200,
+        limit: int | None = 200,
         offset: int = 0,
     ) -> list[Task]:
         """Tasks of one project, stable id order (read API paging)."""
@@ -828,7 +828,7 @@ class ApprovalRepository(BaseRepository[Approval]):
         business_id: str,
         project_id: str,
         *,
-        limit: int = 200,
+        limit: int | None = 200,
         offset: int = 0,
     ) -> list[Approval]:
         """Approvals of one project, stable id order (read API paging)."""
@@ -1171,6 +1171,7 @@ class FinalizationRepository:
         *,
         result: dict,
         external_actions: list[dict] | None = None,
+        task_snapshot: list[tuple[str, int, str, str, str]] | None = None,
     ) -> tuple[dict, list[BrainEntry], ActivityEvent] | None:
         briefs = BriefRepository()
         brief = await briefs.get(session, business_id, brief_id)
@@ -1186,11 +1187,17 @@ class FinalizationRepository:
         project = await ProjectRepository().get(session, business_id, brief.project_id)
         if project is None:
             raise FinalizeNotEligible("Brief project is missing in scope.")
-        tasks = await TaskRepository().list_for_project(session, business_id, project.id)
+        tasks = await TaskRepository().list_for_project(
+            session, business_id, project.id, limit=None
+        )
+        if task_snapshot is not None and task_snapshot != self.task_snapshot(tasks):
+            raise FinalizeNotEligible("Tasks changed during finalization. Refresh and try again.")
         for task in tasks:
             if task.status not in self._TERMINAL_TASKS:
                 raise FinalizeNotEligible(f"Task {task.id} is {task.status}, not terminal.")
-        approvals = await ApprovalRepository().list_for_project(session, business_id, project.id)
+        approvals = await ApprovalRepository().list_for_project(
+            session, business_id, project.id, limit=None
+        )
         for approval in approvals:
             if approval.status not in self._TERMINAL_APPROVALS:
                 raise FinalizeNotEligible(
@@ -1266,6 +1273,13 @@ class FinalizationRepository:
         )
         return envelope, brains, event
 
+    @staticmethod
+    def task_snapshot(tasks: list[Task]) -> list[tuple[str, int, str, str, str]]:
+        return [
+            (task.id, task.execution_generation, task.status, task.title, task.summary)
+            for task in tasks
+        ]
+
 
 class UserRepository:
     """Identity root — deliberately NOT business-scoped (users exist first)."""
@@ -1310,14 +1324,16 @@ class MembershipRepository:
     """Access links user ↔ business. All reads filter by caller side."""
 
     async def lock_owner(self, session: AsyncSession, user_id: str, business_id: str) -> bool:
+        return await self.lock_role(session, user_id, business_id) == "owner"
+
+    async def lock_role(self, session: AsyncSession, user_id: str, business_id: str) -> str | None:
         from sqlalchemy import select
 
-        role = await session.scalar(
+        return await session.scalar(
             select(Membership.role)
             .where(Membership.user_id == user_id, Membership.business_id == business_id)
             .with_for_update()
         )
-        return role == "owner"
 
     async def businesses_of(self, session: AsyncSession, user_id: str) -> list[Membership]:
         from sqlalchemy import select

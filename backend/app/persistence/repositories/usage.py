@@ -3,11 +3,8 @@
 Discipline:
 - `UsageRepository.append` is idempotent on `idempotency_key` and exposes NO
   update/delete — the ledger is append-only by construction.
-- `BudgetReservationRepository.reserve` takes the project row lock, and
-  `reserve_business` takes the business row lock (`SELECT … FOR UPDATE`), so
-  workers sharing a scope serialize on its budget instead of racing a
-  read-then-write. The caller MUST keep the network call OUTSIDE this
-  transaction.
+- Both reservation paths take the business row lock; project reservations
+  then lock the project. The caller keeps provider I/O outside the transaction.
 - `set_status` uses conditional UPDATEs (active → target) so settlement is a
   compare-and-set: exactly one caller settles a reservation.
 """
@@ -300,8 +297,7 @@ class UsageRepository:
         """`(confirmed, estimated)` spend for ALL usage in the business.
 
         Business-scoped Team Lead calls must see project-linked spend too: the
-        business ceiling is an umbrella over every AI attempt, while project
-        calls keep their existing project-only enforcement.
+        business ceiling is an umbrella over every AI attempt.
         """
         stmt = (
             select(
@@ -675,6 +671,48 @@ class BudgetReservationRepository:
         ).scalar_one()
         return int(last_seq) + 1
 
+    async def lock_business(self, session: AsyncSession, business_id: str) -> Business | None:
+        stmt = (
+            select(Business)
+            .where(Business.id == business_id)
+            # NO KEY UPDATE serializes admissions and budget edits while allowing
+            # foreign-key checks on usage rows being written by settlement.
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def _fits_business_budget(
+        self, session: AsyncSession, business: Business, amount: Decimal
+    ) -> bool:
+        budget = business.ai_budget or Decimal("0")
+        if budget <= 0:
+            return True
+
+        # Use one statement snapshot: settlement can move a hold into the
+        # ledger while admission holds the business row lock.
+        ledger = select(func.coalesce(func.sum(UsageRecord.cost_amount), 0)).where(
+            UsageRecord.business_id == business.id,
+            UsageRecord.usage_status.in_(("confirmed", "estimated")),
+        )
+        pending = select(func.coalesce(func.sum(BudgetReservation.amount), 0)).where(
+            BudgetReservation.business_id == business.id,
+            BudgetReservation.status.in_(_PENDING),
+        )
+        unknown = (
+            select(func.coalesce(func.sum(BudgetReservation.amount), 0))
+            .join(UsageRecord, UsageRecord.id == BudgetReservation.usage_record_id)
+            .where(
+                BudgetReservation.business_id == business.id,
+                BudgetReservation.status == "consumed",
+                UsageRecord.business_id == business.id,
+                UsageRecord.usage_status == "unknown",
+            )
+        )
+        exposure = ledger.scalar_subquery() + pending.scalar_subquery() + unknown.scalar_subquery()
+        committed = (await session.execute(select(exposure))).scalar_one()
+        return committed + amount <= budget
+
     async def reserve(
         self,
         session: AsyncSession,
@@ -689,9 +727,9 @@ class BudgetReservationRepository:
         mode: str = "guaranteed",
         execution_generation: int | None = None,
     ) -> BudgetReservation | None:
-        """Reserve against the project's `ai_budget`, atomically.
+        """Reserve against the project and business AI budgets atomically.
 
-        Locks the project row, sums confirmed spend + estimated exposure +
+        Locks the business before the project, sums confirmed spend + estimated exposure +
         consumed unknown-price holds + pending reservations, and inserts an
         `active` reservation iff the budget ceiling still holds. Returns None
         when the reservation
@@ -705,6 +743,9 @@ class BudgetReservationRepository:
         reserve against without a project).
         """
         amount = quantize_money(amount)
+        business = await self.lock_business(session, business_id)
+        if business is None:
+            return None
         lock = (
             select(Project)
             .where(Project.business_id == business_id, Project.id == project_id)
@@ -713,6 +754,8 @@ class BudgetReservationRepository:
         )
         project = (await session.execute(lock)).scalar_one_or_none()
         if project is None:
+            return None
+        if not await self._fits_business_budget(session, business, amount):
             return None
         await self._supersede_attempt(session, business_id, attempt_key)
         budget = project.ai_budget if project.ai_budget is not None else Decimal("0")
@@ -764,12 +807,11 @@ class BudgetReservationRepository:
     ) -> BudgetReservation | None:
         """Reserve against the business ceiling for a business-scoped call.
 
-        Locks the business row so two business-scoped Team Lead calls
-        serialize. The ceiling counts ALL business usage (project-linked and
+        Shares the business row lock with project-scoped admissions.
+        The ceiling counts ALL business usage (project-linked and
         business-scoped confirmed + estimated rows), consumed holds linked to
         unknown-price rows, plus every active/ambiguous reservation, because
-        the business budget is an umbrella over all AI attempts. Project-scoped
-        calls are not refused by this method.
+        the business budget is an umbrella over all AI attempts.
 
         A NULL/zero business budget means "no limit": callers still create a
         zero-amount `best_effort` hold so the attempt stays visible, but the
@@ -777,27 +819,10 @@ class BudgetReservationRepository:
         the attempt; it does not reserve money or represent financial exposure.
         """
         amount = quantize_money(amount)
-        lock = (
-            select(Business)
-            .where(Business.id == business_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        business = (await session.execute(lock)).scalar_one_or_none()
-        if business is None:
+        business = await self.lock_business(session, business_id)
+        if business is None or not await self._fits_business_budget(session, business, amount):
             return None
         await self._supersede_attempt(session, business_id, attempt_key)
-        budget = business.ai_budget if business.ai_budget is not None else Decimal("0")
-        if budget > 0:
-            usage_repo = UsageRepository()
-            confirmed, estimated = await usage_repo.business_usage_totals(session, business_id)
-            unknown_holds = await usage_repo.unknown_consumed_reservation_total(
-                session, business_id
-            )
-            pending = await self.business_pending_total(session, business_id)
-            committed = confirmed + estimated + unknown_holds + pending
-            if committed + amount > budget:
-                return None
         run_seq = await self._next_run_seq(session, business_id, attempt_key)
         reservation = BudgetReservation(
             id=new_id(),

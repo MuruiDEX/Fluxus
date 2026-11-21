@@ -37,6 +37,8 @@ _REFUSED_HTTP = {
     "budget_exceeded": 409,
     "budget_unpriced": 409,
     "approval_required": 409,
+    "run_managed": 409,
+    "project_finalized": 409,
 }
 
 

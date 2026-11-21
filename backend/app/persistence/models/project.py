@@ -10,7 +10,7 @@ transaction as the task-cost writes. See contract §5.1.
 
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Numeric, String
+from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.persistence.base import ID_LEN, Base, BusinessScopedMixin, IdMixin, TimestampMixin
@@ -22,6 +22,7 @@ MONEY = Numeric(12, 2)
 class Project(BusinessScopedMixin, IdMixin, TimestampMixin, Base):
     __tablename__ = "projects"
     __table_args__ = (
+        UniqueConstraint("business_id", "id", name="uq_projects_business_id"),
         literal_check("status", ProjectStatus, "ck_projects_status"),
         CheckConstraint("progress >= 0 AND progress <= 100", name="ck_projects_progress"),
         CheckConstraint("ai_spent >= 0", name="ck_projects_ai_spent_nonneg"),

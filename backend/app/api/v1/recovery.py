@@ -33,6 +33,7 @@ from app.execution.recovery import (
     recover_task as recover_task_ownership,
 )
 from app.persistence.repositories.concrete import ActivityRepository, TaskRepository
+from app.persistence.repositories.project_runs import get_project_run, lock_project_admission
 from app.usage.reconciliation import reconcile_task_reservations
 
 router = APIRouter()
@@ -62,6 +63,12 @@ async def recover_task(business_id: str, project_id: str, task_id: str, request:
         # must be top-level, like the executor claim.
         await session.rollback()
         async with session.begin():
+            await lock_project_admission(session, business_id, project_id)
+            if await get_project_run(session, business_id, project_id) is not None:
+                raise HTTPException(
+                    409,
+                    detail={"code": "run_managed", "message": "Use project run controls."},
+                )
             outcome = await recover_task_ownership(
                 session,
                 business_id,

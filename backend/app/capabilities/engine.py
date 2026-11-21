@@ -19,6 +19,8 @@ import asyncio
 import json
 from typing import Any
 
+from sqlalchemy import select
+
 from app.capabilities.builtin import HANDLERS
 from app.capabilities.protocol import (
     capability_audit_text,
@@ -26,7 +28,7 @@ from app.capabilities.protocol import (
     format_tool_results,
     parse_tool_requests,
 )
-from app.capabilities.registry import get_spec
+from app.capabilities.registry import get_spec, resolve_grants
 from app.capabilities.types import (
     CapabilityCall,
     CapabilityContext,
@@ -39,13 +41,34 @@ from app.capabilities.types import (
 from app.core.logging import get_logger
 from app.llm.types import LlmUsage
 from app.llm.validate import validate_against_schema
-from app.persistence.repositories.concrete import ActivityRepository, TaskRepository
+from app.persistence.models.agent import Agent
+from app.persistence.repositories.concrete import (
+    ActivityRepository,
+    MembershipRepository,
+    TaskRepository,
+)
 
 _activity = ActivityRepository()
 _tasks = TaskRepository()
 log = get_logger(__name__)
 
 _RESULT_PREVIEW_MARGIN = 80
+
+
+async def _worker_grant_current(ctx: CapabilityContext, spec: CapabilitySpec) -> bool:
+    if ctx.authorizer_id is None:
+        return True
+    if not await MembershipRepository().lock_role(ctx.session, ctx.authorizer_id, ctx.business_id):
+        return False
+    agent = await ctx.session.scalar(
+        select(Agent)
+        .where(Agent.id == ctx.agent_id, Agent.business_id == ctx.business_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    return (
+        agent is not None and agent.hired and spec in resolve_grants(agent.tools, agent.permissions)
+    )
 
 
 def _bound_data(result: CapabilityResult, char_cap: int) -> CapabilityResult:
@@ -146,6 +169,13 @@ class CapabilityExecutor:
                 # timeout can never hide a committed side effect.
                 try:
                     async with asyncio.timeout(timeout_s):
+                        if not await _worker_grant_current(ctx, spec):
+                            return failed_result(
+                                spec.id,
+                                "not_authorized",
+                                "Current membership or capability grant is unavailable.",
+                                request_id=call.request_id,
+                            )
                         owned = await _tasks.owned_now(
                             ctx.session,
                             ctx.business_id,

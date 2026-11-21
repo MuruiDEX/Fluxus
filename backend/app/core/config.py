@@ -8,7 +8,7 @@ import math
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Recovery cutoff policy (Stage 18 S2.2.3). 40 minutes is the smallest whole
@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     # --- Execution API (Stage 5). ---
     # Hard ceiling for a single LLM call inside one execution.
     execution_max_timeout_s: float = 300.0
+    # Dedicated project worker settings. The API never starts a worker.
+    execution_worker_concurrency: int = Field(default=2, ge=1, le=16)
+    execution_worker_poll_s: float = Field(default=1.0, ge=0.1, le=60)
+    execution_worker_drain_s: float = Field(default=30.0, ge=0, le=600)
     # --- Execution ownership lease (Stage 18 S2.2.4.2). ---
     # A successful claim grants a lease that the heartbeat extends every
     # interval. The wall is the absolute upper bound: heartbeats clamp the

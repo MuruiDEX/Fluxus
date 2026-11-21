@@ -16,14 +16,27 @@ from app.execution.prompts import RESULT_SCHEMA, build_system_prompt, build_user
 from app.llm.adapters.openai_compat import OpenAICompatProvider
 from app.llm.base import LlmProvider
 from app.llm.mock import MockProvider
-from app.llm.types import LlmUsage, ProviderError, TransientProviderError
+from app.llm.types import (
+    LlmMessage,
+    LlmRequest,
+    LlmResponse,
+    LlmUsage,
+    ProviderError,
+    TransientProviderError,
+)
 from app.persistence.engine import session_factory
+from app.persistence.models.task import Task
 from app.persistence.models.usage import BudgetReservation, UsageRecord
-from app.persistence.repositories.concrete import ProjectRepository, TaskRepository
+from app.persistence.repositories.concrete import (
+    BusinessRepository,
+    ProjectRepository,
+    TaskRepository,
+)
 from app.persistence.repositories.usage import BudgetReservationRepository
 from app.usage import pricing
+from app.usage.metering import BudgetExhaustedError, BusinessBudgetExhaustedError, TeamLeadMeter
 from app.usage.tariffs import Tariff
-from tests.factories import BIZ, make_task, make_world
+from tests.factories import BIZ, make_project, make_task, make_world
 
 MODEL = "mock"
 TARIFF = Tariff(
@@ -675,3 +688,154 @@ async def test_concurrent_reservations_respect_budget(
     assert outcomes == ["completed", "refused"]
     consumed = [r for r in await _reservations(session) if r.status == "consumed"]
     assert len(consumed) == 1
+
+
+@pytest.mark.parametrize("competitor", ["project", "business", "project_teamlead"])
+async def test_business_budget_serializes_admissions(
+    session: AsyncSession, test_engine: AsyncEngine, competitor: str
+) -> None:
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await make_project(session, "proj_2")
+    await make_task(session, status="not_started")
+    await make_task(session, "t_2", project_id="proj_2", status="not_started")
+    await BusinessRepository().update(session, BIZ, BIZ, {"ai_budget": _bound()})
+    await session.commit()
+
+    factory = session_factory(test_engine)
+    release = asyncio.Event()
+
+    class HeldProvider(MockProvider):
+        async def complete(self, request: LlmRequest) -> LlmResponse:
+            response = await super().complete(request)
+            await release.wait()
+            return response
+
+    providers = [HeldProvider(texts=['{"summary": "x"}']) for _ in range(2)]
+
+    async def run_task(provider: MockProvider, project_id: str, task_id: str) -> str:
+        async with factory() as sess:
+            result = await execute_task(
+                sess, provider, ExecutionRequest(BIZ, project_id, task_id, settings=_settings())
+            )
+        return result.error_code or result.outcome
+
+    async def run_competitor() -> str:
+        if competitor == "project":
+            return await run_task(providers[1], "proj_2", "t_2")
+        meter = TeamLeadMeter(
+            factory,
+            _settings(),
+            business_id=BIZ,
+            brief_id="b1",
+            call_kind="brief_questions" if competitor == "business" else "brief_finalize",
+            project_id=None if competitor == "business" else "proj_2",
+        )
+        try:
+            await meter.complete(
+                providers[1],
+                LlmRequest(
+                    messages=[LlmMessage(role="user", content="Hello")],
+                    model=MODEL,
+                    max_tokens=MAX_OUT,
+                ),
+                generation=0,
+            )
+        except BudgetExhaustedError as exc:
+            if competitor == "business":
+                assert isinstance(exc, BusinessBudgetExhaustedError)
+            return exc.code
+        return "completed"
+
+    flights = [
+        asyncio.create_task(run_task(providers[0], "proj_1", "t_1")),
+        asyncio.create_task(run_competitor()),
+    ]
+    try:
+        done, _ = await asyncio.wait(flights, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+        assert len(done) == 1
+        assert next(iter(done)).result() == "budget_exceeded"
+        holds = await _reservations(session)
+        assert len(holds) == 1 and holds[0].status == "active"
+    finally:
+        release.set()
+        await asyncio.gather(*flights, return_exceptions=True)
+
+    assert sorted(flight.result() for flight in flights) == ["budget_exceeded", "completed"]
+    assert sorted(len(provider.calls) for provider in providers) == [0, 1]
+    usages = await _usages(session)
+    holds = await _reservations(session)
+    assert len(usages) == len(holds) == 1
+    assert usages[0].usage_status == "confirmed"
+    assert holds[0].status == "consumed" and holds[0].usage_record_id == usages[0].id
+    tasks = (await session.execute(select(Task))).scalars().all()
+    for task in tasks:
+        if task.id != holds[0].task_id:
+            assert task.status == "not_started"
+            assert task.execution_generation == 0
+            assert task.lease_owner is None
+
+
+async def test_ambiguous_task_hold_blocks_other_project(session: AsyncSession) -> None:
+    pricing.register_tariff(TARIFF)
+    await make_world(session)
+    await make_project(session, "proj_2")
+    await make_task(session, status="not_started")
+    await make_task(session, "t_2", project_id="proj_2", status="not_started")
+    await BusinessRepository().update(session, BIZ, BIZ, {"ai_budget": _bound()})
+    lost = TransientProviderError("connection lost after send")
+    lost.ambiguous = True
+    assert (await _run(session, MockProvider(errors=[lost]), _request())).outcome == "failed"
+
+    provider = MockProvider(texts=['{"summary": "x"}'])
+    request = ExecutionRequest(BIZ, "proj_2", "t_2", settings=_settings())
+    result = await _run(session, provider, request)
+
+    assert result.outcome == "refused" and result.error_code == "budget_exceeded"
+    assert provider.calls == []
+    holds = await _reservations(session)
+    assert len(holds) == 1 and holds[0].status == "ambiguous"
+    assert await _usages(session) == []
+
+
+@pytest.mark.parametrize(
+    ("project_budget", "project_opt_in", "business_opt_in", "allowed"),
+    [
+        ("0", False, False, False),
+        ("0", False, True, True),
+        ("5", True, False, False),
+        ("5", False, True, False),
+        ("5", True, True, True),
+    ],
+)
+async def test_unpriced_execution_requires_opt_in_for_each_limited_scope(
+    session: AsyncSession,
+    project_budget: str,
+    project_opt_in: bool,
+    business_opt_in: bool,
+    allowed: bool,
+) -> None:
+    await make_world(session)
+    await make_task(session, status="not_started")
+    await ProjectRepository().update(
+        session, BIZ, "proj_1",
+        {"ai_budget": Decimal(project_budget), "allow_unpriced_ai": project_opt_in},
+    )
+    await BusinessRepository().update(
+        session, BIZ, BIZ, {"ai_budget": Decimal("5"), "allow_unpriced_ai": business_opt_in}
+    )
+    provider = MockProvider(texts=['{"summary": "x"}'])
+
+    result = await _run(session, provider, _request())
+
+    holds = await _reservations(session)
+    if allowed:
+        assert result.outcome == "completed"
+        assert len(provider.calls) == len(holds) == 1
+        assert holds[0].mode == "best_effort" and holds[0].amount == Decimal("0.25")
+        assert holds[0].status == "consumed"
+        assert (await _usages(session))[0].usage_status == "unknown"
+    else:
+        assert result.outcome == "refused" and result.error_code == "budget_unpriced"
+        assert not provider.calls and not holds
+        assert await make_task_status(session) == "not_started"

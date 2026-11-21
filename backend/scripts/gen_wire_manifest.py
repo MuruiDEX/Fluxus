@@ -87,7 +87,7 @@ def build_manifest() -> dict:
         and issubclass(obj, BaseModel)
         and obj is not BaseModel
         and obj.__module__ == schemas.__name__
-        and name not in ("ExecutionCreate", "Contracted")  # request body / base, not wire
+        and name not in ("ExecutionCreate", "RunCommand", "ResumeRunCommand", "Contracted")
     }
     app = create_app()
     endpoints: list[dict[str, str]] = []

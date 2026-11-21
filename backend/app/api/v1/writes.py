@@ -57,6 +57,11 @@ from app.persistence.repositories.concrete import (
     TaskRepository,
     UserRepository,
 )
+from app.persistence.repositories.project_runs import (
+    get_project_run,
+    lock_project_admission,
+    plan_edit_blocker,
+)
 
 router = APIRouter()
 _brain = BrainRepository()
@@ -104,6 +109,22 @@ def _invalid_value(exc: ValueError) -> HTTPException:
 async def _actor_email(session, identity: Identity) -> str:
     user = await _users.get(session, identity.user_id)
     return user.email if user is not None else identity.user_id
+
+
+async def _guard_plan_edit(session, business_id: str, project_id: str) -> None:
+    await lock_project_admission(session, business_id, project_id)
+    run = await get_project_run(session, business_id, project_id)
+    if run is None:
+        return
+    if await plan_edit_blocker(session, run):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "run_plan_locked",
+                "message": "Pause the run and wait for active tasks to settle before editing.",
+            },
+        )
+    run.version += 1
 
 
 @router.patch(
@@ -247,6 +268,8 @@ async def patch_project(
                 project = await _projects.get(session, business_id, project_id)
                 if project is None:
                     raise HTTPException(status_code=404, detail="Project not found in scope.")
+                if patch.keys() & {"title", "goal", "team_ids"}:
+                    await _guard_plan_edit(session, business_id, project_id)
                 if "team_ids" in patch:
                     await _projects._require_agents(session, business_id, patch["team_ids"])
                 if patch:
@@ -311,6 +334,8 @@ async def patch_task(
                 if task is None or task.project_id != project_id:
                     # Uniform 404: never distinguish "missing" from "foreign scope".
                     raise HTTPException(status_code=404, detail="Task not found in scope.")
+                if patch.keys() & {"title", "summary", "owner_agent_id", "gate_at"}:
+                    await _guard_plan_edit(session, business_id, project_id)
                 if "owner_agent_id" in patch:
                     owner = await _agents.get(session, business_id, patch["owner_agent_id"])
                     if owner is None:

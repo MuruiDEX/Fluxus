@@ -55,6 +55,7 @@ from app.execution.prompts import (
     fit_envelope,
 )
 from app.integrations import bootstrap as _integration_bootstrap  # noqa: F401
+from app.integrations.repositories import IntegrationActionRepository
 from app.llm.base import LlmProvider
 from app.llm.types import (
     BadResponseError,
@@ -71,19 +72,27 @@ from app.persistence.models.agent import Agent
 from app.persistence.models.business import Business
 from app.persistence.models.project import Project
 from app.persistence.models.task import Task, TaskDependency
-from app.persistence.repositories.base import quantize_money
 from app.persistence.repositories.concrete import (
     ActivityRepository,
     AgentRepository,
     ApprovalRepository,
+    BriefRepository,
     BusinessRepository,
+    MembershipRepository,
     ProjectRepository,
     TaskOwnership,
     TaskRepository,
 )
+from app.persistence.repositories.project_runs import (
+    get_project_run,
+    lock_project_admission,
+    manual_admission_blocker,
+    unresolved_task_hold,
+)
 from app.persistence.repositories.spend import recalculate_project_spend
 from app.persistence.repositories.usage import BudgetReservationRepository
 from app.usage import pricing
+from app.usage.metering import BudgetUnpricedError, project_reservation_terms
 from app.usage.settlement import (
     SettlementRejected,
     mark_ambiguous,
@@ -119,6 +128,16 @@ _NONSTARTERS = (LlmConfigurationError,)
 
 
 @dataclass
+class WorkerAdmission:
+    """Internal candidate. Authority is checked inside the claim transaction."""
+
+    run_id: str
+    version: int
+    task_generation: int
+    stopping: asyncio.Event
+
+
+@dataclass
 class ExecutionRequest:
     business_id: str
     project_id: str
@@ -130,6 +149,7 @@ class ExecutionRequest:
     # Separate-session factory for the lease heartbeat. Production passes the
     # app factory; tests may leave it unset when the session is engine-bound.
     session_factory: async_sessionmaker[AsyncSession] | None = None
+    worker: WorkerAdmission | None = None
 
 
 @dataclass
@@ -165,17 +185,19 @@ class _Claim:
     ownership: TaskOwnership | None = None
 
 
+def _managed_refusal(task_id: str, status: str, attempts: int) -> ExecutionResult:
+    return ExecutionResult(
+        outcome="refused",
+        task_id=task_id,
+        status=status,
+        attempts=attempts,
+        error_code="run_managed",
+        error_message="Use project run controls for a managed project.",
+    )
+
+
 class _BudgetRaceLost(Exception):
     """Reservation lost the budget race; the surrounding txn must roll back."""
-
-
-class _BudgetPolicyRefused(Exception):
-    """Current (locked) project policy refuses the call before the provider."""
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 class _OwnershipLost(Exception):
@@ -240,32 +262,6 @@ async def _complete_with_ownership(
                 await task
 
 
-def _project_reservation_policy(
-    project: Project,
-    bound: pricing.CostQuote | None,
-    settings: Settings,
-) -> tuple[Decimal, str]:
-    """Choose amount/mode from the CURRENT project row, under its lock.
-
-    A stale context snapshot must never decide that an unbudgeted project gets
-    a zero-sized `guaranteed` hold after a concurrent PATCH activates a budget.
-    """
-    ai_budget = project.ai_budget if project.ai_budget is not None else Decimal("0")
-    if bound is not None and bound.cost is not None:
-        return bound.cost, "guaranteed"
-    if ai_budget > 0 and not project.allow_unpriced_ai:
-        raise _BudgetPolicyRefused(
-            "budget_unpriced",
-            "Project has an AI budget but this model has no priceable tariff; "
-            "set a tariff or enable allow_unpriced_ai.",
-        )
-    if project.allow_unpriced_ai and ai_budget > 0:
-        # best_effort: internal reserve only, NOT a proven maximum.
-        return quantize_money(settings.usage_unpriced_reserve_amount), "best_effort"
-    # No budget to protect and no bound: nothing is guaranteed.
-    return Decimal("0"), "best_effort"
-
-
 _tasks = TaskRepository()
 _agents = AgentRepository()
 _projects = ProjectRepository()
@@ -290,7 +286,7 @@ async def _load_context(
 
 
 async def _dependencies_completed(
-    session: AsyncSession, business_id: str, task_id: str
+    session: AsyncSession, business_id: str, task_id: str, *, project_id: str | None = None
 ) -> bool | None:
     """True if all deps completed; None if a dep reference dangles (corrupt data)."""
     dep_ids = (
@@ -304,11 +300,10 @@ async def _dependencies_completed(
     )
     if not dep_ids:
         return True
-    rows = (
-        await session.execute(
-            select(Task.id, Task.status, Task.business_id).where(Task.id.in_(dep_ids))
-        )
-    ).all()
+    stmt = select(Task.id, Task.status, Task.business_id).where(Task.id.in_(dep_ids))
+    if project_id is not None:
+        stmt = stmt.where(Task.project_id == project_id)
+    rows = (await session.execute(stmt)).all()
     found = {row[0]: (row[1], row[2]) for row in rows}
     for dep_id in dep_ids:
         hit = found.get(dep_id)
@@ -317,6 +312,76 @@ async def _dependencies_completed(
         if hit[0] != TaskStatus.COMPLETED.value:
             return False
     return True
+
+
+class _WorkerRefused(Exception):
+    pass
+
+
+async def _authorize_worker_claim(
+    session: AsyncSession,
+    request: ExecutionRequest,
+    agent_id: str,
+    agent_updated_at: object,
+    pre_attempts: int,
+):
+    """Called under the project admission lock, before the budget locks."""
+    worker = request.worker
+    assert worker is not None
+    if worker.stopping.is_set():
+        raise _WorkerRefused("worker_stopping")
+    business_id, project_id = request.business_id, request.project_id
+    run = await get_project_run(session, business_id, project_id)
+    if (
+        run is None
+        or run.id != worker.run_id
+        or run.state != "running"
+        or run.version != worker.version
+        or run.active_task_id is not None
+    ):
+        raise _WorkerRefused("run_candidate_stale")
+    if not await MembershipRepository().lock_role(session, run.authorizing_user_id, business_id):
+        raise _WorkerRefused("access_revoked")
+    agent = await session.scalar(
+        select(Agent)
+        .where(Agent.business_id == business_id, Agent.id == agent_id)
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
+    if agent is None or not agent.hired:
+        raise _WorkerRefused("agent_disabled")
+    if agent.updated_at != agent_updated_at:
+        raise _WorkerRefused("run_candidate_stale")
+    task = await _tasks.lock_for_update(session, business_id, request.task_id)
+    if (
+        task is None
+        or task.project_id != project_id
+        or task.owner_agent_id != agent_id
+        or task.status != TaskStatus.NOT_STARTED
+        or task.execution_generation != worker.task_generation
+        or task.attempts != pre_attempts
+    ):
+        raise _WorkerRefused("run_candidate_stale")
+    if task.attempts != 0 or task.execution_generation != 0:
+        raise _WorkerRefused("retry_requires_attention")
+    if await unresolved_task_hold(session, business_id, project_id, task_id=task.id) is not None:
+        raise _WorkerRefused("ambiguous_execution")
+    deps = await _dependencies_completed(session, business_id, task.id, project_id=project_id)
+    if deps is not True:
+        raise _WorkerRefused("run_candidate_stale")
+    if task.approval_gate_id is not None:
+        gate = await _approvals.get(session, business_id, task.approval_gate_id)
+        if gate is None or gate.project_id != project_id or gate.status != "approved":
+            raise _WorkerRefused("run_candidate_stale")
+        action = await IntegrationActionRepository().get_for_approval(
+            session, business_id, task.approval_gate_id
+        )
+        if action is not None and (action.project_id != project_id or action.status != "succeeded"):
+            raise _WorkerRefused("run_candidate_stale")
+    brief = await BriefRepository().get_for_project(session, business_id, project_id)
+    if brief is None or brief.status != "planned":
+        raise _WorkerRefused("run_plan_required")
+    return run
 
 
 async def _append_event(
@@ -608,6 +673,10 @@ async def _execute_inner(
             error_message="Task (or its agent/project/business) not found in scope.",
         )
     task, agent, project, business = loaded
+    if request.worker is None and (
+        await get_project_run(session, business_id, project_id) is not None
+    ):
+        return _managed_refusal(task_id, task.status, task.attempts)
     if task.status == TaskStatus.COMPLETED.value:
         return ExecutionResult(
             outcome="already_completed",
@@ -769,6 +838,7 @@ async def _execute_inner(
     task_title = task.title
     pre_status, pre_attempts = task.status, task.attempts
     agent_id = agent.id
+    agent_updated_at = agent.updated_at
     await session.rollback()
     attempt_key = f"{business_id}:{task_id}:a{pre_attempts}"
     claim = _Claim(
@@ -787,8 +857,30 @@ async def _execute_inner(
     ownership: TaskOwnership | None = None
     claimed = False
     lease_owner = f"executor:{uuid.uuid4().hex}"
+    authorizer_id: str | None = None
     try:
         async with session.begin():
+            await lock_project_admission(session, business_id, project_id)
+            run = None
+            if request.worker is not None:
+                run = await _authorize_worker_claim(
+                    session, request, agent_id, agent_updated_at, pre_attempts
+                )
+            blocker = (
+                await manual_admission_blocker(session, business_id, project_id)
+                if run is None else None
+            )
+            if blocker:
+                if blocker == "run_managed":
+                    return _managed_refusal(task_id, pre_status, pre_attempts)
+                return ExecutionResult(
+                    outcome="refused",
+                    task_id=task_id,
+                    status=pre_status,
+                    attempts=pre_attempts,
+                    error_code=blocker,
+                    error_message="This project's brief has been finalized.",
+                )
             ownership = await _tasks.claim_owned(
                 session,
                 business_id,
@@ -803,25 +895,15 @@ async def _execute_inner(
             if claimed:
                 # The exact tuple every later persistence path must present.
                 claim.ownership = ownership
-                # Re-read under the same project lock used by `reserve`.
-                # A PATCH that landed after Phase 0 must be reflected in the
-                # amount/mode decision, otherwise a zero hold could bypass a
-                # newly activated budget (Stage 18 C3).
-                locked_project = (
-                    await session.execute(
-                        select(Project)
-                        .where(
-                            Project.business_id == business_id,
-                            Project.id == project_id,
-                        )
-                        .with_for_update()
-                        .execution_options(populate_existing=True)
-                    )
-                ).scalar_one_or_none()
+                # Re-read both limits under the same locks used by reserve().
+                locked_business = await _budget_reservations.lock_business(session, business_id)
+                if locked_business is None:
+                    raise _BudgetRaceLost()
+                locked_project = await _projects.lock_for_update(session, business_id, project_id)
                 if locked_project is None:
                     raise _BudgetRaceLost()
-                reserve_amount, reserve_mode = _project_reservation_policy(
-                    locked_project, bound, settings
+                reserve_amount, reserve_mode = project_reservation_terms(
+                    locked_project, locked_business, bound, settings
                 )
                 reservation = await _budget_reservations.reserve(
                     session,
@@ -838,7 +920,24 @@ async def _execute_inner(
                     raise _BudgetRaceLost()
                 reservation_id = reservation.id
                 reservation_key = reservation.idempotency_key
-    except _BudgetPolicyRefused as exc:
+                if run is not None:
+                    run.active_task_id = task_id
+                    run.active_task_generation = ownership.execution_generation
+                    authorizer_id = run.authorizing_user_id
+                    await session.flush()
+                    assert request.worker is not None
+                    if request.worker.stopping.is_set():
+                        raise _WorkerRefused("worker_stopping")
+    except _WorkerRefused as exc:
+        return ExecutionResult(
+            outcome="refused",
+            task_id=task_id,
+            status=pre_status,
+            attempts=pre_attempts,
+            error_code=str(exc),
+            error_message="Worker task admission was refused.",
+        )
+    except BudgetUnpricedError as exc:
         return ExecutionResult(
             outcome="refused",
             task_id=task_id,
@@ -855,7 +954,7 @@ async def _execute_inner(
             attempts=pre_attempts,
             error_code="budget_exceeded",
             error_message=(
-                "Concurrent execution exhausted the project AI budget; reservation refused."
+                "Execution would exceed the project or business AI budget; reservation refused."
             ),
         )
     if not claimed:
@@ -918,6 +1017,7 @@ async def _execute_inner(
             execution_generation=ownership.execution_generation,
             lease_owner=ownership.lease_owner,
             settings=settings,
+            authorizer_id=authorizer_id,
         )
         if capability_enabled
         else None
